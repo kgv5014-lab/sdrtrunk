@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.gui.playlist.source;
 
+import io.github.dsheirer.source.config.ScanEntry;
 import io.github.dsheirer.source.config.SourceConfigTuner;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
@@ -35,10 +36,12 @@ import javafx.scene.Node;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
+import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -66,6 +69,9 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
     private int mFrequencyRotationDefault = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_DEFAULT;
     private int mFrequencyRotationMinimum = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM;
     private int mFrequencyRotationMaximum = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MAXIMUM;
+    private boolean mScanList = false;
+    private Spinner<Integer> mScanHangTimeSpinner;
+    private CheckBox mScanParallelCheckBox;
 
     /**
      * Constructs an instance with support for multiple frequency values.  The min and max rotation delay values
@@ -83,6 +89,23 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         mFrequencyRotationMinimum = minRotationDelay;
         mFrequencyRotationMaximum = maxRotationDelay;
         mFrequencyRotationDefault = defaultRotationDelay;
+        init();
+    }
+
+    /**
+     * Constructs an instance for a conventional (NBFM/AM) channel.  When scan list is true, the editor supports
+     * multiple frequencies with a per-frequency label, priority and lockout, plus dwell time, hang time and parallel
+     * monitoring settings.  A channel with more than one frequency is scanned.
+     *
+     * @param tunerManager for accessing list of tuners to select a preferred tuner
+     * @param scanList true to enable scan list editing
+     */
+    public FrequencyEditor(TunerManager tunerManager, boolean scanList)
+    {
+        mTunerManager = tunerManager;
+        mAllowMultipleFrequencies = scanList;
+        mScanList = scanList;
+        mFrequencyRotationDefault = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM;
         init();
     }
 
@@ -117,7 +140,29 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         vbox.setSpacing(10);
         vbox.setPadding(new Insets(0,0,0,20));
 
-        if(mAllowMultipleFrequencies)
+        if(mScanList)
+        {
+            Label dwellLabel = new Label("Scan Dwell Time (ms)");
+            HBox dwellBox = new HBox();
+            dwellBox.setAlignment(Pos.CENTER_LEFT);
+            dwellBox.setSpacing(10);
+            dwellBox.getChildren().addAll(dwellLabel, getFrequencyRotationDelaySpinner());
+            getFrequencyRotationDelaySpinner().setTooltip(new Tooltip("How long to listen to each quiet frequency " +
+                "before moving to the next one"));
+            getFrequencyRotationDelaySpinner().disableProperty().bind(Bindings.greaterThan(2, Bindings.size(mFrequencyBoxes)));
+
+            Label hangLabel = new Label("Scan Hang Time (ms)");
+            HBox hangBox = new HBox();
+            hangBox.setAlignment(Pos.CENTER_LEFT);
+            hangBox.setSpacing(10);
+            hangBox.getChildren().addAll(hangLabel, getScanHangTimeSpinner());
+            getScanHangTimeSpinner().disableProperty().bind(Bindings.greaterThan(2, Bindings.size(mFrequencyBoxes)));
+            getScanParallelCheckBox().disableProperty().bind(Bindings.greaterThan(2, Bindings.size(mFrequencyBoxes)));
+
+            Label scanHelp = new Label("Add more than one frequency to scan them.");
+            vbox.getChildren().addAll(tunerBox, dwellBox, hangBox, getScanParallelCheckBox(), scanHelp);
+        }
+        else if(mAllowMultipleFrequencies)
         {
             Label frequencyRotationLabel = new Label("Frequency Rotation Delay (ms)");
             HBox frequencyBox = new HBox();
@@ -216,6 +261,14 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
             sourceConfigMulti.setFrequencies(frequencies);
             sourceConfigMulti.setPreferredTuner(preferredTuner);
             sourceConfigMulti.setFrequencyRotationDelay(getFrequencyRotationDelaySpinner().getValue());
+
+            if(mScanList)
+            {
+                sourceConfigMulti.setScanEntries(getScanEntries());
+                sourceConfigMulti.setScanHangTime(getScanHangTimeSpinner().getValue());
+                sourceConfigMulti.setScanParallel(getScanParallelCheckBox().isSelected());
+            }
+
             setSourceConfiguration(sourceConfigMulti);
         }
     }
@@ -236,6 +289,12 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         getFrequencyRotationDelaySpinner().getValueFactory()
             .setValue(ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM);
 
+        if(mScanList)
+        {
+            getScanHangTimeSpinner().getValueFactory().setValue(ChannelRotationMonitor.SCAN_HANG_TIME_DEFAULT);
+            getScanParallelCheckBox().setSelected(true);
+        }
+
         if(sourceConfiguration == null)
         {
             setFrequencies(Collections.emptyList());
@@ -253,6 +312,13 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
             SourceConfigTunerMultipleFrequency sourceMulti = (SourceConfigTunerMultipleFrequency)sourceConfiguration;
             setFrequencies(sourceMulti.getFrequencies());
             preferredTuner = sourceMulti.getPreferredTuner();
+
+            if(mScanList)
+            {
+                setScanEntries(sourceMulti);
+                getScanHangTimeSpinner().getValueFactory().setValue(sourceMulti.getScanHangTime());
+                getScanParallelCheckBox().setSelected(sourceMulti.isScanParallel());
+            }
 
             int rotationDelay = sourceMulti.getFrequencyRotationDelay();
 
@@ -320,6 +386,87 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         }
 
         return mChannelRotationDelaySpinner;
+    }
+
+    /**
+     * Scan hang time: how long to stay on a frequency after a call ends before resuming the scan.
+     */
+    private Spinner<Integer> getScanHangTimeSpinner()
+    {
+        if(mScanHangTimeSpinner == null)
+        {
+            mScanHangTimeSpinner = new Spinner<>();
+            mScanHangTimeSpinner.setTooltip(new Tooltip("How long to stay on a frequency after a call ends, so that " +
+                "you hear the reply, before resuming the scan"));
+            mScanHangTimeSpinner.getStyleClass().add(Spinner.STYLE_CLASS_SPLIT_ARROWS_HORIZONTAL);
+            SpinnerValueFactory<Integer> svf = new SpinnerValueFactory.IntegerSpinnerValueFactory(
+                ChannelRotationMonitor.SCAN_HANG_TIME_MINIMUM, ChannelRotationMonitor.SCAN_HANG_TIME_MAXIMUM,
+                ChannelRotationMonitor.SCAN_HANG_TIME_DEFAULT, 250);
+            mScanHangTimeSpinner.setValueFactory(svf);
+            mScanHangTimeSpinner.getValueFactory().valueProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mScanHangTimeSpinner;
+    }
+
+    /**
+     * Parallel monitoring option for scan lists.
+     */
+    private CheckBox getScanParallelCheckBox()
+    {
+        if(mScanParallelCheckBox == null)
+        {
+            mScanParallelCheckBox = new CheckBox("Monitor nearby frequencies at the same time when tuners are free");
+            mScanParallelCheckBox.setTooltip(new Tooltip("Each tuner hears about 2 MHz at once.  When this is on, " +
+                "frequencies that fit in a free tuner's window are monitored together so no calls are missed, and " +
+                "only the rest are scanned."));
+            mScanParallelCheckBox.setSelected(true);
+            mScanParallelCheckBox.selectedProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mScanParallelCheckBox;
+    }
+
+    /**
+     * Scan entries (label, priority, lockout) for each frequency in the editor.
+     */
+    private List<ScanEntry> getScanEntries()
+    {
+        List<ScanEntry> entries = new ArrayList<>();
+
+        for(FrequencyBox frequencyBox: mFrequencyBoxes)
+        {
+            long frequency = frequencyBox.getFrequencyField().get();
+
+            if(frequency > 0)
+            {
+                ScanEntry entry = new ScanEntry(frequency, frequencyBox.getLabelField().getText(),
+                    frequencyBox.getLockoutCheckBox().isSelected(), frequencyBox.getPriorityCheckBox().isSelected());
+
+                if(entry.hasSettings())
+                {
+                    entries.add(entry);
+                }
+            }
+        }
+
+        return entries;
+    }
+
+    /**
+     * Loads the per-frequency scan settings into the frequency boxes.
+     */
+    private void setScanEntries(SourceConfigTunerMultipleFrequency config)
+    {
+        for(FrequencyBox frequencyBox: mFrequencyBoxes)
+        {
+            ScanEntry entry = config.getScanEntry(frequencyBox.getFrequencyField().get());
+            frequencyBox.getLabelField().setText(entry.getLabel() != null ? entry.getLabel() : "");
+            frequencyBox.getPriorityCheckBox().setSelected(entry.isPriority());
+            frequencyBox.getLockoutCheckBox().setSelected(entry.isLockout());
+        }
     }
 
     /**
@@ -441,6 +588,7 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         getFrequencyBoxContainer().getChildren().add(getPrimaryFrequencyBox());
         mFrequencyBoxes.add(getPrimaryFrequencyBox());
         getPrimaryFrequencyBox().getFrequencyField().set(0);
+        getPrimaryFrequencyBox().clearScanSettings();
     }
 
     /**
@@ -478,6 +626,9 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         private FrequencyField mFrequencyField;
         private Button mAddButton;
         private Button mRemoveButton;
+        private TextField mLabelField;
+        private CheckBox mPriorityCheckBox;
+        private CheckBox mLockoutCheckBox;
 
         /**
          * Constructs a frequency box with the specified button styling
@@ -485,7 +636,13 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         public FrequencyBox(Buttons buttons)
         {
             setSpacing(10);
+            setAlignment(Pos.CENTER_LEFT);
             getChildren().add(getFrequencyField());
+
+            if(mScanList)
+            {
+                getChildren().addAll(getLabelField(), getPriorityCheckBox(), getLockoutCheckBox());
+            }
 
             switch(buttons)
             {
@@ -506,6 +663,68 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
             getFrequencyField().setDisable(disable);
             getAddButton().setDisable(disable);
             getRemoveButton().setDisable(disable);
+            getLabelField().setDisable(disable);
+            getPriorityCheckBox().setDisable(disable);
+            getLockoutCheckBox().setDisable(disable);
+        }
+
+        /**
+         * Clears the scan label, priority and lockout settings
+         */
+        public void clearScanSettings()
+        {
+            getLabelField().setText("");
+            getPriorityCheckBox().setSelected(false);
+            getLockoutCheckBox().setSelected(false);
+        }
+
+        /**
+         * Optional scan list label for this frequency
+         */
+        public TextField getLabelField()
+        {
+            if(mLabelField == null)
+            {
+                mLabelField = new TextField();
+                mLabelField.setPromptText("Label");
+                mLabelField.setPrefColumnCount(12);
+                mLabelField.setDisable(true);
+                mLabelField.textProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+            }
+
+            return mLabelField;
+        }
+
+        /**
+         * Scan list priority flag for this frequency
+         */
+        public CheckBox getPriorityCheckBox()
+        {
+            if(mPriorityCheckBox == null)
+            {
+                mPriorityCheckBox = new CheckBox("Priority");
+                mPriorityCheckBox.setTooltip(new Tooltip("Check this frequency between each of the other frequencies"));
+                mPriorityCheckBox.setDisable(true);
+                mPriorityCheckBox.selectedProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+            }
+
+            return mPriorityCheckBox;
+        }
+
+        /**
+         * Scan list lockout flag for this frequency
+         */
+        public CheckBox getLockoutCheckBox()
+        {
+            if(mLockoutCheckBox == null)
+            {
+                mLockoutCheckBox = new CheckBox("Lock Out");
+                mLockoutCheckBox.setTooltip(new Tooltip("Skip this frequency while scanning"));
+                mLockoutCheckBox.setDisable(true);
+                mLockoutCheckBox.selectedProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+            }
+
+            return mLockoutCheckBox;
         }
 
         /**

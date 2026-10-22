@@ -332,7 +332,7 @@ public class NBFMConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mSourceConfigurationEditor == null)
         {
-            mSourceConfigurationEditor = new FrequencyEditor(mTunerManager);
+            mSourceConfigurationEditor = new FrequencyEditor(mTunerManager, true);
 
             //Add a listener so that we can push change notifications up to this editor
             mSourceConfigurationEditor.modifiedProperty()

@@ -113,6 +113,10 @@ import io.github.dsheirer.module.decode.tait.Tait1200MessageFilter;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.demodulate.fm.FMDemodulatorModule;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.scanner.ScanActivityMonitor;
+import io.github.dsheirer.scanner.ScanEntryStatus;
+import io.github.dsheirer.scanner.ScanGroupManager;
+import io.github.dsheirer.scanner.ScannerRegistry;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
@@ -176,6 +180,7 @@ public class DecoderFactory
         {
             case AM:
                 processAM(channel, modules, aliasList, decodeConfig);
+                addScannerModules(channel, modules, userPreferences);
                 break;
             case DMR:
                 processDMR(channel, userPreferences, modules, aliasList, (DecodeConfigDMR)decodeConfig,
@@ -193,6 +198,7 @@ public class DecoderFactory
                 break;
             case NBFM:
                 processNBFM(channel, modules, aliasList, decodeConfig);
+                addScannerModules(channel, modules, userPreferences);
                 break;
             case NXDN:
                 processNXDN(channel, userPreferences, modules, aliasList, decodeConfig, trafficChannelManager, channelDescriptor);
@@ -485,6 +491,36 @@ public class DecoderFactory
         }
 
         modules.add(new AudioModule(aliasList, 0, 60000, filterList));
+    }
+
+    /**
+     * Adds conventional scanner modules for an analog (NBFM/AM) channel.  A channel with multiple frequencies is a
+     * scan list: it gets a channel rotation monitor that rotates on call activity (dwell and hang time) and a scan
+     * group manager that monitors frequencies in parallel on free tuners.  A channel that a scan group started to
+     * monitor one of its frequencies in parallel gets an activity monitor that reports back to the scan group.
+     *
+     * @param channel configuration
+     * @param modules collection to add to
+     * @param userPreferences reference
+     */
+    private static void addScannerModules(Channel channel, List<Module> modules, UserPreferences userPreferences)
+    {
+        ScanEntryStatus parallelEntry = ScannerRegistry.getInstance().getParallelChannelEntry(channel);
+
+        if(parallelEntry != null)
+        {
+            modules.add(new ScanActivityMonitor(parallelEntry));
+        }
+        else if(channel.getSourceConfiguration() instanceof SourceConfigTunerMultipleFrequency sctmf &&
+            sctmf.hasMultipleFrequencies())
+        {
+            List<State> activeStates = new ArrayList<>();
+            activeStates.add(State.CALL);
+            modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
+                sctmf.getScanHangTime(), userPreferences));
+            modules.add(new ScanGroupManager(channel, sctmf,
+                channel.getDecodeConfiguration().getChannelSpecification().getBandwidth()));
+        }
     }
 
     /**

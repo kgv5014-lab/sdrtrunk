@@ -29,6 +29,7 @@ import io.github.dsheirer.map.MapPanel;
 import io.github.dsheirer.map.MapService;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.scanner.ScannerPanel;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
@@ -53,6 +54,7 @@ public class ControllerPanel extends JPanel
     private NowPlayingPanel mNowPlayingPanel;
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
+    private ScannerPanel mScannerPanel;
 
     private JideTabbedPane mTabbedPane;
 
@@ -65,6 +67,7 @@ public class ControllerPanel extends JPanel
         mNowPlayingPanel = new NowPlayingPanel(playlistManager, iconModel, userPreferences, settingsManager, detailTabsVisible);
         mMapPanel = new MapPanel(mapService, playlistManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
+        mScannerPanel = new ScannerPanel();
 
         init();
     }
@@ -100,6 +103,7 @@ public class ControllerPanel extends JPanel
         };
         mTabbedPane.setFont(this.getFont());
         mTabbedPane.addTab("Now Playing", mNowPlayingPanel);
+        mTabbedPane.addTab("Scanner", mScannerPanel);
         mTabbedPane.addTab("Map", mMapPanel);
         mTabbedPane.addTab("Tuners", mTunerManagerPanel);
 

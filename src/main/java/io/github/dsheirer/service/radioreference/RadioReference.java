@@ -55,6 +55,7 @@ public class RadioReference
 
     public static final String SDRTRUNK_APP_KEY = "88969092";
     private RadioReferenceService mRadioReferenceService;
+    private RadioReferenceFrequencyLookup mFrequencyLookup;
     private UserPreferences mUserPreferences;
     private AuthorizationInformation mAuthorizationInformation;
     private StringProperty mUserName = new SimpleStringProperty();
@@ -82,6 +83,19 @@ public class RadioReference
     public RadioReference(UserPreferences userPreferences)
     {
         mUserPreferences = userPreferences;
+    }
+
+    /**
+     * Offline frequency-to-label lookup for the user's preferred county.  Call refresh() on it to load the listings.
+     */
+    public RadioReferenceFrequencyLookup getFrequencyLookup()
+    {
+        if(mFrequencyLookup == null)
+        {
+            mFrequencyLookup = new RadioReferenceFrequencyLookup(this, mUserPreferences);
+        }
+
+        return mFrequencyLookup;
     }
 
     /**

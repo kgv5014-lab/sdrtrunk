@@ -60,16 +60,22 @@ def main():
 def test_file(config, path: Path) -> int:
     from . import audio
     from .backends import create_backend
-    from .worker import load_vocabulary
+    from .codes import CodeBook
+    from .worker import build_prompt, load_vocabulary
 
+    codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
     backend = create_backend(config)
     samples = audio.decode(path)
     started = time.perf_counter()
-    result = backend.transcribe(samples, load_vocabulary(config.vocabulary_path))
+    result = backend.transcribe(samples, build_prompt(codebook.prompt_terms(),
+                                                      load_vocabulary(config.vocabulary_path)))
     elapsed = time.perf_counter() - started
+    text = codebook.normalize(result.text)
     print(f"{path.name}: {audio.duration_seconds(samples):.1f}s of audio in {elapsed:.2f}s "
           f"with {backend.name} ({backend.model}), confidence {result.confidence}")
-    print(result.text or "(no speech found)")
+    print(text or "(no speech found)")
+    for label in codebook.annotate(text):
+        print(f"  {label['code']}: {label['meaning']}")
     return 0
 
 

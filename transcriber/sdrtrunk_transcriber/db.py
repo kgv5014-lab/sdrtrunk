@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS calls (
     patches TEXT,
     audio_path TEXT NOT NULL,            -- relative to the data directory
     duration_s REAL,
-    transcript TEXT,
+    transcript TEXT,                     -- with spoken codes rewritten ("ten four" -> "10-4")
+    transcript_raw TEXT,                 -- exactly what Whisper returned
     confidence REAL,                     -- mean Whisper avg_logprob, closer to 0 is better
     status TEXT NOT NULL DEFAULT 'queued',  -- queued, processing, done, skipped, failed
     error TEXT,
@@ -71,13 +72,25 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(SCHEMA)
+        self._migrate()
         try:
+            had_fts = self._conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'calls_fts'").fetchone() is not None
             self._conn.executescript(FTS_SCHEMA)
+            if not had_fts:
+                # Index calls that were logged before the search index existed.
+                self._conn.execute("INSERT INTO calls_fts(calls_fts) VALUES ('rebuild')")
             self.has_fts = True
         except sqlite3.OperationalError:
             log.warning("SQLite has no FTS5 support; transcript search falls back to plain matching")
             self.has_fts = False
         self._conn.commit()
+
+    def _migrate(self):
+        """Adds columns introduced after a call log was first created."""
+        columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(calls)")}
+        if "transcript_raw" not in columns:
+            self._conn.execute("ALTER TABLE calls ADD COLUMN transcript_raw TEXT")
 
     def close(self):
         with self._lock:

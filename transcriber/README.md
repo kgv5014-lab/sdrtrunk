@@ -81,6 +81,34 @@ searches transcripts, and filters by talkgroup or radio ID.
 Deleting the `data` folder starts a fresh log. Calls that were still waiting when the service stopped
 are transcribed when it starts again.
 
+## Local codes, call signs and times
+
+`codes.csv` (copied from `codes.example.csv` on first start) holds your area's radio codes. The starter list
+is for Northampton County, PA: Pennsylvania State Police 10-codes and the county's call-sign numbering,
+where the first two digits are the station and the last two the unit type (2081 = Easton, ambulance).
+Codes vary by agency, so check the list against what you hear and edit it in Excel or Notepad. Changes
+apply without a restart, and labels update on calls already in the log.
+
+| Column | What it does |
+| --- | --- |
+| `type` | `ten-code`, `signal`, `station` (two-digit station number) or `unit-suffix` (last two digits, e.g. `81-89`) |
+| `code` | `10-23`, `Signal 33`, `20`, `81-89` |
+| `meaning` | Shown as a label under the transcript |
+| `applies_to` | `all`, `police`, `fire`, `ems`, `fire-ems`. When a code means different things to different agencies, the talkgroup name picks the row |
+| `prompt` | `yes` adds the code to Whisper's hint list. Keep this to the 20 or so codes you hear most |
+
+What happens to each call:
+
+1. Codes marked `prompt` are sent to Whisper as hints, before your `vocabulary.txt` terms.
+2. Spoken codes in the list are rewritten: "ten four" or "10 4" becomes `10-4`, "signal thirty three"
+   becomes `Signal 33`. Bare four-digit numbers like `1023` are left alone, because they are usually
+   call signs.
+3. A four-digit 24-hour time within `time_window_minutes` (default 3) of the call, like "1346" said at
+   1:46 PM, becomes `13:46`. Numbers after unit words ("Engine 1346") or before street words
+   ("1346 Main St") are left alone.
+4. The call log page shows labels such as `10-23 Arrived on scene`, `2081 Easton Fire/EMS, Ambulance` and
+   `13:46 1:46 PM`. Whisper's original text is kept in the log as `transcript_raw`.
+
 ## Accuracy tips
 
 * Whisper invents words on silence. The service drops calls shorter than `min_duration_s`, runs voice

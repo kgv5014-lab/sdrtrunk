@@ -4,31 +4,46 @@ import logging
 import queue
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from . import audio
 from .backends import Backend
+from .codes import CodeBook
 from .config import Config
 from .db import Database
 
 log = logging.getLogger(__name__)
 
 
-def load_vocabulary(path: Path) -> str:
-    """Builds a Whisper prompt from one-term-per-line vocabulary, ignoring blanks and # comments."""
+PROMPT_LIMIT = 800
+
+
+def load_vocabulary(path: Path) -> list[str]:
+    """One-term-per-line vocabulary, ignoring blanks and # comments."""
     if not path.exists():
-        return ""
+        return []
     terms = []
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.strip()
         if line and not line.startswith("#"):
             terms.append(line)
-    # Whisper only reads the last ~224 tokens of a prompt, so keep it short.
-    return ", ".join(terms)[:800]
+    return terms
+
+
+def build_prompt(*term_lists: list[str]) -> str:
+    """Joins hint terms into a Whisper prompt. Whisper only reads the last ~224 tokens of a prompt,
+    so when it is too long the earliest terms are dropped."""
+    terms = [t for terms in term_lists for t in terms]
+    prompt = ", ".join(terms)
+    while len(prompt) > PROMPT_LIMIT and terms:
+        terms.pop(0)
+        prompt = ", ".join(terms)
+    return prompt
 
 
 class TranscriptionWorker:
-    def __init__(self, config: Config, db: Database, backend_factory):
+    def __init__(self, config: Config, db: Database, backend_factory, codebook: CodeBook):
         self.config = config
         self.db = db
         self._backend_factory = backend_factory
@@ -36,7 +51,13 @@ class TranscriptionWorker:
         self._queue: "queue.Queue[int | None]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="transcriber", daemon=True)
         self.ready = threading.Event()
-        self.prompt = load_vocabulary(config.vocabulary_path)
+        self.codebook = codebook
+        self.vocabulary = load_vocabulary(config.vocabulary_path)
+
+    @property
+    def prompt(self) -> str:
+        # Codes first, then the user's own vocabulary, which Whisper weighs most as it comes last.
+        return build_prompt(self.codebook.prompt_terms(), self.vocabulary)
 
     def start(self):
         for call_id in self.db.pending_ids():
@@ -103,12 +124,14 @@ class TranscriptionWorker:
         started = time.perf_counter()
         result = self._backend.transcribe(samples, self.prompt)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
+        transcript = self.codebook.normalize(result.text, datetime.fromtimestamp(call["call_time"]))
 
         self.db.update_call(
             call_id,
             status="done",
             duration_s=duration,
-            transcript=result.text,
+            transcript=transcript,
+            transcript_raw=result.text,
             confidence=result.confidence,
             backend=self._backend.name,
             model=self._backend.model,
@@ -116,4 +139,4 @@ class TranscriptionWorker:
             error=None,
         )
         log.info("Call %d TG %s (%.1fs) in %d ms: %s", call_id, call["talkgroup"], duration,
-                 elapsed_ms, result.text or "(no speech)")
+                 elapsed_ms, transcript or "(no speech)")

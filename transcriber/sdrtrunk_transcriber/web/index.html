@@ -24,6 +24,9 @@
   .text.pending, .text.none { color: var(--muted); font-style: italic; }
   .text.failed { color: var(--warn); }
   .low { color: var(--warn); }
+  .codes { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
+  .tag { font-size: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; color: var(--muted); }
+  .tag b { color: var(--accent); font-weight: 600; margin-right: 4px; }
   audio { height: 28px; max-width: 100%; }
   button { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
   #more { display: block; margin: 16px auto; }
@@ -80,6 +83,11 @@ function render(call) {
   else if (call.status === 'failed') { text = 'transcription failed: ' + (call.error || ''); cls += ' failed'; }
   else { text = call.status + '...'; cls += ' pending'; }
   card.append(el('div', cls, text));
+  if (call.codes && call.codes.length) {
+    const tags = el('div', 'codes');
+    call.codes.forEach(c => { const t = el('span', 'tag'); t.append(el('b', '', c.code), c.meaning); tags.append(t); });
+    card.append(tags);
+  }
   return card;
 }
 

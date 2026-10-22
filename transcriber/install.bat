@@ -7,6 +7,7 @@ py -3.12 -m venv .venv || py -3 -m venv .venv || (echo Could not create the Pyth
 .venv\Scripts\python.exe -m pip install -r requirements.txt -r requirements-gpu.txt || (echo Install failed, see the messages above. & pause & exit /b 1)
 if not exist config.toml copy config.example.toml config.toml >nul
 if not exist vocabulary.txt copy vocabulary.example.txt vocabulary.txt >nul
+if not exist codes.csv copy codes.example.csv codes.csv >nul
 echo.
 echo Installed. Next: edit config.toml (device_index for the 1070 Ti), then run start-transcriber.bat
 pause

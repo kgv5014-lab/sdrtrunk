@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDRTrunk call log</title>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --warn: #b26a00; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --warn: #f0a640; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  h1 { font-size: 16px; margin: 0 12px 0 0; }
+  input { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+  #q { flex: 1 1 220px; }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  main { padding: 8px 16px 32px; }
+  .call { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; align-items: center; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  .text { margin-top: 6px; font-size: 15px; white-space: pre-wrap; }
+  .text.pending, .text.none { color: var(--muted); font-style: italic; }
+  .text.failed { color: var(--warn); }
+  .low { color: var(--warn); }
+  audio { height: 28px; max-width: 100%; }
+  button { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  #more { display: block; margin: 16px auto; }
+  #more[hidden] { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Call log</h1>
+  <input id="q" type="search" placeholder="Search transcripts">
+  <input id="talkgroup" type="search" placeholder="Talkgroup" size="12">
+  <input id="source" type="search" placeholder="Radio ID or alias" size="14">
+  <span id="status"></span>
+</header>
+<main>
+  <div id="calls"></div>
+  <button id="more" hidden>Older calls</button>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let oldestId = null;
+let timer = null;
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+
+function render(call) {
+  const card = el('div', 'call');
+  const meta = el('div', 'meta');
+  const when = new Date(call.call_time * 1000);
+  meta.append(el('span', '', when.toLocaleString()));
+  const tg = el('span'); tg.append('TG ', el('b', '', call.talkgroup_label || call.talkgroup));
+  if (call.talkgroup_label) tg.append(' (' + call.talkgroup + ')');
+  meta.append(tg);
+  const src = el('span'); src.append('From ', el('b', '', call.talker_alias || call.source || 'unknown'));
+  if (call.talker_alias && call.source) src.append(' (' + call.source + ')');
+  meta.append(src);
+  if (call.system_label) meta.append(el('span', '', call.system_label));
+  if (call.frequency) meta.append(el('span', '', (call.frequency / 1e6).toFixed(4) + ' MHz'));
+  if (call.duration_s) meta.append(el('span', '', call.duration_s.toFixed(1) + ' s'));
+  if (call.confidence !== null && call.confidence < -0.8) meta.append(el('span', 'low', 'low confidence'));
+  const player = el('audio'); player.controls = true; player.preload = 'none';
+  player.src = 'api/calls/' + call.id + '/audio';
+  meta.append(player);
+  card.append(meta);
+
+  let text, cls = 'text';
+  if (call.status === 'done') { text = call.transcript || 'no speech found'; if (!call.transcript) cls += ' none'; }
+  else if (call.status === 'skipped') { text = 'not transcribed (' + (call.error || 'skipped') + ')'; cls += ' none'; }
+  else if (call.status === 'failed') { text = 'transcription failed: ' + (call.error || ''); cls += ' failed'; }
+  else { text = call.status + '...'; cls += ' pending'; }
+  card.append(el('div', cls, text));
+  return card;
+}
+
+function params(beforeId) {
+  const p = new URLSearchParams({ q: $('q').value, talkgroup: $('talkgroup').value, source: $('source').value, limit: 100 });
+  if (beforeId) p.set('before_id', beforeId);
+  return p;
+}
+
+async function load(append) {
+  const res = await fetch('api/calls?' + params(append ? oldestId : null));
+  const calls = await res.json();
+  const list = $('calls');
+  if (!append) list.replaceChildren();
+  calls.forEach(c => list.append(render(c)));
+  if (calls.length) oldestId = calls[calls.length - 1].id;
+  $('more').hidden = calls.length < 100;
+}
+
+async function refreshStatus() {
+  try {
+    const s = await (await fetch('api/status')).json();
+    const c = s.calls;
+    $('status').textContent = `${s.backend}${s.backend_ready ? '' : ' (loading model)'} · queue ${s.queue} · ` +
+      `${c.done || 0} done, ${c.skipped || 0} skipped, ${c.failed || 0} failed`;
+  } catch (e) { $('status').textContent = 'service unreachable'; }
+}
+
+// Refreshing rebuilds the list, so skip it while a clip plays or the user has scrolled down.
+function playing() { return [...document.querySelectorAll('audio')].some(a => !a.paused); }
+
+async function tick() {
+  await refreshStatus();
+  if (!playing() && window.scrollY < 200) await load(false);
+}
+
+['q', 'talkgroup', 'source'].forEach(id => $(id).addEventListener('input', () => {
+  clearTimeout(timer); timer = setTimeout(() => load(false), 250);
+}));
+$('more').addEventListener('click', () => load(true));
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

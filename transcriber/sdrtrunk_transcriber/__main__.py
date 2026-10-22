@@ -1,0 +1,77 @@
+"""Entry point.
+
+    python -m sdrtrunk_transcriber                      run the service (reads config.toml)
+    python -m sdrtrunk_transcriber --test-file call.mp3 transcribe one file and exit
+"""
+
+import argparse
+import logging
+import os
+import sys
+import time
+from pathlib import Path
+
+# Make CUDA number GPUs the same way nvidia-smi does, so device_index matches `nvidia-smi -L`.
+os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+
+
+def add_nvidia_dll_dirs():
+    """On Windows, lets CTranslate2 find the cuBLAS/cuDNN DLLs installed by requirements-gpu.txt.
+
+    The pip wheels put them in site-packages/nvidia/<library>/bin, which is not on the DLL search path.
+    """
+    if sys.platform != "win32":
+        return
+    import site
+    roots = [Path(p) / "nvidia" for p in site.getsitepackages() + [site.getusersitepackages()]]
+    for root in roots:
+        for bin_dir in sorted(root.glob("*/bin")) if root.is_dir() else []:
+            os.add_dll_directory(str(bin_dir))
+            os.environ["PATH"] = str(bin_dir) + os.pathsep + os.environ.get("PATH", "")
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="sdrtrunk_transcriber")
+    parser.add_argument("--config", type=Path, default=Path("config.toml"),
+                        help="settings file (default: config.toml)")
+    parser.add_argument("--test-file", type=Path,
+                        help="transcribe one audio file with the configured backend, print it, and exit")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    add_nvidia_dll_dirs()
+
+    from .config import load_config
+
+    config_path = args.config if args.config.exists() else None
+    if config_path is None:
+        logging.warning("%s not found, using built-in defaults", args.config)
+    config = load_config(config_path)
+
+    if args.test_file:
+        sys.exit(test_file(config, args.test_file))
+
+    import uvicorn
+    from .server import create_app
+
+    uvicorn.run(create_app(config), host=config.server.host, port=config.server.port, log_level="info")
+
+
+def test_file(config, path: Path) -> int:
+    from . import audio
+    from .backends import create_backend
+    from .worker import load_vocabulary
+
+    backend = create_backend(config)
+    samples = audio.decode(path)
+    started = time.perf_counter()
+    result = backend.transcribe(samples, load_vocabulary(config.vocabulary_path))
+    elapsed = time.perf_counter() - started
+    print(f"{path.name}: {audio.duration_seconds(samples):.1f}s of audio in {elapsed:.2f}s "
+          f"with {backend.name} ({backend.model}), confidence {result.confidence}")
+    print(result.text or "(no speech found)")
+    return 0
+
+
+if __name__ == "__main__":
+    main()

@@ -57,6 +57,7 @@ import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.control.ToggleButton;
+import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.input.MouseButton;
 import javafx.scene.layout.HBox;
@@ -413,30 +414,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             TableColumn<Channel,Boolean> playingColumn = new TableColumn("Playing");
             playingColumn.setPrefWidth(75);
             playingColumn.setCellValueFactory(new PropertyValueFactory<>("processing"));
-            playingColumn.setCellFactory(param -> {
-                TableCell<Channel,Boolean> tableCell = new TableCell<>()
-                {
-                    @Override
-                    protected void updateItem(Boolean item, boolean empty)
-                    {
-                        setAlignment(Pos.CENTER);
-                        setText(null);
-
-                        if(empty || item == null || !item)
-                        {
-                            setGraphic(null);
-                        }
-                        else
-                        {
-                            IconNode iconNode = new IconNode(FontAwesome.CHECK);
-                            iconNode.setFill(Color.GREEN);
-                            setGraphic(iconNode);
-                        }
-                    }
-                };
-
-                return tableCell;
-            });
+            playingColumn.setCellFactory(param -> new PlayStopTableCell());
 
             TableColumn<Channel,Boolean> autoStartColumn = new TableColumn<>("Auto-Start");
             autoStartColumn.setCellValueFactory(new PropertyValueFactory<>("autoStart"));
@@ -657,6 +635,56 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             MenuItem channel = new MenuItem("Individual Phase 2 Channel");
             channel.setOnAction(event -> createNewChannel(DecoderType.P25_PHASE2));
             getItems().addAll(trunkedP1, trunkedP2, channel);
+        }
+    }
+
+    /**
+     * Table cell with a play/stop button so that a channel can be started or stopped directly from its row.  The
+     * button selects the row and then uses the channel configuration editor's play button so that the same
+     * save-changes and JMBE library checks are applied.
+     */
+    public class PlayStopTableCell extends TableCell<Channel,Boolean>
+    {
+        private final Button mButton = new Button();
+        private final IconNode mPlayIcon = new IconNode(FontAwesome.PLAY);
+        private final IconNode mStopIcon = new IconNode(FontAwesome.STOP);
+        private final Tooltip mStartTooltip = new Tooltip("Start channel");
+        private final Tooltip mStopTooltip = new Tooltip("Stop channel");
+
+        public PlayStopTableCell()
+        {
+            mPlayIcon.setFill(Color.GREEN);
+            mStopIcon.setFill(Color.RED);
+            mButton.setFocusTraversable(false);
+            mButton.setOnAction(event -> {
+                Channel channel = getTableRow() != null ? getTableRow().getItem() : null;
+
+                if(channel != null)
+                {
+                    getChannelTableView().getSelectionModel().select(channel);
+                    getChannelConfigurationEditor().startChannel();
+                }
+            });
+            setAlignment(Pos.CENTER);
+            setText(null);
+        }
+
+        @Override
+        protected void updateItem(Boolean item, boolean empty)
+        {
+            super.updateItem(item, empty);
+
+            if(empty || getTableRow() == null || getTableRow().getItem() == null)
+            {
+                setGraphic(null);
+            }
+            else
+            {
+                boolean playing = item != null && item;
+                mButton.setGraphic(playing ? mStopIcon : mPlayIcon);
+                mButton.setTooltip(playing ? mStopTooltip : mStartTooltip);
+                setGraphic(mButton);
+            }
         }
     }
 

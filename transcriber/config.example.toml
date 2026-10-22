@@ -33,3 +33,11 @@ vad_filter = true
 [whisper_cpp]
 # Start the server with e.g.: whisper-server -m models\ggml-large-v3-turbo.bin --port 8080
 url = "http://127.0.0.1:8080/inference"
+
+[codes]
+# Local 10-codes, signals and call-sign numbering (see codes.example.csv). Edit codes.csv in Excel or
+# Notepad; changes apply without a restart. Set to "" to turn codes off.
+file = "codes.csv"
+# Dispatch reads the time as "1346". A four-digit time within this many minutes of the call is
+# written as 13:46. 0 turns this off.
+time_window_minutes = 3

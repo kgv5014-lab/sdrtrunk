@@ -1,6 +1,7 @@
 data/
 config.toml
 vocabulary.txt
+codes.csv
 .venv/
 __pycache__/
 *.pyc

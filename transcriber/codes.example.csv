@@ -1,0 +1,61 @@
+type,code,meaning,applies_to,prompt,source
+ten-code,10-1,Poor reception,police,,PSP list (RadioReference)
+ten-code,10-2,Good reception,police,,PSP list (RadioReference)
+ten-code,10-3,Stop transmitting,police,,PSP list (RadioReference)
+ten-code,10-4,Message received / acknowledged,all,yes,PSP list (RadioReference)
+ten-code,10-5,Relay to,police,,PSP list (RadioReference)
+ten-code,10-6,Busy,police,,PSP list (RadioReference)
+ten-code,10-7,Out of service,all,yes,PSP list (RadioReference)
+ten-code,10-8,In service,all,yes,PSP list (RadioReference)
+ten-code,10-9,Repeat last message,police,,PSP list (RadioReference)
+ten-code,10-10,Negative,police,,PSP list (RadioReference)
+ten-code,10-11,On duty,police,,PSP list (RadioReference)
+ten-code,10-13,Existing conditions,police,,PSP list (RadioReference)
+ten-code,10-14,Message information,police,,PSP list (RadioReference)
+ten-code,10-15,Message delivered,police,,PSP list (RadioReference)
+ten-code,10-16,Reply to message,police,,PSP list (RadioReference)
+ten-code,10-17,En route,all,yes,PSP list (RadioReference)
+ten-code,10-19,In contact,police,,PSP list (RadioReference)
+ten-code,10-20,Location,all,yes,PSP list (RadioReference)
+ten-code,10-21,Call by phone,police,,PSP list (RadioReference)
+ten-code,10-22,Disregard,all,yes,PSP list (RadioReference)
+ten-code,10-23,Arrived on scene,all,yes,PSP list (RadioReference)
+ten-code,10-24,Assignment completed,police,yes,PSP list (RadioReference)
+ten-code,10-25,Return to station,police,,PSP list (RadioReference)
+ten-code,10-26,ETA,police,yes,PSP list (RadioReference)
+ten-code,10-27,Driver's license check,police,,PSP list (RadioReference)
+ten-code,10-28,Vehicle registration check,police,yes,PSP list (RadioReference)
+ten-code,10-29,Wants/warrants check,police,yes,PSP list (RadioReference)
+ten-code,10-30,Danger / caution,police,,PSP list (RadioReference)
+ten-code,10-31,Pick up,police,,PSP list (RadioReference)
+ten-code,10-32,Units needed (specify),police,,PSP list (RadioReference)
+ten-code,10-34,Time check,police,,PSP list (RadioReference)
+ten-code,10-40,Advise if available,police,,PSP list (RadioReference)
+ten-code,10-42,Does not conform to regulations,police,,PSP list (RadioReference)
+ten-code,10-43,Road and weather conditions,police,,PSP list (RadioReference)
+ten-code,10-44,Involved stations acknowledge,police,,PSP list (RadioReference)
+ten-code,10-45,Accident,police,yes,PSP list (RadioReference)
+ten-code,10-46,Holding suspect - rush reply,police,,PSP list (RadioReference)
+ten-code,10-47,Send ambulance,police,yes,PSP list (RadioReference)
+ten-code,10-88,Package for,police,,PSP list (RadioReference)
+ten-code,10-89,___ is calling you,police,,PSP list (RadioReference)
+ten-code,10-97,Radio check,police,,PSP list (RadioReference)
+ten-code,10-99,Emergency,all,yes,PSP list (RadioReference)
+signal,Signal 33,Officer needs help quickly,police,yes,PSP list (RadioReference)
+unit-suffix,11-19,Engine,fire,,Northampton Co radio policy / RadioReference
+unit-suffix,21-29,Ladder / aerial,fire,,Northampton Co radio policy / RadioReference
+unit-suffix,31-39,Tanker,fire,,Northampton Co radio policy / RadioReference
+unit-suffix,41-49,Rescue / brush / utility,fire,,Northampton Co radio policy / RadioReference
+unit-suffix,50-59,Fire officer (50 = chief),fire,,Northampton Co radio policy / RadioReference
+unit-suffix,60,Fire marshal,fire,,Northampton Co radio policy / RadioReference
+unit-suffix,61-69,Misc officers,fire,,Northampton Co radio policy / RadioReference
+unit-suffix,70-79,EMS officers,ems,,Northampton Co radio policy / RadioReference
+unit-suffix,81-89,Ambulance,ems,,Northampton Co radio policy / RadioReference
+unit-suffix,90-99,Fire police,fire,,Northampton Co radio policy / RadioReference
+station,10,Bethlehem Fire/EMS,fire-ems,,RadioReference wiki
+station,20,Easton Fire/EMS,fire-ems,,RadioReference wiki
+station,42,Northampton Fire,fire-ems,,RadioReference wiki
+station,49,Northampton Regional EMS,fire-ems,,RadioReference wiki
+station,62,Cetronia EMS,fire-ems,,RadioReference wiki
+station,71,Blue Valley Rescue Squad,fire-ems,,RadioReference wiki
+station,99,Northampton County EMA,fire-ems,,RadioReference wiki

@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from starlette.datastructures import UploadFile
 
 from .backends import create_backend
+from .codes import CodeBook
 from .config import Config
 from .db import Database
 from .worker import TranscriptionWorker
@@ -59,10 +60,12 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         db = Database(data_path / "calls.db")
-        worker = TranscriptionWorker(config, db, backend_factory)
+        codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
+        worker = TranscriptionWorker(config, db, backend_factory, codebook)
         worker.start()
         app.state.db = db
         app.state.worker = worker
+        app.state.codebook = codebook
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
@@ -132,7 +135,13 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     @app.get("/api/calls")
     def list_calls(request: Request, q: str = "", talkgroup: str = "", source: str = "",
                    before_id: int | None = None, limit: int = 100):
-        return request.app.state.db.search(q, talkgroup, source, before_id, limit)
+        calls = request.app.state.db.search(q, talkgroup, source, before_id, limit)
+        codebook = request.app.state.codebook
+        # Labels are worked out on every read, so edits to codes.csv apply to old calls too.
+        for call in calls:
+            call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
+                                              call["talkgroup_group"])
+        return calls
 
     @app.get("/api/calls/{call_id}/audio")
     def call_audio(request: Request, call_id: int):

@@ -324,3 +324,52 @@ def test_faster_whisper_backend_passes_gpu_settings(monkeypatch):
     assert created["transcribe"]["initial_prompt"] == "Medic 4"
     assert created["transcribe"]["language"] == "en"
     assert result.text == "Medic 4 on scene."
+
+
+def test_codes_are_cleaned_up_and_labelled(make_client, tmp_path):
+    import shutil
+    from pathlib import Path
+
+    shutil.copy(Path(__file__).resolve().parents[1] / "codes.example.csv", tmp_path / "codes.csv")
+
+    class Radio(FakeBackend):
+        def transcribe(self, samples, prompt):
+            self.prompts.append(prompt)
+            return Transcript("2081 ten twenty three, ten four.", -0.2)
+
+    client, fake = make_client(backend=Radio(), vocabulary="Route 22\n")
+    with client:
+        post(client, sdrtrunk_body(CALL, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        call = client.get("/api/calls").json()[0]
+        found = client.get("/api/calls", params={"q": "10-23"}).json()
+
+    assert call["transcript"] == "2081 10-23, 10-4."
+    assert call["transcript_raw"] == "2081 ten twenty three, ten four."
+    assert [c["code"] for c in call["codes"]] == ["2081", "10-23", "10-4"]
+    assert call["codes"][0]["meaning"] == "Easton Fire/EMS, Ambulance"
+    assert "10-23" in fake.prompts[0] and fake.prompts[0].endswith("Route 22")
+    assert len(found) == 1
+
+
+def test_old_call_log_gets_new_columns(tmp_path):
+    import sqlite3
+
+    from sdrtrunk_transcriber.db import Database
+
+    path = tmp_path / "calls.db"
+    old = sqlite3.connect(path)
+    old.execute("CREATE TABLE calls (id INTEGER PRIMARY KEY, call_time INTEGER NOT NULL, "
+                "received_at INTEGER NOT NULL, system_id TEXT, system_label TEXT, talkgroup TEXT, "
+                "talkgroup_label TEXT, talkgroup_group TEXT, source TEXT, talker_alias TEXT, frequency INTEGER, "
+                "patches TEXT, audio_path TEXT NOT NULL, duration_s REAL, transcript TEXT, confidence REAL, "
+                "status TEXT NOT NULL DEFAULT 'queued', error TEXT, backend TEXT, model TEXT, transcribe_ms INTEGER)")
+    old.execute("INSERT INTO calls (call_time, received_at, audio_path, transcript, status) "
+                "VALUES (1, 1, 'a.mp3', 'old call', 'done')")
+    old.commit()
+    old.close()
+
+    db = Database(path)
+    db.update_call(1, transcript_raw="old call")
+    assert db.get_call(1)["transcript_raw"] == "old call"
+    db.close()

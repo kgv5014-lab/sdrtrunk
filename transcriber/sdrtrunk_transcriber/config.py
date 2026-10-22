@@ -51,11 +51,20 @@ class WhisperCppConfig:
 
 
 @dataclass
+class CodesConfig:
+    # Local radio codes and call-sign numbering; see codes.example.csv. Empty = off.
+    file: str = "codes.csv"
+    # A spoken four-digit time ("1346") within this many minutes of the call becomes "13:46". 0 = off.
+    time_window_minutes: int = 3
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
+    codes: CodesConfig = field(default_factory=CodesConfig)
     base_dir: Path = Path(".")
 
     @property
@@ -65,6 +74,10 @@ class Config:
     @property
     def vocabulary_path(self) -> Path:
         return self._resolve(self.transcription.vocabulary_file)
+
+    @property
+    def codes_path(self) -> Path | None:
+        return self._resolve(self.codes.file) if self.codes.file else None
 
     def _resolve(self, value: str) -> Path:
         path = Path(value)

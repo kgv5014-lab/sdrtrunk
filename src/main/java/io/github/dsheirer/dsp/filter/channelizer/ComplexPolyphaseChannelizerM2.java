@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.dsp.filter.channelizer;
 
+import io.github.dsheirer.controller.NamingThreadFactory;
 import io.github.dsheirer.dsp.filter.FilterFactory;
 import io.github.dsheirer.dsp.filter.design.FilterDesignException;
 import io.github.dsheirer.sample.complex.InterleavedComplexSamples;
@@ -26,6 +27,11 @@ import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import org.apache.commons.math3.util.FastMath;
 import org.jtransforms.fft.FloatFFT_1D;
 import org.slf4j.Logger;
@@ -68,9 +74,17 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     private static final int PROCESSED_CHANNEL_RESULTS_THRESHOLD = 1024;
 
+    //Channel counts at or above this value (about 5 MS/s and up) spread the IFFT work across multiple threads.  Below
+    //it, the IFFT needs well under 15% of one core and a single thread is used, exactly as before.
+    private static final int PARALLEL_IFFT_MINIMUM_CHANNEL_COUNT = 200;
+    private static final int PARALLEL_IFFT_MAXIMUM_THREADS = 4;
+
     //Sized to process 40 times per second
     private IFFTProcessorDispatcher mIFFTProcessorDispatcher = new IFFTProcessorDispatcher(25);
-    private FloatFFT_1D mFFT;
+    //One FFT instance per IFFT thread so that no instance is ever shared between concurrently running threads
+    private FloatFFT_1D[] mFFTs;
+    private int mIFFTThreadCount;
+    private ExecutorService mIFFTWorkerExecutor;
     private float[] mInlineSamples;
     private float[] mInlineFilter;
 
@@ -111,6 +125,7 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         }
 
         mTapsPerChannel = (int) FastMath.ceil((double)taps.length / (double)channelCount);
+        mIFFTThreadCount = getDefaultIFFTThreadCount();
 
         init(taps);
     }
@@ -124,9 +139,24 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     public ComplexPolyphaseChannelizerM2(double sampleRate, int tapsPerChannel) throws FilterDesignException
     {
+        this(sampleRate, tapsPerChannel, getDefaultIFFTThreadCount());
+    }
+
+    /**
+     * Creates a NMDPFB channelizer instance with a specific maximum number of IFFT threads.
+     *
+     * @param sampleRate to be channelized.
+     * @param tapsPerChannel to use when designing the filter
+     * @param ifftThreadCount maximum number of threads used for the IFFT when the channel count is at least
+     * PARALLEL_IFFT_MINIMUM_CHANNEL_COUNT.  Use 1 for single-threaded processing.
+     */
+    ComplexPolyphaseChannelizerM2(double sampleRate, int tapsPerChannel, int ifftThreadCount)
+        throws FilterDesignException
+    {
         super(sampleRate, getChannelCount(sampleRate));
 
         mTapsPerChannel = tapsPerChannel;
+        mIFFTThreadCount = Math.max(1, ifftThreadCount);
 
         float[] filterTaps = FilterFactory.getSincM2Channelizer(getChannelSampleRate(), getChannelCount(),
             mTapsPerChannel, false);
@@ -139,6 +169,13 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
      */
     public void start()
     {
+        if(mIFFTWorkerExecutor == null && mFFTs.length > 1)
+        {
+            //The IFFT dispatcher thread processes one share of each batch itself, so it needs one fewer worker
+            mIFFTWorkerExecutor = Executors.newFixedThreadPool(mIFFTThreadCount - 1,
+                new NamingThreadFactory("sdrtrunk polyphase ifft worker"));
+        }
+
         mIFFTProcessorDispatcher.start();
     }
 
@@ -148,6 +185,22 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     public void stop()
     {
         mIFFTProcessorDispatcher.stop();
+
+        if(mIFFTWorkerExecutor != null)
+        {
+            mIFFTWorkerExecutor.shutdown();
+            mIFFTWorkerExecutor = null;
+        }
+    }
+
+    /**
+     * Default maximum number of IFFT threads: half of the available processors, between 1 and
+     * PARALLEL_IFFT_MAXIMUM_THREADS, leaving the remaining cores for the per-channel demodulators and decoders.
+     */
+    private static int getDefaultIFFTThreadCount()
+    {
+        int processors = Runtime.getRuntime().availableProcessors();
+        return Math.max(1, Math.min(PARALLEL_IFFT_MAXIMUM_THREADS, processors / 2));
     }
 
     /**
@@ -400,7 +453,15 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
     private void init(float[] coefficients)
     {
         int channelCount = getChannelCount();
-        mFFT = new FloatFFT_1D(channelCount);
+        int fftCount = channelCount >= PARALLEL_IFFT_MINIMUM_CHANNEL_COUNT ? mIFFTThreadCount : 1;
+        FloatFFT_1D[] ffts = new FloatFFT_1D[fftCount];
+
+        for(int x = 0; x < fftCount; x++)
+        {
+            ffts[x] = new FloatFFT_1D(channelCount);
+        }
+
+        mFFTs = ffts;
         int bufferLength = getSubChannelCount() * mTapsPerChannel;
         mSamplesPerBlock = channelCount; //Same as subChannelCount / 2
         mTopBlockMap = getTopBlockMap(channelCount);
@@ -408,6 +469,28 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
         mInlineFilter = getAlignedFilter(coefficients, channelCount, mTapsPerChannel);
         mInlineSamples = new float[bufferLength];
         mFilterAccumulator = new float[getSubChannelCount()];
+    }
+
+    /**
+     * Performs an in-place IFFT on each non-null channel results array in the specified range of the list, to rotate
+     * each of the channels to the correct phase.
+     *
+     * @param fft instance to use, which must not be in use by any other thread
+     * @param list of channel results arrays
+     * @param from index, inclusive
+     * @param to index, exclusive
+     */
+    private static void inverse(FloatFFT_1D fft, List<float[]> list, int from, int to)
+    {
+        for(int x = from; x < to; x++)
+        {
+            float[] channelResults = list.get(x);
+
+            if(channelResults != null)
+            {
+                fft.complexInverse(channelResults, true);
+            }
+        }
     }
 
     /**
@@ -428,19 +511,66 @@ public class ComplexPolyphaseChannelizerM2 extends AbstractComplexPolyphaseChann
             setListener(list -> {
                 try
                 {
-                    List<float[]> processedChannelResults = new ArrayList<>();
+                    //Read the shared fields once so the whole batch uses the same FFT instances and executor
+                    FloatFFT_1D[] ffts = mFFTs;
+                    ExecutorService executor = mIFFTWorkerExecutor;
+
+                    if(ffts.length == 1 || executor == null || list.size() < ffts.length)
+                    {
+                        inverse(ffts[0], list, 0, list.size());
+                    }
+                    else
+                    {
+                        //Split the batch into contiguous shares, one per FFT instance.  Each array is transformed in
+                        //place by exactly one thread, so the output is identical to single-threaded processing and
+                        //the list keeps its original order.
+                        int shares = ffts.length;
+                        List<Future<?>> futures = new ArrayList<>(shares - 1);
+
+                        for(int share = 1; share < shares; share++)
+                        {
+                            FloatFFT_1D fft = ffts[share];
+                            int from = list.size() * share / shares;
+                            int to = list.size() * (share + 1) / shares;
+
+                            try
+                            {
+                                futures.add(executor.submit(() -> inverse(fft, list, from, to)));
+                            }
+                            catch(RejectedExecutionException ree)
+                            {
+                                //Executor was shut down by stop() while this batch was in progress
+                                inverse(fft, list, from, to);
+                            }
+                        }
+
+                        inverse(ffts[0], list, 0, list.size() / shares);
+
+                        for(Future<?> future: futures)
+                        {
+                            future.get();
+                        }
+                    }
+
+                    List<float[]> processedChannelResults = new ArrayList<>(list.size());
 
                     for(float[] channelResults: list)
                     {
                         if(channelResults != null)
                         {
-                            //Rotate each of the channels to the correct phase using the IFFT
-                            mFFT.complexInverse(channelResults, true);
                             processedChannelResults.add(channelResults);
                         }
                     }
 
                     dispatch(processedChannelResults);
+                }
+                catch(InterruptedException ie)
+                {
+                    Thread.currentThread().interrupt();
+                }
+                catch(ExecutionException ee)
+                {
+                    mLog.error("Error during IFFT of processed channel results", ee.getCause());
                 }
                 catch(Throwable t)
                 {

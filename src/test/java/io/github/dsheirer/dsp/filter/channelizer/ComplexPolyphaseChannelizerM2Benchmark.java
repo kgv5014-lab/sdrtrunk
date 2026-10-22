@@ -28,7 +28,8 @@ import org.jtransforms.fft.FloatFFT_1D;
 /**
  * Manual benchmark (not run by the test suite) for the two stages of {@link ComplexPolyphaseChannelizerM2}: the
  * polyphase filter that runs on the tuner buffer thread, and the per-block IFFT that runs on the IFFT dispatcher
- * thread.  Reports throughput and the share of one CPU core each stage needs to keep up with real time.
+ * thread.  Reports throughput and the share of one CPU core each stage needs to keep up with real time, then the
+ * end-to-end throughput of the whole channelizer with a single-threaded and a multi-threaded IFFT.
  *
  * Run from an IDE, or after './gradlew testClasses' with the test runtime classpath and the JVM arguments from
  * build.gradle (--add-modules=jdk.incubator.vector --enable-preview).
@@ -46,6 +47,81 @@ public class ComplexPolyphaseChannelizerM2Benchmark
         for(double sampleRate: sampleRates)
         {
             benchmark(sampleRate);
+        }
+
+        System.out.println();
+
+        for(double sampleRate: sampleRates)
+        {
+            benchmarkEndToEnd(sampleRate, 1);
+            benchmarkEndToEnd(sampleRate, 4);
+        }
+    }
+
+    /**
+     * Measures how fast the full channelizer (filter on the calling thread, IFFT on the dispatcher and worker
+     * threads) can process a fixed amount of sample data, from the first buffer until the last block is dispatched.
+     * The dispatcher queue is unbounded, so this run is sensitive to garbage collection and varies by up to 2x from
+     * run to run: compare several runs rather than single numbers.
+     */
+    private static void benchmarkEndToEnd(double sampleRate, int ifftThreads) throws Exception
+    {
+        AtomicInteger dispatched = new AtomicInteger();
+        ComplexPolyphaseChannelizerM2 channelizer = new ComplexPolyphaseChannelizerM2(sampleRate, TAPS_PER_CHANNEL,
+            ifftThreads)
+        {
+            @Override
+            protected void dispatch(List<float[]> channelResultsList)
+            {
+                dispatched.addAndGet(channelResultsList.size());
+            }
+        };
+
+        float[] samples = new float[BUFFER_SAMPLES * 2];
+        Random random = new Random(1);
+
+        for(int x = 0; x < samples.length; x++)
+        {
+            samples[x] = random.nextFloat() * 2.0f - 1.0f;
+        }
+
+        InterleavedComplexSamples buffer = new InterleavedComplexSamples(samples, 0);
+        int blocksPerBuffer = samples.length / channelizer.getChannelCount();
+        channelizer.start();
+
+        try
+        {
+            //Warm up with about 2 seconds of data, then time about 10 seconds of data
+            for(int pass = 0; pass < 2; pass++)
+            {
+                int buffers = (int)((pass == 0 ? 2 : 10) * sampleRate / BUFFER_SAMPLES);
+                //Only whole dispatch batches are released by the channelizer
+                long expected = dispatched.get() + (long)buffers * blocksPerBuffer / 1024 * 1024;
+                long start = System.nanoTime();
+
+                for(int x = 0; x < buffers; x++)
+                {
+                    channelizer.receive(buffer);
+                }
+
+                while(dispatched.get() < expected)
+                {
+                    Thread.sleep(1);
+                }
+
+                double seconds = (System.nanoTime() - start) / 1e9;
+
+                if(pass == 1)
+                {
+                    double samplesPerSecond = (double)buffers * BUFFER_SAMPLES / seconds;
+                    System.out.printf("%5.1f MS/s, %d IFFT thread(s) | end to end: %6.1f MS/s (%.1fx real time)%n",
+                        sampleRate / 1e6, ifftThreads, samplesPerSecond / 1e6, samplesPerSecond / sampleRate);
+                }
+            }
+        }
+        finally
+        {
+            channelizer.stop();
         }
     }
 

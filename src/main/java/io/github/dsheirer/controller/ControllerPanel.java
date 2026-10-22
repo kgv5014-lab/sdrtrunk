@@ -33,6 +33,7 @@ import io.github.dsheirer.scanner.ScannerPanel;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
+import io.github.dsheirer.transcription.TranscriptsPanel;
 import java.awt.Dimension;
 import jiconfont.icons.font_awesome.FontAwesome;
 import io.github.dsheirer.gui.theme.ThemedFontIcon;
@@ -55,6 +56,7 @@ public class ControllerPanel extends JPanel
     private MapPanel mMapPanel;
     private TunerViewPanel mTunerManagerPanel;
     private ScannerPanel mScannerPanel;
+    private TranscriptsPanel mTranscriptsPanel;
 
     private JideTabbedPane mTabbedPane;
 
@@ -68,6 +70,7 @@ public class ControllerPanel extends JPanel
         mMapPanel = new MapPanel(mapService, playlistManager.getAliasModel(), iconModel, settingsManager);
         mTunerManagerPanel = new TunerViewPanel(tunerManager, userPreferences);
         mScannerPanel = new ScannerPanel();
+        mTranscriptsPanel = new TranscriptsPanel();
 
         init();
     }
@@ -104,6 +107,7 @@ public class ControllerPanel extends JPanel
         mTabbedPane.setFont(this.getFont());
         mTabbedPane.addTab("Now Playing", mNowPlayingPanel);
         mTabbedPane.addTab("Scanner", mScannerPanel);
+        mTabbedPane.addTab("Transcripts", mTranscriptsPanel);
         mTabbedPane.addTab("Map", mMapPanel);
         mTabbedPane.addTab("Tuners", mTunerManagerPanel);
 

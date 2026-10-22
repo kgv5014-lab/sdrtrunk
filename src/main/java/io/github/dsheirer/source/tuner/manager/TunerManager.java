@@ -579,16 +579,46 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                 if(config instanceof SourceConfigTunerMultipleFrequency)
                 {
                     SourceConfigTunerMultipleFrequency sourceConfigTuner = (SourceConfigTunerMultipleFrequency)config;
-                    TunerChannel tunerChannel = sourceConfigTuner.getTunerChannel(channelSpecification.getBandwidth());
                     String preferredTuner = sourceConfigTuner.getPreferredTuner();
+                    List<Long> lockouts = sourceConfigTuner.getLockoutFrequencies();
 
-                    Source source = getSource(tunerChannel, channelSpecification, preferredTuner, threadName);
+                    //Start with the preferred frequency.  If it is locked out or can't be sourced, try each of the
+                    //remaining frequencies in list order.
+                    List<Long> candidates = new ArrayList<>();
+                    candidates.add(sourceConfigTuner.getPreferredFrequency());
 
-                    if(source instanceof TunerChannelSource)
+                    for(Long frequency: sourceConfigTuner.getFrequencies())
                     {
-                        retVal = new MultiFrequencyTunerChannelSource(this, (TunerChannelSource)source,
-                                sourceConfigTuner.getFrequencies(), channelSpecification,
-                                sourceConfigTuner.getPreferredTuner(), threadName + " MULTI FREQ");
+                        if(!candidates.contains(frequency))
+                        {
+                            candidates.add(frequency);
+                        }
+                    }
+
+                    //If everything is locked out, fall back to the preferred frequency so the channel still starts
+                    if(lockouts.containsAll(candidates))
+                    {
+                        lockouts = Collections.emptyList();
+                    }
+
+                    for(Long frequency: candidates)
+                    {
+                        if(frequency == null || frequency <= 0 || lockouts.contains(frequency))
+                        {
+                            continue;
+                        }
+
+                        TunerChannel tunerChannel = new TunerChannel(frequency, channelSpecification.getBandwidth());
+                        Source source = getSource(tunerChannel, channelSpecification, preferredTuner, threadName);
+
+                        if(source instanceof TunerChannelSource)
+                        {
+                            retVal = new MultiFrequencyTunerChannelSource(this, (TunerChannelSource)source,
+                                sourceConfigTuner.getFrequencies(), sourceConfigTuner.getPriorityFrequencies(),
+                                lockouts, channelSpecification, sourceConfigTuner.getPreferredTuner(),
+                                threadName + " MULTI FREQ");
+                            break;
+                        }
                     }
                 }
                 break;

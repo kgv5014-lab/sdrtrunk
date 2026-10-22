@@ -40,6 +40,9 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
     private String mPreferredTuner;
     private Long mPreferredFrequency;
     private int mFrequencyRotationDelay = ChannelRotationMonitor.CHANNEL_ROTATION_DELAY_MINIMUM;
+    private int mScanHangTime = ChannelRotationMonitor.SCAN_HANG_TIME_DEFAULT;
+    private boolean mScanParallel = true;
+    private List<ScanEntry> mScanEntries = new ArrayList<>();
 
     public SourceConfigTunerMultipleFrequency()
     {
@@ -185,5 +188,147 @@ public class SourceConfigTunerMultipleFrequency extends SourceConfiguration
         {
             mFrequencyRotationDelay = frequencyRotationDelay;
         }
+    }
+
+    /**
+     * Scanner hang time.  Used by conventional (NBFM/AM) scan lists to control how long the scanner remains on a
+     * frequency after a call ends before resuming the scan.
+     *
+     * @return hang time in milliseconds.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "scan_hang_time")
+    public int getScanHangTime()
+    {
+        return mScanHangTime;
+    }
+
+    /**
+     * Sets the scanner hang time
+     * @param hangTime in milliseconds, constrained to the min/max values in the channel rotation monitor.
+     */
+    public void setScanHangTime(int hangTime)
+    {
+        mScanHangTime = Math.max(ChannelRotationMonitor.SCAN_HANG_TIME_MINIMUM,
+            Math.min(ChannelRotationMonitor.SCAN_HANG_TIME_MAXIMUM, hangTime));
+    }
+
+    /**
+     * Indicates if a conventional (NBFM/AM) scan list should monitor frequencies at the same time, instead of
+     * scanning them, when they fit within the bandwidth of an available tuner.
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "scan_parallel")
+    public boolean isScanParallel()
+    {
+        return mScanParallel;
+    }
+
+    /**
+     * Sets the parallel monitoring option for conventional scan lists.
+     */
+    public void setScanParallel(boolean scanParallel)
+    {
+        mScanParallel = scanParallel;
+    }
+
+    /**
+     * Per-frequency scan settings (label, lockout, priority).  Only frequencies that have non-default settings
+     * are included.
+     */
+    @JacksonXmlProperty(isAttribute = false, localName = "scan_entry")
+    public List<ScanEntry> getScanEntries()
+    {
+        return mScanEntries;
+    }
+
+    /**
+     * Sets the per-frequency scan settings.  Entries with only default values are discarded.
+     */
+    public void setScanEntries(List<ScanEntry> scanEntries)
+    {
+        mScanEntries = new ArrayList<>();
+
+        if(scanEntries != null)
+        {
+            for(ScanEntry scanEntry: scanEntries)
+            {
+                if(scanEntry != null && scanEntry.hasSettings())
+                {
+                    mScanEntries.add(scanEntry);
+                }
+            }
+        }
+    }
+
+    /**
+     * Scan entry for the specified frequency.
+     * @param frequency to lookup
+     * @return the matching entry or a new entry with default settings when there isn't a matching entry.
+     */
+    public ScanEntry getScanEntry(long frequency)
+    {
+        for(ScanEntry scanEntry: mScanEntries)
+        {
+            if(scanEntry.getFrequency() == frequency)
+            {
+                return scanEntry;
+            }
+        }
+
+        return new ScanEntry(frequency, null, false, false);
+    }
+
+    /**
+     * Scan entries for each of the frequencies in this configuration, in frequency list order, including default
+     * entries for frequencies that don't have custom settings.
+     */
+    @JsonIgnore
+    public List<ScanEntry> getAllScanEntries()
+    {
+        List<ScanEntry> entries = new ArrayList<>();
+
+        for(Long frequency: mFrequencies)
+        {
+            entries.add(getScanEntry(frequency));
+        }
+
+        return entries;
+    }
+
+    /**
+     * Frequencies that the user has locked out of the scan.
+     */
+    @JsonIgnore
+    public List<Long> getLockoutFrequencies()
+    {
+        List<Long> frequencies = new ArrayList<>();
+
+        for(ScanEntry scanEntry: getAllScanEntries())
+        {
+            if(scanEntry.isLockout())
+            {
+                frequencies.add(scanEntry.getFrequency());
+            }
+        }
+
+        return frequencies;
+    }
+
+    /**
+     * Frequencies that the user has marked as priority.
+     */
+    @JsonIgnore
+    public List<Long> getPriorityFrequencies()
+    {
+        List<Long> frequencies = new ArrayList<>();
+
+        for(ScanEntry scanEntry: getAllScanEntries())
+        {
+            if(scanEntry.isPriority())
+            {
+                frequencies.add(scanEntry.getFrequency());
+            }
+        }
+
+        return frequencies;
     }
 }

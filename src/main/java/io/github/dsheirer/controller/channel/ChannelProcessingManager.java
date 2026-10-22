@@ -43,6 +43,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.record.RecorderFactory;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
+import io.github.dsheirer.scanner.ScannerRegistry;
 import io.github.dsheirer.source.Source;
 import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
@@ -109,6 +110,7 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         mChannelMapModel = channelMapModel;
         mEventLogManager = eventLogManager;
         mTunerManager = tunerManager;
+        ScannerRegistry.getInstance().setTunerManager(tunerManager);
         mAliasModel = aliasModel;
         mUserPreferences = userPreferences;
         mChannelMetadataModel = new ChannelMetadataModel();

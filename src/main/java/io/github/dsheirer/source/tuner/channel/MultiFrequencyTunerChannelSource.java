@@ -27,9 +27,10 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
+import io.github.dsheirer.source.tuner.channel.rotation.ScanSequence;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -47,9 +48,7 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
 
     private TunerManager mTunerManager;
     private TunerChannelSource mTunerChannelSource;
-    private List<Long> mFrequencies;
-    private List<Long> mLockedFrequencies = new ArrayList<>();
-    private int mFrequencyListPointer = 0;
+    private ScanSequence mScanSequence;
     private ChannelSpecification mChannelSpecification;
     private Listener<ComplexSamples> mComplexSamplesListener;
     private Listener<Heartbeat> mHeartbeatListener;
@@ -62,11 +61,39 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
                                             List<Long> frequencies, ChannelSpecification channelSpecification,
                                             String preferredTuner, String threadName)
     {
+        this(tunerManager, tunerChannelSource, frequencies, Collections.emptyList(), Collections.emptyList(),
+            channelSpecification, preferredTuner, threadName);
+    }
+
+    /**
+     * Constructs an instance with optional priority and locked out frequencies, used for conventional scanning.
+     *
+     * @param tunerManager to obtain the next tuner channel source when rotating
+     * @param tunerChannelSource initial source
+     * @param frequencies to rotate through
+     * @param priorityFrequencies to revisit between each of the other frequencies
+     * @param lockedFrequencies to skip
+     * @param channelSpecification for the decoder
+     * @param preferredTuner name or null
+     * @param threadName for the source
+     */
+    public MultiFrequencyTunerChannelSource(TunerManager tunerManager, TunerChannelSource tunerChannelSource,
+                                            List<Long> frequencies, List<Long> priorityFrequencies,
+                                            List<Long> lockedFrequencies, ChannelSpecification channelSpecification,
+                                            String preferredTuner, String threadName)
+    {
         super(null, tunerChannelSource.getTunerChannel(), threadName, null);
         mTunerManager = tunerManager;
         mTunerChannelSource = tunerChannelSource;
         mTunerChannelSource.setSourceEventListener(mConsumerSourceEventAdapter);
-        mFrequencies = frequencies;
+        mScanSequence = new ScanSequence(frequencies, priorityFrequencies);
+
+        for(Long locked: lockedFrequencies)
+        {
+            mScanSequence.lock(locked);
+        }
+
+        mScanSequence.setCurrent(tunerChannelSource.getTunerChannel().getFrequency());
         mChannelSpecification = channelSpecification;
         mPreferredTuner = preferredTuner;
     }
@@ -144,7 +171,11 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
             if(mTunerChannelSource == null)
             {
                 getSourceEventListener().receive(SourceEvent.frequencyRotationFailureNotification(this, nextChannel.getFrequency()));
-                ThreadPool.SCHEDULED.schedule(() -> getNextSource(getTunerChannel(getNextFrequency())), 500, TimeUnit.MILLISECONDS);
+                ThreadPool.SCHEDULED.schedule(() -> {
+                    long next = getNextFrequency();
+                    //If there are no other frequencies available, retry the current frequency
+                    getNextSource(getTunerChannel(next != 0 ? next : getFrequency()));
+                }, 500, TimeUnit.MILLISECONDS);
             }
         }
     }
@@ -182,13 +213,16 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     @Subscribe
     public void process(FrequencyLockChangeRequest request)
     {
-        if(request.isLockRequest() && !mLockedFrequencies.contains(request.getFrequency()))
+        synchronized(mScanSequence)
         {
-            mLockedFrequencies.add(request.getFrequency());
-        }
-        else if(request.isUnlockRequest() && mLockedFrequencies.contains(request.getFrequency()))
-        {
-            mLockedFrequencies.remove(request.getFrequency());
+            if(request.isLockRequest())
+            {
+                mScanSequence.lock(request.getFrequency());
+            }
+            else if(request.isUnlockRequest())
+            {
+                mScanSequence.unlock(request.getFrequency());
+            }
         }
     }
 
@@ -199,33 +233,10 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
      */
     private long getNextFrequency()
     {
-        if(mFrequencies.size() <= 1)
+        synchronized(mScanSequence)
         {
-            return 0;
+            return mScanSequence.next(getFrequency());
         }
-
-        int attempts = 0;
-
-        mFrequencyListPointer = ++mFrequencyListPointer % mFrequencies.size();
-
-        long frequency = mFrequencies.get(mFrequencyListPointer);
-
-        while((mLockedFrequencies.contains(frequency) || frequency == getFrequency()) && attempts < mFrequencies.size())
-        {
-            //If we loop through the entire list back to the current frequency, return 0;
-            if(frequency == getFrequency())
-            {
-                return 0;
-            }
-
-            mFrequencyListPointer = ++mFrequencyListPointer % mFrequencies.size();
-
-            frequency = mFrequencies.get(mFrequencyListPointer);
-
-            attempts++;
-        }
-
-        return frequency;
     }
 
     /**

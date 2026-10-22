@@ -1,0 +1,35 @@
+# Copy this file to config.toml and edit it. Every setting is optional.
+
+[server]
+# 127.0.0.1 keeps the service private to this PC. Use 0.0.0.0 only if SDRTrunk runs on another machine.
+host = "127.0.0.1"
+port = 3000
+# Optional. If set, enter the same value as the API Key in SDRTrunk's Rdio Scanner streaming entry.
+api_key = ""
+# Audio files and the calls.db call log are stored here.
+data_dir = "data"
+
+[transcription]
+# faster-whisper (runs Whisper in this process on your GPU)
+# whisper-cpp    (sends audio to a running whisper.cpp server)
+# none           (log calls without transcribing)
+backend = "faster-whisper"
+language = "en"
+# Calls shorter than this are logged but not transcribed; Whisper invents words on tiny clips.
+min_duration_s = 1.0
+beam_size = 5
+# One term per line: unit names, street names, 10-codes. Helps Whisper spell local names.
+vocabulary_file = "vocabulary.txt"
+
+[faster_whisper]
+model = "large-v3-turbo"
+device = "cuda"
+# Index from `nvidia-smi -L`. Point this at the GTX 1070 Ti; keep the 1070 for Ollama later.
+device_index = 0
+# GTX 10-series (Pascal) cards can't run float16 fast. Use int8 (fastest) or float32.
+compute_type = "int8"
+vad_filter = true
+
+[whisper_cpp]
+# Start the server with e.g.: whisper-server -m models\ggml-large-v3-turbo.bin --port 8080
+url = "http://127.0.0.1:8080/inference"

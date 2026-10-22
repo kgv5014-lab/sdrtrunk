@@ -1,0 +1,7 @@
+fastapi>=0.115
+uvicorn>=0.30
+python-multipart>=0.0.9
+requests>=2.31
+numpy>=1.26
+av>=12
+faster-whisper>=1.1

@@ -1,0 +1,4 @@
+# NVIDIA libraries faster-whisper needs on the GPU (CUDA 12 builds; CUDA 13 dropped GTX 10-series cards).
+# cuDNN 9.7.1 is the newest release whose support matrix was checked to list Pascal (compute 6.1).
+nvidia-cublas-cu12>=12.4,<13
+nvidia-cudnn-cu12==9.7.1.26

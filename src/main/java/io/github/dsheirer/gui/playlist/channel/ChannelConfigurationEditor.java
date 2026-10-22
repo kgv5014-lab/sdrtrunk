@@ -40,7 +40,10 @@ import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
 import java.util.Optional;
 import java.util.function.Predicate;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
+import javafx.beans.property.BooleanProperty;
+import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.transformation.FilteredList;
@@ -48,23 +51,31 @@ import javafx.event.ActionEvent;
 import javafx.event.EventHandler;
 import javafx.geometry.HPos;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
+import javafx.scene.Node;
+import javafx.scene.Parent;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
+import javafx.scene.control.Control;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ScrollPane;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TitledPane;
+import javafx.scene.control.ToggleButton;
 import javafx.scene.control.TextFormatter;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
+import javafx.util.Duration;
 import jiconfont.icons.font_awesome.FontAwesome;
 import jiconfont.javafx.IconNode;
 import org.controlsfx.control.ToggleSwitch;
@@ -78,6 +89,11 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
 {
     private final static Logger mLog = LoggerFactory.getLogger(ChannelConfigurationEditor.class);
 
+    /**
+     * Seconds to wait after the last edit before the changes are saved automatically.
+     */
+    public static final double AUTO_SAVE_DELAY_SECONDS = 2.0;
+
     private PlaylistManager mPlaylistManager;
     protected TunerManager mTunerManager;
     protected UserPreferences mUserPreferences;
@@ -89,9 +105,12 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
     private ComboBox<String> mAliasListComboBox;
     private Button mNewAliasListButton;
     private GridPane mTextFieldPane;
-    private Button mSaveButton;
-    private Button mResetButton;
-    private VBox mButtonBox;
+    private Button mRevertButton;
+    private Button mRestartButton;
+    private Label mSaveStatusLabel;
+    private HBox mButtonBox;
+    private final PauseTransition mAutoSaveTimer = new PauseTransition(Duration.seconds(AUTO_SAVE_DELAY_SECONDS));
+    private final BooleanProperty mRestartNeeded = new SimpleBooleanProperty(false);
     private ScrollPane mTitledPanesScrollPane;
     private VBox mTitledPanesBox;
     private ToggleSwitch mAutoStartSwitch;
@@ -117,16 +136,96 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
 
         setMaxWidth(Double.MAX_VALUE);
 
+        //Wide enough that the labels and controls in the editor aren't truncated when it sits beside the channel list
+        setMinWidth(700);
+
         HBox hbox = new HBox();
         hbox.setSpacing(10);
         hbox.setPadding(new Insets(10,10,10,10));
         hbox.setMaxWidth(Double.MAX_VALUE);
         HBox.setHgrow(getTextFieldPane(), Priority.ALWAYS);
-        HBox.setHgrow(getButtonBox(), Priority.NEVER);
-        hbox.getChildren().addAll(getTextFieldPane(), getButtonBox());
+        hbox.getChildren().add(getTextFieldPane());
         VBox.setVgrow(getTitledPanesScrollPane(), Priority.ALWAYS);
 
-        getChildren().addAll(hbox, getTitledPanesScrollPane());
+        getChildren().addAll(hbox, getButtonBox(), getTitledPanesScrollPane());
+
+        //Auto-save: save once the user has stopped editing for a moment.  Any further edit restarts the countdown.
+        mAutoSaveTimer.setOnFinished(event -> saveIfModified());
+        modifiedProperty().addListener((observable, oldValue, modified) -> {
+            if(modified && getItem() != null)
+            {
+                mAutoSaveTimer.playFromStart();
+            }
+            else
+            {
+                mAutoSaveTimer.stop();
+            }
+
+            updateSaveStatus();
+        });
+        mRestartNeeded.addListener((observable, oldValue, newValue) -> updateSaveStatus());
+    }
+
+    /**
+     * Saves any pending changes immediately and cancels the pending auto-save.  Use this before the editor is
+     * pointed at a different channel or before the channel is started so that nothing is lost.
+     */
+    public void saveIfModified()
+    {
+        mAutoSaveTimer.stop();
+
+        if(getItem() != null && modifiedProperty().get())
+        {
+            boolean running = getItem().isProcessing();
+
+            if(mFilterProcessor != null)
+            {
+                //Clear the table filter while saving so that a renamed channel doesn't drop out of the filtered list
+                mFilterProcessor.clearFilter();
+                save();
+                mFilterProcessor.restoreFilter();
+            }
+            else
+            {
+                save();
+            }
+
+            //A running channel keeps using its old configuration until it is restarted
+            if(running)
+            {
+                mRestartNeeded.set(true);
+            }
+        }
+    }
+
+    /**
+     * Updates the save status text and the revert/restart controls.
+     */
+    private void updateSaveStatus()
+    {
+        boolean modified = modifiedProperty().get();
+        getRevertButton().setVisible(modified);
+        getRevertButton().setManaged(modified);
+        boolean restart = mRestartNeeded.get() && !modified && getItem() != null && getItem().isProcessing();
+        getRestartButton().setVisible(restart);
+        getRestartButton().setManaged(restart);
+
+        if(getItem() == null)
+        {
+            getSaveStatusLabel().setText(null);
+        }
+        else if(modified)
+        {
+            getSaveStatusLabel().setText("Editing... saves automatically");
+        }
+        else if(restart)
+        {
+            getSaveStatusLabel().setText("Saved. Restart the channel to apply");
+        }
+        else
+        {
+            getSaveStatusLabel().setText("All changes saved");
+        }
     }
 
     /**
@@ -163,6 +262,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             getItem().processingProperty().removeListener(mChannelProcessingMonitor);
         }
 
+        mAutoSaveTimer.stop();
+        mRestartNeeded.set(false);
         super.setItem(channel);
 
         if(getItem() != null)
@@ -255,6 +356,43 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         }
 
         modifiedProperty().setValue(false);
+        updateSaveStatus();
+        preventTruncation(this);
+    }
+
+    /**
+     * Stops labels, buttons, check boxes and input fields from shrinking to an ellipsis when the editor sits in a narrow panel.
+     * The editor content scrolls instead.  Wrapping labels are left alone so that they can still wrap.
+     */
+    private static void preventTruncation(Node node)
+    {
+        if(node instanceof Label label)
+        {
+            if(!label.isWrapText())
+            {
+                label.setMinWidth(Region.USE_PREF_SIZE);
+            }
+        }
+        else if(node instanceof ToggleButton || node instanceof CheckBox || node instanceof Button ||
+                node instanceof TextField || node instanceof ComboBox || node instanceof Spinner)
+        {
+            ((Region)node).setMinWidth(Region.USE_PREF_SIZE);
+        }
+        else if(node instanceof TitledPane titledPane && titledPane.getContent() != null)
+        {
+            preventTruncation(titledPane.getContent());
+        }
+        else if(node instanceof ScrollPane scrollPane && scrollPane.getContent() != null)
+        {
+            preventTruncation(scrollPane.getContent());
+        }
+        else if(node instanceof Parent parent && !(node instanceof Control))
+        {
+            for(Node child: parent.getChildrenUnmodifiable())
+            {
+                preventTruncation(child);
+            }
+        }
     }
 
     @Override
@@ -322,20 +460,8 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
             mPlayButton.setOnAction((ActionEvent event) -> {
                 if(getItem() != null)
                 {
-                    if(modifiedProperty().get())
-                    {
-                        Alert alert = new Alert(Alert.AlertType.WARNING,
-                            "Do you want to save these changes?", ButtonType.YES, ButtonType.NO);
-                        alert.setTitle("Channel Configuration Modified");
-                        alert.setHeaderText("Channel configuration has unsaved changes");
-                        alert.initOwner((getPlayButton()).getScene().getWindow());
-                        alert.showAndWait().ifPresent(buttonType -> {
-                            if(buttonType == ButtonType.YES)
-                            {
-                                save();
-                            }
-                        });
-                    }
+                    //Save any pending edits so that the channel starts with what is shown in the editor
+                    saveIfModified();
 
                     if(requiresJmbeLibrarySetup() &&
                        mUserPreferences.getJmbeLibraryPreference().getAlertIfMissingLibraryRequired() &&
@@ -681,80 +807,93 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         return mNewAliasListButton;
     }
 
-    private VBox getButtonBox()
+    /**
+     * Save status line with the undo and restart buttons, shown between the channel details and the settings panes.
+     */
+    private HBox getButtonBox()
     {
         if(mButtonBox == null)
         {
-            mButtonBox = new VBox();
+            mButtonBox = new HBox();
             mButtonBox.setSpacing(10);
-            mButtonBox.getChildren().addAll(getSaveButton(), getResetButton());
+            mButtonBox.setPadding(new Insets(0, 10, 10, 10));
+            mButtonBox.setAlignment(Pos.CENTER_LEFT);
+            mButtonBox.getChildren().addAll(getSaveStatusLabel(), getRevertButton(), getRestartButton());
         }
 
         return mButtonBox;
     }
 
-    private Button getSaveButton()
+    private Label getSaveStatusLabel()
     {
-        if(mSaveButton == null)
+        if(mSaveStatusLabel == null)
         {
-            mSaveButton = new Button("     Save     ");
-            mSaveButton.setMaxWidth(Double.MAX_VALUE);
-            mSaveButton.disableProperty().bind(modifiedProperty().not());
-            mSaveButton.setOnAction(event -> {
-                if(mFilterProcessor != null)
-                {
-                    mFilterProcessor.clearFilter();
-                    save();
-                    mFilterProcessor.restoreFilter();
-                }
-                else
-                {
-                    save();
-                }
-
-                if(getItem().isProcessing())
-                {
-                    Alert alert = new Alert(Alert.AlertType.CONFIRMATION, "Would you like to restart the channel?", ButtonType.YES, ButtonType.NO);
-                    alert.setTitle("Restart Channel?");
-                    alert.setHeaderText("Channel configuration has changed");
-                    alert.initOwner((getPlayButton()).getScene().getWindow());
-                    Optional<ButtonType> result = alert.showAndWait();
-
-                    if(result.get() == ButtonType.YES)
-                    {
-                        try
-                        {
-                            mPlaylistManager.getChannelProcessingManager().stop(getItem());
-                            mPlaylistManager.getChannelProcessingManager().start(getItem());
-                        }
-                        catch(ChannelException se)
-                        {
-                            mLog.error("Error restarting channel", se);
-                        }
-                    }
-                }
-            });
+            mSaveStatusLabel = new Label();
         }
 
-        return mSaveButton;
+        return mSaveStatusLabel;
     }
 
-    private Button getResetButton()
+    /**
+     * Discards edits that haven't been saved yet.  Edits are saved a couple of seconds after the last change, so this
+     * button is only shown during that short window.
+     */
+    private Button getRevertButton()
     {
-        if(mResetButton == null)
+        if(mRevertButton == null)
         {
-            mResetButton = new Button("Reset");
-            mResetButton.setMaxWidth(Double.MAX_VALUE);
-            mResetButton.disableProperty().bind(modifiedProperty().not());
-            mResetButton.setOnAction(event -> {
+            mRevertButton = new Button("Undo Edits");
+            mRevertButton.setVisible(false);
+            mRevertButton.setManaged(false);
+            mRevertButton.setOnAction(event -> {
+                mAutoSaveTimer.stop();
                 modifiedProperty().set(false);
                 setItem(getItem());
             });
         }
 
-        return mResetButton;
+        return mRevertButton;
     }
 
+    /**
+     * Restarts the running channel so that the saved changes take effect.
+     */
+    private Button getRestartButton()
+    {
+        if(mRestartButton == null)
+        {
+            mRestartButton = new Button("Restart Channel");
+            mRestartButton.setVisible(false);
+            mRestartButton.setManaged(false);
+            mRestartButton.setOnAction(event -> {
+                Channel channel = getItem();
+
+                if(channel != null)
+                {
+                    ThreadPool.CACHED.execute(() -> {
+                        try
+                        {
+                            mPlaylistManager.getChannelProcessingManager().stop(channel);
+                            mPlaylistManager.getChannelProcessingManager().start(channel);
+                        }
+                        catch(ChannelException ce)
+                        {
+                            mLog.error("Error restarting channel", ce);
+                            Platform.runLater(() -> {
+                                Alert alert = new Alert(Alert.AlertType.ERROR, ce.getMessage(), ButtonType.OK);
+                                alert.setTitle("Channel Restart Error");
+                                alert.setHeaderText("Can't restart channel");
+                                alert.initOwner(getRestartButton().getScene().getWindow());
+                                alert.showAndWait();
+                            });
+                        }
+                    });
+                }
+            });
+        }
+
+        return mRestartButton;
+    }
 
     /**
      * Simple string change listener that sets the editor modified flag to true any time text fields are edited.
@@ -775,6 +914,7 @@ public abstract class ChannelConfigurationEditor extends Editor<Channel>
         {
             if(getItem() != null && newValue != null)
             {
+                mRestartNeeded.set(false);
                 setPlayButtonState(newValue);
             }
         }

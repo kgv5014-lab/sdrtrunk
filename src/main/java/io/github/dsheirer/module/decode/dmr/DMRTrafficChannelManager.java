@@ -92,6 +92,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private final static Logger mLog = LoggerFactory.getLogger(DMRTrafficChannelManager.class);
     public static final String CHANNEL_START_REJECTED = " REJECTED - NO TUNER";
     public static final String DATA_CALL_IGNORED = "DATA CALL IGNORED";
+    public static final String ENCRYPTED_CALL_IGNORED = "ENCRYPTED CALL IGNORED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
     public static final String NO_FREQUENCY = "NO FREQUENCY - CHECK PLAYLIST CHANNEL CONFIG LSN CHANNEL MAP";
     public static final long EVENT_TIME_STALE_THRESHOLD = 5000; //5 seconds
@@ -108,6 +109,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
     private TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
     private Channel mParentChannel;
     private boolean mIgnoreDataCalls;
+    private boolean mIgnoreEncryptedCalls;
 
     //Used as temporary storage for message and decode event history during Cap+ REST channel rotation
     private DecodeEventHistory mTransientDecodeEventHistory;
@@ -127,6 +129,7 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigDMR)
         {
             mIgnoreDataCalls = ((DecodeConfigDMR)parentChannel.getDecodeConfiguration()).getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = ((DecodeConfigDMR)parentChannel.getDecodeConfiguration()).getIgnoreEncryptedCalls();
         }
 
         createTrafficChannels();
@@ -469,6 +472,21 @@ public class DMRTrafficChannelManager extends TrafficChannelManager implements I
                     else if(!event.getDetails().endsWith(DATA_CALL_IGNORED))
                     {
                         event.setDetails(event.getDetails() + " - " + DATA_CALL_IGNORED);
+                    }
+
+                    broadcast(event);
+                    return;
+                }
+
+                if(mIgnoreEncryptedCalls && encrypted)
+                {
+                    if(event.getDetails() == null)
+                    {
+                        event.setDetails(ENCRYPTED_CALL_IGNORED);
+                    }
+                    else if(!event.getDetails().endsWith(ENCRYPTED_CALL_IGNORED))
+                    {
+                        event.setDetails(event.getDetails() + " - " + ENCRYPTED_CALL_IGNORED);
                     }
 
                     broadcast(event);

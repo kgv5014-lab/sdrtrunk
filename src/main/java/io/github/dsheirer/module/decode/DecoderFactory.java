@@ -917,6 +917,7 @@ public class DecoderFactory
                     DecodeConfigP25Phase1 originalP25P1 = (DecodeConfigP25Phase1)config;
                     DecodeConfigP25Phase1 copyP25P1 = new DecodeConfigP25Phase1();
                     copyP25P1.setIgnoreDataCalls(originalP25P1.getIgnoreDataCalls());
+                    copyP25P1.setIgnoreEncryptedCalls(originalP25P1.getIgnoreEncryptedCalls());
                     copyP25P1.setModulation(originalP25P1.getModulation());
                     copyP25P1.setTrafficChannelPoolSize(originalP25P1.getTrafficChannelPoolSize());
                     transferJMBESettings(originalP25P1, copyP25P1);

@@ -83,6 +83,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     private EventLogConfigurationEditor mEventLogConfigurationEditor;
     private RecordConfigurationEditor mRecordConfigurationEditor;
     private ToggleSwitch mIgnoreDataCallsButton;
+    private ToggleSwitch mIgnoreEncryptedCallsButton;
     private ToggleSwitch mIgnoreCRCChecksumsButton;
     private ToggleSwitch mUseCompressedTalkgroupsToggle;
     private Spinner<Integer> mTrafficChannelPoolSizeSpinner;
@@ -175,6 +176,14 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             GridPane.setHalignment(useCompressedTalkgroupsLabel, HPos.LEFT);
             GridPane.setConstraints(useCompressedTalkgroupsLabel, 7, row);
             gridPane.getChildren().add(useCompressedTalkgroupsLabel);
+
+            GridPane.setConstraints(getIgnoreEncryptedCallsButton(), 2, ++row);
+            gridPane.getChildren().add(getIgnoreEncryptedCallsButton());
+
+            Label ignoreEncryptedLabel = new Label("Ignore Encrypted Calls");
+            GridPane.setHalignment(ignoreEncryptedLabel, HPos.LEFT);
+            GridPane.setConstraints(ignoreEncryptedLabel, 3, row);
+            gridPane.getChildren().add(ignoreEncryptedLabel);
 
             Label timeslotTableLabel = new Label("Logical Channel Number (LCN) to Frequency Map. Required for: Connect Plus and Tier-III systems that don't use absolute frequencies.  LSN = Logical Slot Number");
             GridPane.setHalignment(timeslotTableLabel, HPos.LEFT);
@@ -527,6 +536,21 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         return mIgnoreDataCallsButton;
     }
 
+    private ToggleSwitch getIgnoreEncryptedCallsButton()
+    {
+        if(mIgnoreEncryptedCallsButton == null)
+        {
+            mIgnoreEncryptedCallsButton = new ToggleSwitch();
+            mIgnoreEncryptedCallsButton.setDisable(true);
+            mIgnoreEncryptedCallsButton.setTooltip(new Tooltip("Don't start a traffic channel for calls that the " +
+                "control channel announces as encrypted. Frees traffic channels and tuners for clear calls."));
+            mIgnoreEncryptedCallsButton.selectedProperty()
+                .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+
+        return mIgnoreEncryptedCallsButton;
+    }
+
     private ToggleSwitch getIgnoreCRCChecksumsButton()
     {
         if(mIgnoreCRCChecksumsButton == null)
@@ -664,6 +688,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         boolean disable = config == null;
         getIgnoreCRCChecksumsButton().setDisable(disable);
         getIgnoreDataCallsButton().setDisable(disable);
+        getIgnoreEncryptedCallsButton().setDisable(disable);
         getUseCompressedTalkgroupsToggle().setDisable(disable);
         getTrafficChannelPoolSizeSpinner().setDisable(disable);
         getTimeslotTable().getItems().clear();
@@ -684,6 +709,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             DecodeConfigDMR decodeConfig = (DecodeConfigDMR)config;
 
             getIgnoreDataCallsButton().setSelected(decodeConfig.getIgnoreDataCalls());
+            getIgnoreEncryptedCallsButton().setSelected(decodeConfig.getIgnoreEncryptedCalls());
             getIgnoreCRCChecksumsButton().setSelected(decodeConfig.getIgnoreCRCChecksums());
             getUseCompressedTalkgroupsToggle().setSelected(decodeConfig.isUseCompressedTalkgroups());
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(decodeConfig.getTrafficChannelPoolSize());
@@ -701,6 +727,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         {
             getIgnoreCRCChecksumsButton().setSelected(false);
             getIgnoreDataCallsButton().setSelected(false);
+            getIgnoreEncryptedCallsButton().setSelected(false);
             getUseCompressedTalkgroupsToggle().setSelected(false);
             getTrafficChannelPoolSizeSpinner().getValueFactory().setValue(0);
             getChannelRotationDelaySpinner().getValueFactory().setValue(200);
@@ -726,6 +753,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
 
         config.setIgnoreCRCChecksums(getIgnoreCRCChecksumsButton().isSelected());
         config.setIgnoreDataCalls(getIgnoreDataCallsButton().isSelected());
+        config.setIgnoreEncryptedCalls(getIgnoreEncryptedCallsButton().isSelected());
         config.setTrafficChannelPoolSize(getTrafficChannelPoolSizeSpinner().getValue());
         config.setUseCompressedTalkgroups(getUseCompressedTalkgroupsToggle().isSelected());
         config.setTimeslotMap(new ArrayList<>(getTimeslotTable().getItems()));

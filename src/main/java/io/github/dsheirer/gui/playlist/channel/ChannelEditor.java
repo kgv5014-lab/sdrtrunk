@@ -32,6 +32,7 @@ import io.github.dsheirer.util.ThreadPool;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -370,6 +371,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         if(mSearchField == null)
         {
             mSearchField = TextFields.createClearableTextField();
+            mSearchField.setPromptText("Name, frequency, system, site, protocol or alias list");
             mSearchField.textProperty().addListener((observable, oldValue, newValue) -> updateChannelListFilter());
         }
 
@@ -1085,6 +1087,33 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             if(channel.getDecodeConfiguration().getDecoderType().toString().toLowerCase().contains(mFilterText))
             {
                 return true;
+            }
+
+            if(channel.getAliasListName() != null && channel.getAliasListName().toLowerCase().contains(mFilterText))
+            {
+                return true;
+            }
+
+            return matchesFrequency(channel);
+        }
+
+        /**
+         * Matches the filter text against the channel's frequencies in MHz, so that 154.43, 154.430 and 4.43 all
+         * match a channel on 154.430 MHz.
+         */
+        private boolean matchesFrequency(Channel channel)
+        {
+            if(channel.getFrequencyList() == null || !mFilterText.matches("[0-9.]+"))
+            {
+                return false;
+            }
+
+            for(Long frequency: channel.getFrequencyList())
+            {
+                if(frequency != null && String.format(Locale.US, "%.6f", frequency / 1E6).contains(mFilterText))
+                {
+                    return true;
+                }
             }
 
             return false;

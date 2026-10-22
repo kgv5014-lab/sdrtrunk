@@ -46,6 +46,11 @@ public class DiscoveryConfiguration
     private ChannelRaster mChannelRaster = null;
     private double mMaximumRasterErrorHz = 2_000;
     private List<FrequencyRange> mExcludedRanges = new ArrayList<>();
+    private volatile boolean mAutoChannels = false;
+    private volatile int mMaximumChannels = 8;
+    private volatile int mChannelHangTimeMs = 5_000;
+    private volatile ChannelBandwidth mChannelBandwidth = ChannelBandwidth.AUTO;
+    private int mWideChannelWidthHz = 7_000;
 
     /**
      * Constructs an instance with default settings
@@ -293,6 +298,98 @@ public class DiscoveryConfiguration
     public void setMaximumRasterErrorHz(double maximumRasterErrorHz)
     {
         mMaximumRasterErrorHz = maximumRasterErrorHz;
+    }
+
+    /**
+     * Indicates if a temporary NBFM channel is started for each discovered carrier so that it can be heard and
+     * recorded.
+     */
+    public boolean isAutoChannels()
+    {
+        return mAutoChannels;
+    }
+
+    public void setAutoChannels(boolean autoChannels)
+    {
+        mAutoChannels = autoChannels;
+    }
+
+    /**
+     * Maximum number of temporary channels running at the same time.  Carriers found while at the limit are listed
+     * but not given a channel.
+     */
+    public int getMaximumChannels()
+    {
+        return mMaximumChannels;
+    }
+
+    public void setMaximumChannels(int maximumChannels)
+    {
+        mMaximumChannels = Math.max(1, maximumChannels);
+    }
+
+    /**
+     * Time a temporary channel stays open after its carrier ends, so that replies on the same frequency are heard on
+     * the same channel.
+     */
+    public int getChannelHangTimeMs()
+    {
+        return mChannelHangTimeMs;
+    }
+
+    public void setChannelHangTimeMs(int channelHangTimeMs)
+    {
+        mChannelHangTimeMs = Math.max(0, channelHangTimeMs);
+    }
+
+    /**
+     * Bandwidth of temporary channels, or AUTO to choose from each carrier's measured width.
+     */
+    public ChannelBandwidth getChannelBandwidth()
+    {
+        return mChannelBandwidth;
+    }
+
+    public void setChannelBandwidth(ChannelBandwidth channelBandwidth)
+    {
+        mChannelBandwidth = channelBandwidth;
+    }
+
+    /**
+     * With AUTO channel bandwidth, carriers measured wider than this (20 dB down) get a 25 kHz channel.  12.5 kHz
+     * voice channels measure about 4 - 6 kHz and 25 kHz channels about 8 - 13 kHz.
+     */
+    public int getWideChannelWidthHz()
+    {
+        return mWideChannelWidthHz;
+    }
+
+    public void setWideChannelWidthHz(int wideChannelWidthHz)
+    {
+        mWideChannelWidthHz = wideChannelWidthHz;
+    }
+
+    /**
+     * Temporary channel bandwidth options.
+     */
+    public enum ChannelBandwidth
+    {
+        AUTO("Auto"),
+        NARROW("12.5 kHz"),
+        WIDE("25 kHz");
+
+        private final String mLabel;
+
+        ChannelBandwidth(String label)
+        {
+            mLabel = label;
+        }
+
+        @Override
+        public String toString()
+        {
+            return mLabel;
+        }
     }
 
     /**

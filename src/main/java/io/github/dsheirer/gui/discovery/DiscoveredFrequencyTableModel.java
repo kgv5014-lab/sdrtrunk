@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.gui.discovery;
 
+import io.github.dsheirer.module.decode.nbfm.discovery.DiscoveryChannelManager;
 import io.github.dsheirer.module.decode.nbfm.discovery.DiscoveryEvent;
 import io.github.dsheirer.module.decode.nbfm.discovery.TrackedCarrier;
 import java.text.SimpleDateFormat;
@@ -41,9 +42,10 @@ public class DiscoveredFrequencyTableModel extends AbstractTableModel
     public static final int COLUMN_SNR = 5;
     public static final int COLUMN_WIDTH = 6;
     public static final int COLUMN_PLAYLIST = 7;
+    public static final int COLUMN_CHANNEL = 8;
 
     private static final String[] COLUMNS = {"Frequency (MHz)", "Status", "Last Heard", "Transmissions",
-            "Airtime (s)", "Peak SNR (dB)", "Width (kHz)", "In Playlist"};
+            "Airtime (s)", "Peak SNR (dB)", "Width (kHz)", "In Playlist", "Channel"};
 
     private final SimpleDateFormat mTimeFormat = new SimpleDateFormat("HH:mm:ss");
     private final List<Row> mRows = new ArrayList<>();
@@ -163,6 +165,31 @@ public class DiscoveredFrequencyTableModel extends AbstractTableModel
         fireTableRowsUpdated(index, index);
     }
 
+    /**
+     * Applies a temporary channel status change to the frequency's row, if it is listed.
+     */
+    public void update(DiscoveryChannelManager.ChannelStatus status)
+    {
+        for(int x = 0; x < mRows.size(); x++)
+        {
+            Row row = mRows.get(x);
+
+            if(row.mFrequency == status.frequency())
+            {
+                row.mChannel = switch(status.state())
+                {
+                    case OPEN -> "Open (" + status.detail() + ")";
+                    case CLOSED -> "";
+                    case NO_ROOM -> "No free channel";
+                    case OUT_OF_BAND -> "Too near band edge";
+                    case FAILED -> "Failed: " + status.detail();
+                };
+                fireTableRowsUpdated(x, x);
+                return;
+            }
+        }
+    }
+
     @Override
     public int getRowCount()
     {
@@ -208,6 +235,7 @@ public class DiscoveredFrequencyTableModel extends AbstractTableModel
             case COLUMN_SNR -> Math.round(row.mPeakSnr * 10.0) / 10.0;
             case COLUMN_WIDTH -> Math.round(row.mWidth / 100.0) / 10.0;
             case COLUMN_PLAYLIST -> row.mInPlaylist ? "Yes" : "";
+            case COLUMN_CHANNEL -> row.mChannel;
             default -> null;
         };
     }
@@ -239,6 +267,7 @@ public class DiscoveredFrequencyTableModel extends AbstractTableModel
         private long mAirtimeMs;
         private double mPeakSnr;
         private double mWidth;
+        private String mChannel = "";
 
         Row(long frequency, boolean inPlaylist)
         {

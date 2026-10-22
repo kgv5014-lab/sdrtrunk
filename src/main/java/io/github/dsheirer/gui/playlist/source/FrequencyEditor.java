@@ -44,6 +44,7 @@ import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.TextField;
 import javafx.scene.control.Tooltip;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
@@ -126,9 +127,11 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
 
     private void init()
     {
-        HBox hBox = new HBox();
+        //Wraps the tuner settings below the frequencies when the editor is narrow
+        FlowPane hBox = new FlowPane();
         hBox.setPadding(new Insets(10,10,10,10));
-        hBox.setSpacing(10);
+        hBox.setHgap(10);
+        hBox.setVgap(10);
         hBox.setAlignment(Pos.CENTER_LEFT);
 
         Label label = new Label(mAllowMultipleFrequencies ? "Frequencies (MHz)" : "Frequency (MHz)");

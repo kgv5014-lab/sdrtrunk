@@ -56,7 +56,6 @@ import javafx.scene.control.Menu;
 import javafx.scene.control.MenuButton;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SelectionMode;
-import javafx.scene.control.Separator;
 import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.TableCell;
@@ -67,8 +66,10 @@ import javafx.scene.control.ToggleButton;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.input.MouseButton;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.VBox;
 import javafx.scene.paint.Color;
 import javafx.util.Callback;
@@ -96,8 +97,8 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
     private Button mStartButton;
     private Button mStopButton;
     private MenuButton mAutoStartButton;
-    private VBox mButtonBox;
-    private HBox mSearchAndViewBox;
+    private FlowPane mButtonBox;
+    private FlowPane mSearchAndViewBox;
     private TextField mSearchField;
     private SegmentedButton mViewSegmentedButton;
     private ToggleButton mAllToggleButton;
@@ -122,19 +123,17 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         mUnknownConfigurationEditor = new UnknownConfigurationEditor(mPlaylistManager, mTunerManager,
                 userPreferences, this);
 
-        HBox channelsBox = new HBox();
-        channelsBox.setSpacing(10.0);
-        HBox.setHgrow(getChannelTableView(), Priority.ALWAYS);
-        channelsBox.getChildren().addAll(getChannelTableView(), getButtonBox());
+        //Channel list on the left and the editor for the selected channel beside it, so that the list stays visible
+        VBox listBox = new VBox();
+        listBox.setPadding(new Insets(10,10,10,10));
+        listBox.setSpacing(10);
+        listBox.setMinWidth(300);
+        VBox.setVgrow(getChannelTableView(), Priority.ALWAYS);
+        listBox.getChildren().addAll(getSearchAndViewBox(), getButtonBox(), getChannelTableView());
 
-        VBox topBox = new VBox();
-        topBox.setPadding(new Insets(10,10,10,10));
-        topBox.setSpacing(10);
-        VBox.setVgrow(channelsBox, Priority.ALWAYS);
-        topBox.getChildren().addAll(getSearchAndViewBox(), channelsBox);
-
-        setOrientation(Orientation.VERTICAL);
-        getItems().addAll(topBox, getChannelConfigurationEditor());
+        setOrientation(Orientation.HORIZONTAL);
+        getItems().addAll(listBox, getChannelConfigurationEditor());
+        setDividerPositions(0.42);
     }
 
     /**
@@ -170,7 +169,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
 
     private void setChannel(Channel channel)
     {
-        promptToSaveChanges();
+        saveChanges();
 
         if(channel == null)
         {
@@ -222,33 +221,12 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
     }
 
     /**
-     * Prompts the user to save if the contents of the current channel editor have been modified
+     * Saves any pending edits in the current channel editor.  Edits are normally saved automatically a couple of
+     * seconds after the last change, so this is used to flush them before the editor moves to another channel.
      */
-    private void promptToSaveChanges()
+    private void saveChanges()
     {
-        if(getChannelConfigurationEditor().modifiedProperty().get())
-        {
-            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-            alert.getButtonTypes().clear();
-            alert.getButtonTypes().addAll(ButtonType.NO, ButtonType.YES);
-            alert.setTitle("Save Changes");
-            alert.setHeaderText("Channel configuration has been modified");
-            alert.setContentText("Do you want to save these changes?");
-            alert.initOwner(((Node)getButtonBox()).getScene().getWindow());
-
-            //Workaround for JavaFX KDE on Linux bug in FX 10/11: https://bugs.openjdk.java.net/browse/JDK-8179073
-            alert.setResizable(true);
-            alert.onShownProperty().addListener(e -> {
-                Platform.runLater(() -> alert.setResizable(false));
-            });
-
-            Optional<ButtonType> result = alert.showAndWait();
-
-            if(result.get() == ButtonType.YES)
-            {
-                getChannelConfigurationEditor().save();
-            }
-        }
+        getChannelConfigurationEditor().saveIfModified();
     }
 
     private void createNewChannel(DecoderType decoderType)
@@ -290,6 +268,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         if(mAllToggleButton == null)
         {
             mAllToggleButton = new ToggleButton("All");
+            mAllToggleButton.setMinWidth(Region.USE_PREF_SIZE);
         }
 
         return mAllToggleButton;
@@ -300,6 +279,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         if(mAutoStartToggleButton == null)
         {
             mAutoStartToggleButton = new ToggleButton("Auto-Start");
+            mAutoStartToggleButton.setMinWidth(Region.USE_PREF_SIZE);
         }
 
         return mAutoStartToggleButton;
@@ -310,6 +290,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         if(mPlayingToggleButton == null)
         {
             mPlayingToggleButton = new ToggleButton("Playing");
+            mPlayingToggleButton.setMinWidth(Region.USE_PREF_SIZE);
         }
 
         return mPlayingToggleButton;
@@ -339,25 +320,29 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         return mChannelConfigurationEditor;
     }
 
-    private HBox getSearchAndViewBox()
+    private FlowPane getSearchAndViewBox()
     {
         if(mSearchAndViewBox == null)
         {
-            mSearchAndViewBox = new HBox();
+            //Wraps onto a second line when the channel list is narrow
+            mSearchAndViewBox = new FlowPane();
             mSearchAndViewBox.setAlignment(Pos.CENTER_LEFT);
-            mSearchAndViewBox.setSpacing(10);
+            mSearchAndViewBox.setHgap(10);
+            mSearchAndViewBox.setVgap(10);
 
             HBox searchBox = new HBox();
             searchBox.setSpacing(5);
             searchBox.setAlignment(Pos.CENTER);
             Label searchLabel = new Label("Search:");
             searchLabel.setAlignment(Pos.CENTER_RIGHT);
+            searchLabel.setMinWidth(Region.USE_PREF_SIZE);
             searchBox.getChildren().addAll(searchLabel, getSearchField());
 
             HBox viewBox = new HBox();
             viewBox.setSpacing(5);
             viewBox.setAlignment(Pos.CENTER);
             Label viewLabel = new Label("View Channels:");
+            viewLabel.setMinWidth(Region.USE_PREF_SIZE);
             viewBox.getChildren().addAll(viewLabel, getViewSegmentedButton());
 
             mSearchAndViewBox.getChildren().addAll(searchBox, viewBox);
@@ -372,6 +357,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mSearchField = TextFields.createClearableTextField();
             mSearchField.setPromptText("Name, frequency, system, site, protocol or alias list");
+            mSearchField.setPrefWidth(200);
             mSearchField.textProperty().addListener((observable, oldValue, newValue) -> updateChannelListFilter());
         }
 
@@ -425,15 +411,18 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         if(mChannelTableView == null)
         {
             mChannelTableView = new TableView<>();
+            mChannelTableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
 
-            TableColumn<Channel,Boolean> playingColumn = new TableColumn("Playing");
-            playingColumn.setPrefWidth(75);
+            TableColumn<Channel,Boolean> playingColumn = new TableColumn("Play");
+            playingColumn.setPrefWidth(55);
+            playingColumn.setMinWidth(50);
             playingColumn.setCellValueFactory(new PropertyValueFactory<>("processing"));
             playingColumn.setCellFactory(param -> new PlayStopTableCell());
 
             TableColumn<Channel,Boolean> autoStartColumn = new TableColumn<>("Auto-Start");
             autoStartColumn.setCellValueFactory(new PropertyValueFactory<>("autoStart"));
-            autoStartColumn.setPrefWidth(85);
+            autoStartColumn.setPrefWidth(80);
+            autoStartColumn.setMinWidth(78);
             autoStartColumn.setCellFactory(param -> {
                 TableCell<Channel,Boolean> tableCell = new TableCell<>()
                 {
@@ -461,27 +450,33 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
 
             TableColumn systemColumn = new TableColumn("System");
             systemColumn.setCellValueFactory(new PropertyValueFactory<>("system"));
-            systemColumn.setPrefWidth(175);
+            systemColumn.setPrefWidth(110);
+            systemColumn.setMinWidth(70);
 
             TableColumn siteColumn = new TableColumn("Site");
             siteColumn.setCellValueFactory(new PropertyValueFactory<>("site"));
-            siteColumn.setPrefWidth(175);
+            siteColumn.setPrefWidth(90);
+            siteColumn.setMinWidth(50);
 
             TableColumn nameColumn = new TableColumn("Name");
             nameColumn.setCellValueFactory(new PropertyValueFactory<>("name"));
-            nameColumn.setPrefWidth(175);
+            nameColumn.setPrefWidth(130);
+            nameColumn.setMinWidth(70);
 
-            TableColumn frequencyColumn = new TableColumn("Frequency");
+            TableColumn frequencyColumn = new TableColumn("MHz");
             frequencyColumn.setCellValueFactory(new FrequencyCellValueFactory());
-            frequencyColumn.setPrefWidth(100);
+            frequencyColumn.setPrefWidth(80);
+            frequencyColumn.setMinWidth(55);
 
             TableColumn protocolColumn = new TableColumn("Protocol");
             protocolColumn.setCellValueFactory(new ProtocolCellValueFactory());
-            protocolColumn.setPrefWidth(100);
+            protocolColumn.setPrefWidth(80);
+            protocolColumn.setMinWidth(65);
 
             TableColumn aliaslistColumn = new TableColumn("Alias List");
             aliaslistColumn.setCellValueFactory(new AliasListCellValueFactory());
-            aliaslistColumn.setPrefWidth(150);
+            aliaslistColumn.setPrefWidth(100);
+            aliaslistColumn.setMinWidth(75);
 
             mChannelTableView.getColumns().addAll(systemColumn, siteColumn, nameColumn, frequencyColumn, protocolColumn,
                     playingColumn, autoStartColumn, aliaslistColumn);
@@ -519,14 +514,15 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         return mPlaceholderLabel;
     }
 
-    private VBox getButtonBox()
+    private FlowPane getButtonBox()
     {
         if(mButtonBox == null)
         {
-            mButtonBox = new VBox();
-            mButtonBox.setSpacing(10);
-            mButtonBox.getChildren().addAll(getNewButton(), getCloneButton(), getDeleteButton(), new Separator(),
-                getStartButton(), getStopButton(), getAutoStartButton());
+            mButtonBox = new FlowPane();
+            mButtonBox.setHgap(10);
+            mButtonBox.setVgap(10);
+            mButtonBox.getChildren().addAll(getNewButton(), getCloneButton(), getDeleteButton(), getStartButton(),
+                getStopButton(), getAutoStartButton());
         }
 
         return mButtonBox;
@@ -538,7 +534,6 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mNewButton = new MenuButton("New");
             mNewButton.setAlignment(Pos.CENTER);
-            mNewButton.setMaxWidth(Double.MAX_VALUE);
 
             MenuItem decodersItem = new MenuItem("Decoder");
             decodersItem.setDisable(true);
@@ -600,7 +595,6 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mDeleteButton = new Button("Delete");
             mDeleteButton.setDisable(true);
-            mDeleteButton.setMaxWidth(Double.MAX_VALUE);
             mDeleteButton.setOnAction(event -> deleteSelectedChannels());
         }
 
@@ -613,7 +607,6 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mCloneButton = new Button("Clone");
             mCloneButton.setDisable(true);
-            mCloneButton.setMaxWidth(Double.MAX_VALUE);
             mCloneButton.setOnAction(event -> cloneSelectedChannels());
         }
 
@@ -626,7 +619,6 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mStartButton = new Button("Start");
             mStartButton.setDisable(true);
-            mStartButton.setMaxWidth(Double.MAX_VALUE);
             mStartButton.setTooltip(new Tooltip("Start all selected channels"));
             mStartButton.setOnAction(event -> startSelectedChannels(true));
         }
@@ -640,7 +632,6 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mStopButton = new Button("Stop");
             mStopButton.setDisable(true);
-            mStopButton.setMaxWidth(Double.MAX_VALUE);
             mStopButton.setTooltip(new Tooltip("Stop all selected channels"));
             mStopButton.setOnAction(event -> startSelectedChannels(false));
         }
@@ -655,7 +646,6 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             mAutoStartButton = new MenuButton("Auto-Start");
             mAutoStartButton.setDisable(true);
             mAutoStartButton.setAlignment(Pos.CENTER);
-            mAutoStartButton.setMaxWidth(Double.MAX_VALUE);
             MenuItem on = new MenuItem("Turn On For Selected");
             on.setOnAction(event -> setAutoStartSelectedChannels(true));
             MenuItem off = new MenuItem("Turn Off For Selected");
@@ -701,7 +691,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
      */
     private void startSelectedChannels(boolean start)
     {
-        promptToSaveChanges();
+        saveChanges();
 
         List<Channel> channels = getSelectedChannels();
         channels.removeIf(channel -> channel.isProcessing() == start);
@@ -754,7 +744,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
      */
     private void setAutoStartSelectedChannels(boolean autoStart)
     {
-        promptToSaveChanges();
+        saveChanges();
 
         for(Channel channel: getSelectedChannels())
         {

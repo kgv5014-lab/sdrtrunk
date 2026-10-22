@@ -325,7 +325,7 @@ public class JavaFxWindowManager extends Application
         if(mPlaylistStage == null)
         {
             createJFXPanel();
-            Scene scene = new Scene(getPlaylistEditor(), 1000, 750);
+            Scene scene = new Scene(getPlaylistEditor(), 1280, 800);
             ThemeManager.getInstance().register(scene);
             mPlaylistStage = new Stage();
             mPlaylistStage.setTitle("sdrtrunk - Playlist Editor");

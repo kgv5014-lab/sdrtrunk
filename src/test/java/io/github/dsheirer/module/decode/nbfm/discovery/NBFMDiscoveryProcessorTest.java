@@ -138,4 +138,12 @@ public class NBFMDiscoveryProcessorTest
         assertEquals(154_430_000, heard.getFrequency());
         assertTrue(heard.getTotalAirtimeMs() > 700, "Airtime: " + heard);
     }
+
+    @Test
+    void readsCenterFrequencyFromRecordingName()
+    {
+        assertEquals(155_400_000L,
+                NBFMDiscoveryFileAnalyzer.getCenterFrequency("RTL-2832 SN 00000001_155400000_baseband_20261022_101500.wav"));
+        assertEquals(null, NBFMDiscoveryFileAnalyzer.getCenterFrequency("recording.wav"));
+    }
 }

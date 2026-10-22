@@ -18,6 +18,7 @@
  */
 package io.github.dsheirer.module.decode.nbfm.discovery;
 
+import io.github.dsheirer.sample.Listener;
 import java.io.BufferedInputStream;
 import java.io.File;
 import java.io.IOException;
@@ -25,6 +26,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.sound.sampled.AudioFormat;
 import javax.sound.sampled.AudioInputStream;
 import javax.sound.sampled.AudioSystem;
@@ -40,6 +43,8 @@ public class NBFMDiscoveryFileAnalyzer
 {
     private static final int SAMPLES_PER_READ = 65536;
 
+    private static final Pattern RECORDING_FREQUENCY = Pattern.compile("_(\\d{7,10})_baseband");
+
     /**
      * Analyzes the recording.
      * @param file baseband recording
@@ -51,7 +56,22 @@ public class NBFMDiscoveryFileAnalyzer
             throws IOException, UnsupportedAudioFileException
     {
         List<DiscoveryEvent> events = new ArrayList<>();
-        processor.setListener(events::add);
+        analyze(file, centerFrequency, processor, events::add);
+        return events;
+    }
+
+    /**
+     * Analyzes the recording, delivering each event to the listener as it occurs.  Stops early if the calling thread
+     * is interrupted.
+     * @param file baseband recording
+     * @param centerFrequency tuner centre frequency of the recording in Hertz
+     * @param processor configured discovery processor
+     * @param listener to receive events
+     */
+    public static void analyze(File file, long centerFrequency, NBFMDiscoveryProcessor processor,
+                               Listener<DiscoveryEvent> listener) throws IOException, UnsupportedAudioFileException
+    {
+        processor.setListener(listener);
 
         try(AudioInputStream stream = AudioSystem.getAudioInputStream(new BufferedInputStream(
                 Files.newInputStream(file.toPath()))))
@@ -71,7 +91,7 @@ public class NBFMDiscoveryFileAnalyzer
             boolean bigEndian = format.isBigEndian();
             int read;
 
-            while((read = stream.readNBytes(bytes, 0, bytes.length)) > 0)
+            while((read = stream.readNBytes(bytes, 0, bytes.length)) > 0 && !Thread.currentThread().isInterrupted())
             {
                 int count = read / 4;
                 float[] i = new float[count];
@@ -88,7 +108,18 @@ public class NBFMDiscoveryFileAnalyzer
         }
 
         processor.getTracker().clear(processor.getTimestamp());
-        return events;
+    }
+
+    /**
+     * Tuner centre frequency from the name of a recording made by sdrtrunk's tuner recorder, which is named
+     * {tuner}_{frequency}_baseband_{timestamp}.wav
+     * @param filename of the recording
+     * @return centre frequency in Hertz, or null if the name doesn't contain one
+     */
+    public static Long getCenterFrequency(String filename)
+    {
+        Matcher matcher = RECORDING_FREQUENCY.matcher(filename);
+        return matcher.find() ? Long.parseLong(matcher.group(1)) : null;
     }
 
     private static float sample(byte[] bytes, int offset, boolean bigEndian)

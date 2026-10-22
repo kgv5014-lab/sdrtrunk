@@ -25,9 +25,8 @@ import io.github.dsheirer.controller.channel.ChannelModel;
 import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.dsp.filter.smoothing.SmoothingFilter.SmoothingType;
 import io.github.dsheirer.dsp.window.WindowType;
-import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.gui.discovery.NBFMDiscoveryFrame;
-import io.github.dsheirer.gui.playlist.channel.ViewChannelRequest;
+import io.github.dsheirer.gui.channel.ChannelControlMenuItems;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.properties.SystemProperties;
 import io.github.dsheirer.sample.Listener;
@@ -629,10 +628,16 @@ public class SpectralDisplayPanel extends JPanel
                     JMenu channelMenu = new JMenu("Channels");
                     for(Channel channel : channels)
                     {
-                        JMenuItem viewChannel = new JMenuItem("View/Edit: " + channel.getShortTitle());
-                        viewChannel.addActionListener(
-                                e -> MyEventBus.getGlobalEventBus().post(new ViewChannelRequest(channel)));
-                        channelMenu.add(viewChannel);
+                        if(channelMenu.getItemCount() > 0)
+                        {
+                            channelMenu.add(new JSeparator());
+                        }
+
+                        for(JMenuItem item: ChannelControlMenuItems.create(channel, mChannelProcessingManager,
+                            event.getComponent(), true))
+                        {
+                            channelMenu.add(item);
+                        }
                     }
 
                     contextMenu.add(channelMenu);

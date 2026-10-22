@@ -415,7 +415,8 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
             mChannelEventBroadcaster.broadcast(new ChannelEvent(channel,
                 ChannelEvent.Event.NOTIFICATION_PROCESSING_START_REJECTED, TUNER_UNAVAILABLE_DESCRIPTION));
 
-            throw new ChannelException("No Tuner Available");
+            throw new ChannelException(mTunerManager.getUnavailableReason(channel.getSourceConfiguration(),
+                channel.getDecodeConfiguration().getChannelSpecification()));
         }
 
         ProcessingChain processingChain = new ProcessingChain(channel, mAliasModel);

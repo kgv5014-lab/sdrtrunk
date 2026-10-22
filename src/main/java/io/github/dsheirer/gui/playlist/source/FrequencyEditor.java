@@ -24,6 +24,7 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.channel.rotation.ChannelRotationMonitor;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
+import io.github.dsheirer.source.tuner.manager.TunerUnavailableReason;
 import javafx.beans.binding.Bindings;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
@@ -42,6 +43,9 @@ import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
+import jiconfont.icons.font_awesome.FontAwesome;
+import jiconfont.javafx.IconNode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +64,7 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
     private FrequencyBox mPrimaryFrequencyBox;
     private ObservableList<FrequencyBox> mFrequencyBoxes = FXCollections.observableArrayList();
     private ComboBox<String> mPreferredTunerComboBox;
+    private Label mCoverageLabel;
     private VBox mFrequencyBoxContainer;
     private Spinner<Integer> mChannelRotationDelaySpinner;
     private boolean mAllowMultipleFrequencies = false;
@@ -132,6 +137,8 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
         {
             vbox.getChildren().addAll(tunerBox);
         }
+
+        vbox.getChildren().add(getCoverageLabel());
 
         hBox.getChildren().add(vbox);
 
@@ -296,7 +303,72 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
             getPreferredTunerComboBox().getSelectionModel().select(NONE);
         }
 
+        updateCoverage();
         modifiedProperty().set(false);
+    }
+
+    /**
+     * Label showing which tuners can receive the channel's frequency(ies)
+     */
+    private Label getCoverageLabel()
+    {
+        if(mCoverageLabel == null)
+        {
+            mCoverageLabel = new Label();
+            mCoverageLabel.setWrapText(true);
+            mCoverageLabel.setMaxWidth(600);
+        }
+
+        return mCoverageLabel;
+    }
+
+    /**
+     * Updates the tuner coverage label for the frequencies currently entered in the editor.
+     */
+    private void updateCoverage()
+    {
+        List<TunerUnavailableReason.TunerSnapshot> tuners = mTunerManager.getTunerSnapshots();
+        List<String> lines = new ArrayList<>();
+        TunerUnavailableReason.Coverage.Level worst = null;
+
+        for(FrequencyBox frequencyBox: mFrequencyBoxes)
+        {
+            long frequency = frequencyBox.getFrequencyField().get();
+
+            if(frequency > 0)
+            {
+                TunerUnavailableReason.Coverage coverage = TunerUnavailableReason.coverage(frequency, tuners);
+                lines.add((mFrequencyBoxes.size() > 1 ? frequencyBox.getFrequencyField().getText() + ": " : "") +
+                    coverage.description());
+
+                if(worst == null || coverage.level().ordinal() > worst.ordinal())
+                {
+                    worst = coverage.level();
+                }
+            }
+        }
+
+        if(worst == null)
+        {
+            getCoverageLabel().setText(null);
+            getCoverageLabel().setGraphic(null);
+            return;
+        }
+
+        IconNode icon = switch(worst)
+        {
+            case NOW -> new IconNode(FontAwesome.CHECK_CIRCLE);
+            case WHEN_FREE -> new IconNode(FontAwesome.EXCLAMATION_TRIANGLE);
+            case NONE -> new IconNode(FontAwesome.TIMES_CIRCLE);
+        };
+        icon.setFill(switch(worst)
+        {
+            case NOW -> Color.GREEN;
+            case WHEN_FREE -> Color.ORANGE;
+            case NONE -> Color.RED;
+        });
+        getCoverageLabel().setGraphic(icon);
+        getCoverageLabel().setText("Tuners: " + String.join("\n", lines));
     }
 
     /**
@@ -523,6 +595,7 @@ public class FrequencyEditor extends SourceConfigurationEditor<SourceConfigurati
                     public void changed(ObservableValue<? extends String> observable, String oldValue, String newValue)
                     {
                         modifiedProperty().set(true);
+                        updateCoverage();
                     }
                 });
             }

@@ -600,6 +600,64 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     }
 
     /**
+     * Explains why none of the tuners can provide a source for the configuration, for display to the user when
+     * getSource() returns null.
+     * @param config for the source
+     * @param channelSpecification required by the decoder
+     * @return explanation, or a generic message when the configuration isn't tuner based
+     */
+    public String getUnavailableReason(SourceConfiguration config, ChannelSpecification channelSpecification)
+    {
+        TunerChannel tunerChannel = null;
+        String preferredTuner = null;
+
+        if(config instanceof SourceConfigTuner sourceConfigTuner)
+        {
+            tunerChannel = sourceConfigTuner.getTunerChannel(channelSpecification.getBandwidth());
+            preferredTuner = sourceConfigTuner.getPreferredTuner();
+        }
+        else if(config instanceof SourceConfigTunerMultipleFrequency sourceConfigTuner)
+        {
+            tunerChannel = sourceConfigTuner.getTunerChannel(channelSpecification.getBandwidth());
+            preferredTuner = sourceConfigTuner.getPreferredTuner();
+        }
+
+        if(tunerChannel == null)
+        {
+            return "No Tuner Available";
+        }
+
+        return TunerUnavailableReason.describe(tunerChannel, preferredTuner, getTunerSnapshots());
+    }
+
+    /**
+     * Snapshot of the current state of each discovered tuner, for explaining tuner coverage to the user.
+     */
+    public List<TunerUnavailableReason.TunerSnapshot> getTunerSnapshots()
+    {
+        List<TunerUnavailableReason.TunerSnapshot> snapshots = new ArrayList<>();
+
+        for(int x = 0; x < mDiscoveredTunerModel.getRowCount(); x++)
+        {
+            DiscoveredTuner discoveredTuner = mDiscoveredTunerModel.getDiscoveredTuner(x);
+
+            if(discoveredTuner != null)
+            {
+                try
+                {
+                    snapshots.add(TunerUnavailableReason.TunerSnapshot.of(discoveredTuner));
+                }
+                catch(Exception e)
+                {
+                    mLog.debug("Unable to describe tuner state for [" + discoveredTuner + "]", e);
+                }
+            }
+        }
+
+        return snapshots;
+    }
+
+    /**
      * Iterates current available tuners to get a tuner channel source for the specified frequency and bandwidth
      * @param tunerChannel requested
      * @param channelSpecification from the decoder

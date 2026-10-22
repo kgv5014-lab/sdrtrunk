@@ -107,6 +107,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private static final LoggingSuppressor LOGGING_SUPPRESSOR = new LoggingSuppressor(mLog);
     public static final String CHANNEL_START_REJECTED = "CHANNEL START REJECTED";
     public static final String MAX_TRAFFIC_CHANNELS_EXCEEDED = "MAX TRAFFIC CHANNELS EXCEEDED";
+    public static final String ENCRYPTED_CALL_IGNORED = "ENCRYPTED CALL IGNORED";
 
     private Queue<Channel> mAvailablePhase1TrafficChannelQueue = new LinkedTransferQueue<>();
     private Queue<Channel> mAvailablePhase2TrafficChannelQueue = new LinkedTransferQueue<>();
@@ -124,6 +125,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
     private ScrambleParameters mPhase2ScrambleParameters;
     private Listener<IMessage> mMessageListener;
     private boolean mIgnoreDataCalls;
+    private boolean mIgnoreEncryptedCalls;
     //Used only for data calls
     private final DecodeEventDuplicateDetector mDuplicateDetector = new DecodeEventDuplicateDetector();
     private final TalkerAliasManager mTalkerAliasManager = new TalkerAliasManager();
@@ -139,6 +141,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase1 phase1)
         {
             mIgnoreDataCalls = phase1.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = phase1.getIgnoreEncryptedCalls();
             createPhase1TrafficChannels(phase1.getTrafficChannelPoolSize(), phase1);
             DecodeConfigP25Phase2 phase2 = new DecodeConfigP25Phase2();
             DecoderFactory.transferJMBESettings(phase1, phase2);
@@ -147,6 +150,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         else if(parentChannel.getDecodeConfiguration() instanceof DecodeConfigP25Phase2 phase2)
         {
             mIgnoreDataCalls = phase2.getIgnoreDataCalls();
+            mIgnoreEncryptedCalls = phase2.getIgnoreEncryptedCalls();
             DecodeConfigP25Phase1 phase1 = new DecodeConfigP25Phase1();
             DecoderFactory.transferJMBESettings(phase2, phase1);
             createPhase1TrafficChannels(phase2.getTrafficChannelPoolSize(), phase1);
@@ -1218,6 +1222,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                                                   boolean isDataChannelGrant, long timestamp, String context)
     {
         long frequency = apco25Channel.getDownlinkFrequency();
+        boolean ignoreEncrypted = mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted();
 
         P25ChannelEventTracker tracker = getTrackerRemoveIfStale(frequency, P25P1Message.TIMESLOT_1, timestamp);
 
@@ -1247,7 +1252,8 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
-            if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant))
+            if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant) &&
+                !ignoreEncrypted)
             {
                 Channel trafficChannel = mAvailablePhase1TrafficChannelQueue.poll();
 
@@ -1289,6 +1295,19 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
                 broadcast(tracker);
             }
 
+            return;
+        }
+
+        if(ignoreEncrypted)
+        {
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                    .channelDescriptor(apco25Channel)
+                    .details(ENCRYPTED_CALL_IGNORED + " - PHASE 1 CHANNEL GRANT " + serviceOptions)
+                    .identifiers(ic)
+                    .build();
+            tracker = new P25ChannelEventTracker(event);
+            addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+            broadcast(tracker);
             return;
         }
 
@@ -1345,6 +1364,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
         int timeslot = apco25Channel.getTimeslot();
         long frequency = apco25Channel.getDownlinkFrequency();
         ic.setTimeslot(timeslot);
+        boolean ignoreEncrypted = mIgnoreEncryptedCalls && serviceOptions != null && serviceOptions.isEncrypted();
 
         P25ChannelEventTracker tracker = getTrackerRemoveIfStale(apco25Channel, timestamp);
 
@@ -1373,7 +1393,7 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
             //Even though we have a tracked event, the initial channel grant may have been rejected.  Check to see if there
             //is a traffic channel allocated.  If not, allocate one and update the event description.
             if(!mAllocatedTrafficChannelMap.containsKey(frequency) && !(mIgnoreDataCalls && isDataChannelGrant) &&
-                (getCurrentControlFrequency() != frequency))
+                !ignoreEncrypted && (getCurrentControlFrequency() != frequency))
             {
                 Channel trafficChannel = mAvailablePhase2TrafficChannelQueue.poll();
 
@@ -1404,6 +1424,21 @@ public class P25TrafficChannelManager extends TrafficChannelManager implements I
 
             tracker = new P25ChannelEventTracker(event);
             addTracker(tracker, frequency, P25P1Message.TIMESLOT_1);
+            broadcast(tracker);
+            return;
+        }
+
+        if(ignoreEncrypted)
+        {
+            P25ChannelGrantEvent event = P25ChannelGrantEvent.builder(decodeEventType, timestamp, serviceOptions)
+                .channelDescriptor(apco25Channel)
+                .details(ENCRYPTED_CALL_IGNORED + " - PHASE 2 CHANNEL GRANT " + serviceOptions)
+                .identifiers(ic)
+                .timeslot(apco25Channel.getTimeslot())
+                .build();
+
+            tracker = new P25ChannelEventTracker(event);
+            addTracker(tracker, frequency, timeslot);
             broadcast(tracker);
             return;
         }

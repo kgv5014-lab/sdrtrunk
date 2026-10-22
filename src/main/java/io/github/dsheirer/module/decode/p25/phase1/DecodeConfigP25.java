@@ -35,6 +35,7 @@ public abstract class DecodeConfigP25 extends DecodeConfigJMBE
 {
     private int mTrafficChannelPoolSize = TRAFFIC_CHANNEL_LIMIT_DEFAULT;
     private boolean mIgnoreDataCalls = false;
+    private boolean mIgnoreEncryptedCalls = false;
 
     public DecodeConfigP25()
     {
@@ -49,6 +50,24 @@ public abstract class DecodeConfigP25 extends DecodeConfigJMBE
     public void setIgnoreDataCalls(boolean ignore)
     {
         mIgnoreDataCalls = ignore;
+    }
+
+    /**
+     * Indicates if traffic channel grants flagged as encrypted should be ignored
+     */
+    @JacksonXmlProperty(isAttribute = true, localName = "ignore_encrypted_calls")
+    public boolean getIgnoreEncryptedCalls()
+    {
+        return mIgnoreEncryptedCalls;
+    }
+
+    /**
+     * Sets flag to ignore encrypted call traffic channel grants
+     * @param ignore true to ignore encrypted calls.
+     */
+    public void setIgnoreEncryptedCalls(boolean ignore)
+    {
+        mIgnoreEncryptedCalls = ignore;
     }
 
 

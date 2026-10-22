@@ -19,10 +19,13 @@
 package io.github.dsheirer.gui.discovery;
 
 import io.github.dsheirer.controller.channel.ChannelModel;
+import io.github.dsheirer.controller.channel.ChannelProcessingManager;
+import io.github.dsheirer.module.decode.nbfm.discovery.DiscoveryChannelManager;
 import io.github.dsheirer.module.decode.nbfm.discovery.DiscoveryConfiguration;
 import io.github.dsheirer.module.decode.nbfm.discovery.DiscoveryEvent;
 import io.github.dsheirer.module.decode.nbfm.discovery.NBFMDiscoveryFileAnalyzer;
 import io.github.dsheirer.module.decode.nbfm.discovery.NBFMDiscoveryProcessor;
+import io.github.dsheirer.module.decode.nbfm.discovery.TunerDiscoveryChannelHost;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.Tuner;
@@ -38,6 +41,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
+import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -77,6 +82,14 @@ public class NBFMDiscoveryFrame extends JFrame
     private final JButton mStopButton = new JButton("Stop");
     private final JButton mAnalyzeButton = new JButton("Analyze Recording...");
     private final JLabel mStatusLabel = new JLabel();
+    private final JCheckBox mAutoChannelsCheckBox = new JCheckBox("Open a channel for each frequency heard");
+    private final JSpinner mMaximumChannelsSpinner = new JSpinner(new SpinnerNumberModel(8, 1, 32, 1));
+    private final JSpinner mHangTimeSpinner = new JSpinner(new SpinnerNumberModel(5, 0, 60, 1));
+    private final JComboBox<DiscoveryConfiguration.ChannelBandwidth> mBandwidthComboBox =
+            new JComboBox<>(DiscoveryConfiguration.ChannelBandwidth.values());
+    private final DiscoveryConfiguration mChannelSettings = new DiscoveryConfiguration();
+    private final ChannelProcessingManager mChannelProcessingManager;
+    private DiscoveryChannelManager mChannelManager;
     private final Timer mStatusTimer;
     private NBFMDiscoveryProcessor mLiveProcessor;
     private Thread mAnalysisThread;
@@ -86,19 +99,23 @@ public class NBFMDiscoveryFrame extends JFrame
      * Shows the discovery window for the tuner, creating it if needed.
      * @param tuner to run discovery on
      * @param channelModel playlist channels, used to flag frequencies that are already configured
+     * @param channelProcessingManager to run temporary channels for discovered frequencies
      */
-    public static void show(Tuner tuner, ChannelModel channelModel)
+    public static void show(Tuner tuner, ChannelModel channelModel, ChannelProcessingManager channelProcessingManager)
     {
         EventQueue.invokeLater(() -> {
-            NBFMDiscoveryFrame frame = FRAMES.computeIfAbsent(tuner, t -> new NBFMDiscoveryFrame(t, channelModel));
+            NBFMDiscoveryFrame frame = FRAMES.computeIfAbsent(tuner, t -> new NBFMDiscoveryFrame(t, channelModel,
+                    channelProcessingManager));
             frame.setVisible(true);
             frame.toFront();
         });
     }
 
-    private NBFMDiscoveryFrame(Tuner tuner, ChannelModel channelModel)
+    private NBFMDiscoveryFrame(Tuner tuner, ChannelModel channelModel,
+                               ChannelProcessingManager channelProcessingManager)
     {
         mTuner = tuner;
+        mChannelProcessingManager = channelProcessingManager;
         setTitle("NBFM Discovery - " + tuner.getPreferredName());
         setDefaultCloseOperation(DISPOSE_ON_CLOSE);
 
@@ -112,6 +129,25 @@ public class NBFMDiscoveryFrame extends JFrame
         mThresholdSpinner.setToolTipText("How far above the noise floor a signal must be.  Lower finds weaker " +
                 "signals but more false hits.");
         mStartButton.addActionListener(e -> startLive());
+
+        //Channel settings apply immediately, including while discovery is running
+        mAutoChannelsCheckBox.setToolTipText("Start a temporary NBFM channel for each frequency as it keys up, so " +
+                "you can hear and record it.  Temporary channels aren't added to the playlist.");
+        mAutoChannelsCheckBox.addActionListener(e -> {
+            mChannelSettings.setAutoChannels(mAutoChannelsCheckBox.isSelected());
+            updateControls();
+        });
+        mMaximumChannelsSpinner.setToolTipText("Most temporary channels open at once");
+        mMaximumChannelsSpinner.addChangeListener(e ->
+                mChannelSettings.setMaximumChannels((Integer)mMaximumChannelsSpinner.getValue()));
+        mHangTimeSpinner.setToolTipText("Seconds a channel stays open after the frequency goes quiet, so replies " +
+                "are heard on the same channel");
+        mHangTimeSpinner.addChangeListener(e ->
+                mChannelSettings.setChannelHangTimeMs((Integer)mHangTimeSpinner.getValue() * 1000));
+        mBandwidthComboBox.setToolTipText("Auto picks 25 kHz for signals measured wider than 7 kHz, otherwise " +
+                "12.5 kHz (most VHF public safety)");
+        mBandwidthComboBox.addActionListener(e -> mChannelSettings.setChannelBandwidth(
+                (DiscoveryConfiguration.ChannelBandwidth)mBandwidthComboBox.getSelectedItem()));
         mStopButton.addActionListener(e -> stopLive());
         mAnalyzeButton.setToolTipText("Run discovery on a baseband recording made from the Tuners tab");
         mAnalyzeButton.addActionListener(e -> {
@@ -128,7 +164,7 @@ public class NBFMDiscoveryFrame extends JFrame
         mTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         mTable.setAutoCreateRowSorter(true);
         mTable.setDefaultRenderer(String.class, new StatusRenderer());
-        int[] widths = {130, 120, 90, 100, 90, 100, 90, 80};
+        int[] widths = {120, 100, 80, 95, 80, 95, 80, 75, 130};
 
         for(int x = 0; x < widths.length; x++)
         {
@@ -141,7 +177,7 @@ public class NBFMDiscoveryFrame extends JFrame
         JButton clearButton = new JButton("Clear List");
         clearButton.addActionListener(e -> mTableModel.clear());
 
-        JPanel panel = new JPanel(new MigLayout("fill, insets 8", "[][][][grow]", "[][][][grow,fill][]"));
+        JPanel panel = new JPanel(new MigLayout("fill, insets 8", "[][][][grow]", "[][][][][grow,fill][]"));
         panel.add(new JLabel("Centre (MHz):"));
         panel.add(mCenterField, "w 110!");
         panel.add(mTuneButton, "wrap");
@@ -150,13 +186,21 @@ public class NBFMDiscoveryFrame extends JFrame
         panel.add(mStartButton, "split 2, sg run");
         panel.add(mStopButton, "sg run");
         panel.add(mAnalyzeButton, "right, wrap");
+        panel.add(new JLabel("Channels:"));
+        panel.add(mAutoChannelsCheckBox, "span, split 7");
+        panel.add(new JLabel("Max:"), "gapleft 16");
+        panel.add(mMaximumChannelsSpinner, "w 60!");
+        panel.add(new JLabel("Hang (s):"), "gapleft 8");
+        panel.add(mHangTimeSpinner, "w 60!");
+        panel.add(new JLabel("Bandwidth:"), "gapleft 8");
+        panel.add(mBandwidthComboBox, "wrap");
         panel.add(mStatusLabel, "span, wrap");
         panel.add(new JScrollPane(mTable), "span, grow, wrap");
         panel.add(new JLabel("* off the standard channel spacing"), "span 2");
         panel.add(ignoreButton, "span, split 2, right");
         panel.add(clearButton);
         setContentPane(panel);
-        setSize(900, 540);
+        setSize(980, 580);
         setLocationRelativeTo(null);
 
         mStatusTimer = new Timer(1000, e -> updateControls());
@@ -219,6 +263,22 @@ public class NBFMDiscoveryFrame extends JFrame
         {
             mTableModel.setRecordingTime(false);
             mLiveProcessor = createProcessor();
+
+            if(mChannelProcessingManager != null)
+            {
+                mChannelManager = new DiscoveryChannelManager(mChannelSettings,
+                        new TunerDiscoveryChannelHost(mTuner, mChannelProcessingManager), System::currentTimeMillis);
+                mChannelManager.setStatusListener(status -> EventQueue.invokeLater(() ->
+                        mTableModel.update(status)));
+                mChannelManager.start();
+                Listener<DiscoveryEvent> tableListener = createTableListener();
+                DiscoveryChannelManager channelManager = mChannelManager;
+                mLiveProcessor.setListener(event -> {
+                    tableListener.receive(event);
+                    channelManager.receive(event);
+                });
+            }
+
             mLiveProcessor.attach(mTuner.getTunerController());
             mLog.info("NBFM discovery started on tuner {}", mTuner.getPreferredName());
         }
@@ -232,6 +292,13 @@ public class NBFMDiscoveryFrame extends JFrame
         {
             mLiveProcessor.detach();
             mLiveProcessor = null;
+
+            if(mChannelManager != null)
+            {
+                mChannelManager.stop();
+                mChannelManager = null;
+            }
+
             mTableModel.setAllIdle();
             mLog.info("NBFM discovery stopped on tuner {}", mTuner.getPreferredName());
         }
@@ -360,6 +427,11 @@ public class NBFMDiscoveryFrame extends JFrame
             {
                 mLiveProcessor.getTracker().ignore(frequency);
             }
+
+            if(mChannelManager != null)
+            {
+                mChannelManager.close(frequency);
+            }
         }
     }
 
@@ -380,6 +452,11 @@ public class NBFMDiscoveryFrame extends JFrame
         mCenterField.setEditable(!tunerInUse);
         mAnalyzeButton.setText(analyzing ? "Cancel Analysis" : "Analyze Recording...");
         mAnalyzeButton.setEnabled(!live);
+        boolean channels = mChannelProcessingManager != null;
+        mAutoChannelsCheckBox.setEnabled(channels);
+        mMaximumChannelsSpinner.setEnabled(channels && mAutoChannelsCheckBox.isSelected());
+        mHangTimeSpinner.setEnabled(channels && mAutoChannelsCheckBox.isSelected());
+        mBandwidthComboBox.setEnabled(channels && mAutoChannelsCheckBox.isSelected());
 
         if(!mCenterField.isFocusOwner() && !mCenterField.isEditable())
         {
@@ -389,9 +466,12 @@ public class NBFMDiscoveryFrame extends JFrame
         if(live)
         {
             double half = controller.getSampleRate() * 0.45;
-            mStatusLabel.setText(String.format("Watching %.3f to %.3f MHz on %s%s", (controller.getFrequency() - half)
+            int open = mChannelManager != null ? mChannelManager.getRunningCount() : 0;
+            mStatusLabel.setText(String.format("Watching %.3f to %.3f MHz on %s%s%s", (controller.getFrequency() - half)
                     / 1e6, (controller.getFrequency() + half) / 1e6, mTuner.getPreferredName(),
-                    tunerInUse ? " (centre is set by the channels using this tuner)" : ""));
+                    tunerInUse ? " (centre is set by the channels using this tuner)" : "",
+                    mAutoChannelsCheckBox.isSelected() ? ", " + open + " channel" + (open == 1 ? "" : "s") + " open" :
+                            ""));
         }
         else if(!analyzing && !mStatusLabel.getText().startsWith("Finished") &&
                 !mStatusLabel.getText().startsWith("Analysis") && !mStatusLabel.getText().startsWith("Couldn't"))

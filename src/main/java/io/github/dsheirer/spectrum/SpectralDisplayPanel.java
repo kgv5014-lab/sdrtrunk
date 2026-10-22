@@ -774,7 +774,8 @@ public class SpectralDisplayPanel extends JPanel
                     Tuner tuner = mTuner;
                     JMenuItem discoveryItem = new JMenuItem("NBFM Discovery...");
                     discoveryItem.setToolTipText("Find active NBFM frequencies on this tuner");
-                    discoveryItem.addActionListener(e -> NBFMDiscoveryFrame.show(tuner, mChannelModel));
+                    discoveryItem.addActionListener(e -> NBFMDiscoveryFrame.show(tuner, mChannelModel,
+                            mChannelProcessingManager));
                     contextMenu.add(discoveryItem);
                 }
 

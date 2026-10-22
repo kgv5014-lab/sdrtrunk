@@ -29,6 +29,9 @@
   .tag b { color: var(--accent); font-weight: 600; margin-right: 4px; }
   audio { height: 28px; max-width: 100%; }
   button { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .page { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+  .page .title { font-size: 15px; font-weight: 600; }
+  .page .title .unknown { color: var(--muted); font-weight: 400; }
   #more { display: block; margin: 16px auto; }
   #more[hidden] { display: none; }
 </style>
@@ -91,20 +94,58 @@ function render(call) {
   return card;
 }
 
+function hz(value) { return value.toFixed(1) + ' Hz'; }
+
+function renderPage(page) {
+  const card = el('div', 'page');
+  const title = el('div', 'title');
+  const tones = page.tone_b ? hz(page.tone_a) + ' + ' + hz(page.tone_b) : hz(page.tone_a) + ' long tone';
+  if (page.label) title.append('Tone out: ' + page.label);
+  else title.append('Tone out: ', el('span', 'unknown', 'not on the station list'));
+  card.append(title);
+  const meta = el('div', 'meta');
+  meta.append(el('span', '', new Date(page.page_time * 1000).toLocaleString()));
+  meta.append(el('b', '', tones));
+  if (page.channel) meta.append(el('span', '', page.channel));
+  if (page.system_label) meta.append(el('span', '', page.system_label));
+  if (page.frequency) meta.append(el('span', '', (page.frequency / 1e6).toFixed(4) + ' MHz'));
+  card.append(meta);
+  return card;
+}
+
+// Tone-out pages are shown between the calls, by time. Talkgroup and radio filters hide them.
+async function loadPages(since, until) {
+  if ($('talkgroup').value || $('source').value) return [];
+  const p = new URLSearchParams({ q: $('q').value, limit: 500 });
+  if (since !== null) p.set('since', since);
+  if (until !== null) p.set('until', until);
+  try { return await (await fetch('api/pages?' + p)).json(); } catch (e) { return []; }
+}
+
 function params(beforeId) {
   const p = new URLSearchParams({ q: $('q').value, talkgroup: $('talkgroup').value, source: $('source').value, limit: 100 });
   if (beforeId) p.set('before_id', beforeId);
   return p;
 }
 
+let oldestTime = null;
+
 async function load(append) {
   const res = await fetch('api/calls?' + params(append ? oldestId : null));
   const calls = await res.json();
+  const full = calls.length >= 100;
+  // Pages from the oldest call shown up to the previous oldest (or now); all of them once no older calls remain.
+  const since = full ? calls[calls.length - 1].call_time : null;
+  const pages = await loadPages(since, append ? oldestTime : null);
+  const items = calls.map(c => ({ time: c.call_time, node: () => render(c) }))
+    .concat(pages.map(p => ({ time: p.page_time, node: () => renderPage(p) })))
+    .sort((a, b) => b.time - a.time);
   const list = $('calls');
   if (!append) list.replaceChildren();
-  calls.forEach(c => list.append(render(c)));
+  items.forEach(item => list.append(item.node()));
   if (calls.length) oldestId = calls[calls.length - 1].id;
-  $('more').hidden = calls.length < 100;
+  oldestTime = since;
+  $('more').hidden = !full;
 }
 
 async function refreshStatus() {

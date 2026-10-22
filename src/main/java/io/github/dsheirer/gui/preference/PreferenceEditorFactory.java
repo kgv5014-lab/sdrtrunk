@@ -26,6 +26,7 @@ import io.github.dsheirer.gui.preference.call.CallManagementPreferenceEditor;
 import io.github.dsheirer.gui.preference.decoder.JmbeLibraryPreferenceEditor;
 import io.github.dsheirer.gui.preference.directory.DirectoryPreferenceEditor;
 import io.github.dsheirer.gui.preference.mp3.MP3PreferenceEditor;
+import io.github.dsheirer.gui.preference.paging.PagingPreferenceEditor;
 import io.github.dsheirer.gui.preference.playback.PlaybackPreferenceEditor;
 import io.github.dsheirer.gui.preference.record.RecordPreferenceEditor;
 import io.github.dsheirer.gui.preference.tuner.TunerPreferenceEditor;
@@ -59,6 +60,8 @@ public class PreferenceEditorFactory
                 return new DirectoryPreferenceEditor(userPreferences);
             case JMBE_LIBRARY:
                 return new JmbeLibraryPreferenceEditor(userPreferences);
+            case TWO_TONE_PAGING:
+                return new PagingPreferenceEditor(userPreferences);
             case SOURCE_TUNERS:
                 return new TunerPreferenceEditor(userPreferences);
             case TALKGROUP_FORMAT:

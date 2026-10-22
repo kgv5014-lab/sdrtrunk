@@ -45,6 +45,7 @@ public enum Protocol
     NXDN("NXDN", "NXDN", 9600),
     PASSPORT("Passport", "PASSPORT", 300),
     TAIT1200("Tait 1200", "TAIT1200", 1200),
+    TWO_TONE("Two-Tone", "TWOTONE", 0),
     UDP("UDP", "UDP", 0),
     UNKNOWN("Unknown", "UNKNOWN", 0);
 

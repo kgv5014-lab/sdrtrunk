@@ -29,6 +29,7 @@ public enum PreferenceEditorType
     CHANNEL_EVENT("Channel Events"),
     DIRECTORY("Directories"),
     JMBE_LIBRARY("JMBE Audio Library"),
+    TWO_TONE_PAGING("Two-Tone Paging"),
     AUDIO_MP3("MP3"),
     AUDIO_RECORD("Record"),
     AUDIO_OUTPUT("Playback/Tones"),

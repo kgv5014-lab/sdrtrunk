@@ -373,3 +373,60 @@ def test_old_call_log_gets_new_columns(tmp_path):
     db.update_call(1, transcript_raw="old call")
     assert db.get_call(1)["transcript_raw"] == "old call"
     db.close()
+
+
+# Byte-for-byte what SDRTrunk's TwoTonePageSender.toJson produces (see TwoToneTableTest.pageJson).
+SDRTRUNK_PAGE = ('{"key":"","dateTime":1792656843.25,"toneA":349.0,"toneB":832.5,"toneASeconds":1.0,'
+                 '"label":"Station 4","system":"Northampton","site":null,"channel":"Fire Dispatch",'
+                 '"frequency":154190000}')
+
+
+def post_page(client, body: str):
+    return client.post("/api/page", content=body, headers={"Content-Type": "application/json"})
+
+
+def test_tone_out_pages_are_logged(make_client):
+    client, _ = make_client()
+    with client:
+        assert post_page(client, SDRTRUNK_PAGE).status_code == 200
+        long_tone = '{"key":"","dateTime":1792656900,"toneA":1084.0,"toneB":null,"label":null,"channel":"Fire"}'
+        assert post_page(client, long_tone).status_code == 200
+        pages = client.get("/api/pages").json()
+        between = client.get("/api/pages", params={"since": 1792656800, "until": 1792656850}).json()
+        searched = client.get("/api/pages", params={"q": "station 4"}).json()
+
+    assert [p["tone_a"] for p in pages] == [1084.0, 349.0]
+    assert pages[0]["tone_b"] is None and pages[0]["label"] is None
+    page = pages[1]
+    assert page["tone_b"] == 832.5
+    assert page["label"] == "Station 4"
+    assert page["channel"] == "Fire Dispatch"
+    assert page["system_label"] == "Northampton"
+    assert page["frequency"] == 154190000
+    assert page["page_time"] == 1792656843.25
+    assert [p["id"] for p in between] == [page["id"]]
+    assert [p["id"] for p in searched] == [page["id"]]
+
+
+def test_bad_pages_are_refused(make_client):
+    client, _ = make_client()
+    with client:
+        assert post_page(client, "not json").status_code == 400
+        assert post_page(client, "[1, 2]").status_code == 400
+        assert post_page(client, '{"toneB": 832.5}').status_code == 400
+        assert client.get("/api/pages").json() == []
+
+
+def test_pages_from_another_computer_need_the_key(make_client):
+    # The test client is not a loopback address, so it counts as another computer.
+    client, _ = make_client(api_key="secret")
+    with client:
+        assert post_page(client, SDRTRUNK_PAGE).status_code == 401
+        assert post_page(client, SDRTRUNK_PAGE.replace('"key":""', '"key":"secret"')).status_code == 200
+
+
+def test_loopback_detection():
+    from sdrtrunk_transcriber.server import _is_loopback
+
+    assert _is_loopback("127.0.0.1") and _is_loopback("::1") and _is_loopback("localhost")
+    assert not _is_loopback("192.168.1.20") and not _is_loopback(None) and not _is_loopback("testclient")

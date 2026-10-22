@@ -36,6 +36,21 @@ CREATE INDEX IF NOT EXISTS calls_time ON calls(call_time);
 CREATE INDEX IF NOT EXISTS calls_talkgroup ON calls(talkgroup);
 CREATE INDEX IF NOT EXISTS calls_source ON calls(source);
 CREATE INDEX IF NOT EXISTS calls_status ON calls(status);
+
+CREATE TABLE IF NOT EXISTS pages (
+    id INTEGER PRIMARY KEY,
+    page_time REAL NOT NULL,             -- unix seconds, from SDRTrunk
+    received_at INTEGER NOT NULL,
+    tone_a REAL NOT NULL,                -- Hz
+    tone_b REAL,                         -- Hz, NULL for a single long tone
+    tone_a_seconds REAL,
+    label TEXT,                          -- station or group from SDRTrunk's paging_tones.csv, NULL if not listed
+    system_label TEXT,
+    site TEXT,
+    channel TEXT,
+    frequency INTEGER
+);
+CREATE INDEX IF NOT EXISTS pages_time ON pages(page_time);
 """
 
 FTS_SCHEMA = """
@@ -61,6 +76,12 @@ END;
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",
     "talkgroup_group", "source", "talker_alias", "frequency", "patches", "audio_path",
+)
+
+
+PAGE_FIELDS = (
+    "page_time", "received_at", "tone_a", "tone_b", "tone_a_seconds", "label", "system_label", "site",
+    "channel", "frequency",
 )
 
 
@@ -155,6 +176,38 @@ class Database:
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(max(1, min(limit, 500)))
 
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def insert_page(self, page: dict) -> int:
+        columns = ", ".join(PAGE_FIELDS)
+        marks = ", ".join("?" for _ in PAGE_FIELDS)
+        with self._lock:
+            cur = self._conn.execute(
+                f"INSERT INTO pages ({columns}) VALUES ({marks})",
+                [page.get(name) for name in PAGE_FIELDS],
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def pages(self, since: float | None = None, until: float | None = None, q: str = "",
+              limit: int = 200) -> list[dict]:
+        """Tone-out pages, newest first, optionally within [since, until) and matching q."""
+        where, params = [], []
+        if since is not None:
+            where.append("page_time >= ?")
+            params.append(since)
+        if until is not None:
+            where.append("page_time < ?")
+            params.append(until)
+        if q:
+            where.append("(label LIKE ? OR channel LIKE ?)")
+            params.extend([f"%{q}%"] * 2)
+        sql = "SELECT * FROM pages"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY page_time DESC LIMIT ?"
+        params.append(max(1, min(limit, 1000)))
         with self._lock:
             return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
 

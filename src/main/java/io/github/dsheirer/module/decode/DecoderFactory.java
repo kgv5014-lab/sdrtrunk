@@ -110,6 +110,9 @@ import io.github.dsheirer.module.decode.passport.PassportMessageFilter;
 import io.github.dsheirer.module.decode.tait.Tait1200Decoder;
 import io.github.dsheirer.module.decode.tait.Tait1200DecoderState;
 import io.github.dsheirer.module.decode.tait.Tait1200MessageFilter;
+import io.github.dsheirer.module.decode.twotone.TwoToneDecoder;
+import io.github.dsheirer.module.decode.twotone.TwoToneDecoderState;
+import io.github.dsheirer.module.decode.twotone.TwoToneMessageFilter;
 import io.github.dsheirer.module.decode.traffic.TrafficChannelManager;
 import io.github.dsheirer.module.demodulate.fm.FMDemodulatorModule;
 import io.github.dsheirer.preference.UserPreferences;
@@ -147,7 +150,7 @@ public class DecoderFactory
     {
         List<Module> modules = getPrimaryModules(channelMapModel, channel, aliasModel, userPreferences,
                 trafficChannelManager, channelDescriptor);
-        modules.addAll(getAuxiliaryDecoders(channel.getAuxDecodeConfiguration()));
+        modules.addAll(getAuxiliaryDecoders(channel.getAuxDecodeConfiguration(), userPreferences));
         return modules;
     }
 
@@ -737,9 +740,10 @@ public class DecoderFactory
      * Constructs a list of auxiliary decoders, as specified in the channel configuration
      *
      * @param config - auxiliary configuration
+     * @param userPreferences for decoders that use them, may be null
      * @return - list of auxiliary decoders
      */
-    public static List<Module> getAuxiliaryDecoders(AuxDecodeConfiguration config)
+    public static List<Module> getAuxiliaryDecoders(AuxDecodeConfiguration config, UserPreferences userPreferences)
     {
         List<Module> modules = new ArrayList<>();
 
@@ -768,6 +772,11 @@ public class DecoderFactory
                     case TAIT_1200:
                         modules.add(new Tait1200Decoder());
                         modules.add(new Tait1200DecoderState());
+                        break;
+                    case TWO_TONE_PAGING:
+                        modules.add(new TwoToneDecoder());
+                        modules.add(new TwoToneDecoderState(userPreferences != null ?
+                                userPreferences.getPagingPreference() : null));
                         break;
                     default:
                         throw new IllegalArgumentException("Unrecognized auxiliary decoder type [" + auxDecoder + "]");
@@ -848,6 +857,9 @@ public class DecoderFactory
                 break;
             case TAIT_1200:
                 filters.add(new Tait1200MessageFilter());
+                break;
+            case TWO_TONE_PAGING:
+                filters.add(new TwoToneMessageFilter());
                 break;
             default:
                 break;

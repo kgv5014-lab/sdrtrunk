@@ -77,6 +77,7 @@ searches transcripts, and filters by talkgroup or radio ID.
 
 * `data\calls.db`: the call log (SQLite, with full-text search on transcripts)
 * `data\calls\YYYY\MM\DD\`: one MP3 per call
+* Tone-out pages from SDRTrunk's two-tone paging decoder are kept in the same `calls.db`
 
 Deleting the `data` folder starts a fresh log. Calls that were still waiting when the service stopped
 are transcribed when it starts again.
@@ -108,6 +109,18 @@ What happens to each call:
    ("1346 Main St") are left alone.
 4. The call log page shows labels such as `10-23 Arrived on scene`, `2081 Easton Fire/EMS, Ambulance` and
    `13:46 1:46 PM`. Whisper's original text is kept in the log as `transcript_raw`.
+
+## Fire and EMS tone-outs
+
+SDRTrunk's Two-Tone Paging decoder (turn it on under a channel's Additional Decoders) sends each tone-out
+page here. The call log shows them between the calls, for example "Tone out: Station 4 Engine,
+349.0 Hz + 832.5 Hz", usually just above the dispatcher's call. Pages whose tones aren't on SDRTrunk's
+station list say "not on the station list"; add their tones to `paging_tones.csv` in the SDRTrunk
+folder (User Preferences, Decoder, Two-Tone Paging, Open) with the name the dispatcher called.
+
+SDRTrunk posts JSON to `/api/page`. Nothing needs setting up when both run on the same computer. If the
+transcriber runs on a different computer, enter its address and your API key in SDRTrunk's Two-Tone
+Paging preferences.
 
 ## Accuracy tips
 

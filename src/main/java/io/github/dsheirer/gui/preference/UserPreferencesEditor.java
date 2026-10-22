@@ -186,6 +186,7 @@ public class UserPreferencesEditor extends BorderPane
 
             TreeItem<String> decoderItem = new TreeItem<>("Decoder");
             decoderItem.getChildren().add(new TreeItem(PreferenceEditorType.JMBE_LIBRARY));
+            decoderItem.getChildren().add(new TreeItem(PreferenceEditorType.TWO_TONE_PAGING));
             treeRoot.getChildren().add(decoderItem);
             decoderItem.setExpanded(true);
 

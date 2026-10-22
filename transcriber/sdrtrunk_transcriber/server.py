@@ -6,9 +6,14 @@ talkerAlias, talkgroupLabel, talkgroupGroup, systemLabel, patches.
 When it (re)connects it posts key, system and test=1, and treats a reply starting with
 "Incomplete call data: no talkgroup" as a working server. An upload counts as delivered
 when the reply is HTTP 200 and contains "Call imported successfully."
+
+SDRTrunk's two-tone paging decoder posts each tone-out page as JSON to /api/page:
+key, dateTime (unix seconds), toneA, toneB (null for a long tone), toneASeconds, label (station
+name from SDRTrunk's paging_tones.csv, or null), system, site, channel, frequency.
 """
 
 import hmac
+import ipaddress
 import logging
 import re
 import secrets
@@ -47,6 +52,28 @@ def _text(form, name: str) -> str | None:
         return None
     value = str(value).strip()
     return value or None
+
+
+def _number(value) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number == number and number not in (float("inf"), float("-inf")) else None
+
+
+def _clip(value, length: int = 200) -> str | None:
+    if value is None:
+        return None
+    value = str(value).strip()
+    return value[:length] or None
+
+
+def _is_loopback(host: str | None) -> bool:
+    try:
+        return ipaddress.ip_address(host or "").is_loopback
+    except ValueError:
+        return host == "localhost"
 
 
 def _safe(value: str | None) -> str:
@@ -127,6 +154,46 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     # Rdio Scanner's own path, plus the bare host SDRTrunk defaults to.
     app.post("/api/call-upload")(call_upload)
     app.post("/")(call_upload)
+
+    @app.post("/api/page")
+    async def page_upload(request: Request):
+        try:
+            body = await request.json()
+        except ValueError:
+            return PlainTextResponse("Expected a JSON body", status_code=400)
+        if not isinstance(body, dict):
+            return PlainTextResponse("Expected a JSON object", status_code=400)
+
+        # SDRTrunk on the same computer needs no key; anything else must send the upload key.
+        if config.server.api_key and not _is_loopback(request.client.host if request.client else None):
+            key = str(body.get("key") or "")
+            if not hmac.compare_digest(key.encode(), config.server.api_key.encode()):
+                log.warning("Rejected a page with the wrong API key from %s", request.client.host)
+                return PlainTextResponse("Invalid API key", status_code=401)
+
+        tone_a = _number(body.get("toneA"))
+        if tone_a is None or tone_a <= 0:
+            return PlainTextResponse("Page needs toneA", status_code=400)
+        tone_b = _number(body.get("toneB"))
+        frequency = _number(body.get("frequency"))
+        page_id = request.app.state.db.insert_page({
+            "page_time": _number(body.get("dateTime")) or time.time(),
+            "received_at": int(time.time()),
+            "tone_a": tone_a,
+            "tone_b": tone_b if tone_b and tone_b > 0 else None,
+            "tone_a_seconds": _number(body.get("toneASeconds")),
+            "label": _clip(body.get("label")),
+            "system_label": _clip(body.get("system")),
+            "site": _clip(body.get("site")),
+            "channel": _clip(body.get("channel")),
+            "frequency": int(frequency) if frequency else None,
+        })
+        return {"id": page_id}
+
+    @app.get("/api/pages")
+    def list_pages(request: Request, since: float | None = None, until: float | None = None, q: str = "",
+                   limit: int = 200):
+        return request.app.state.db.pages(since, until, q, limit)
 
     @app.get("/", response_class=HTMLResponse)
     def index():

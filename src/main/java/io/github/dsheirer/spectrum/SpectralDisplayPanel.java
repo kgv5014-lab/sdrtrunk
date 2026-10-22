@@ -26,6 +26,7 @@ import io.github.dsheirer.controller.channel.ChannelProcessingManager;
 import io.github.dsheirer.dsp.filter.smoothing.SmoothingFilter.SmoothingType;
 import io.github.dsheirer.dsp.window.WindowType;
 import io.github.dsheirer.eventbus.MyEventBus;
+import io.github.dsheirer.gui.discovery.NBFMDiscoveryFrame;
 import io.github.dsheirer.gui.playlist.channel.ViewChannelRequest;
 import io.github.dsheirer.playlist.PlaylistManager;
 import io.github.dsheirer.properties.SystemProperties;
@@ -764,6 +765,12 @@ public class SpectralDisplayPanel extends JPanel
                 {
                     contextMenu.add(new JSeparator());
                     contextMenu.add(new DisableSpectrumWaterfallMenuItem(SpectralDisplayPanel.this));
+
+                    Tuner tuner = mTuner;
+                    JMenuItem discoveryItem = new JMenuItem("NBFM Discovery...");
+                    discoveryItem.setToolTipText("Find active NBFM frequencies on this tuner");
+                    discoveryItem.addActionListener(e -> NBFMDiscoveryFrame.show(tuner, mChannelModel));
+                    contextMenu.add(discoveryItem);
                 }
 
                 boolean separatorAdded = false;

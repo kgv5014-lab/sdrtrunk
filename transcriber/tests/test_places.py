@@ -165,6 +165,11 @@ def test_towns_lookup():
     assert towns.find(40.60, -75.30) is None
 
 
+def test_town_query_asks_for_member_outlines():
+    # "out tags" leaves out relation members, which left every place without a town.
+    assert "out body geom;" in fetch_places.queries(fetch_places.DEFAULT_BBOX)["towns"]
+
+
 def test_route_names():
     assert fetch_places.route_names("US 22;PA 33") == ["Route 22", "Route 33"]
     assert fetch_places.route_names("I 78") == ["I-78"]

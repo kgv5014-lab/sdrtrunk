@@ -68,8 +68,9 @@ def queries(bbox) -> dict[str, str]:
         "routes": f'[out:json][timeout:300];\nway["highway"~"^(motorway|trunk|primary|secondary)$"]["ref"]({box});\n'
                   f'out tags geom;',
         "landmarks": f"[out:json][timeout:300];\n(\n{landmark_lines}\n);\nout tags center;",
+        # "body", not "tags": a relation's members (with their outlines) only come with body.
         "towns": f'[out:json][timeout:300];\nrel["boundary"="administrative"]["admin_level"="8"]({box});\n'
-                 f'out tags geom;',
+                 f'out body geom;',
     }
 
 

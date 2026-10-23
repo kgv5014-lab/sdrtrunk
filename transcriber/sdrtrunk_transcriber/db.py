@@ -330,6 +330,14 @@ class Database:
                 incident["calls"] = [dict(row) for row in rows]
         return incidents
 
+    def incident_call_texts(self, incident_id: int) -> list[tuple[str | None, str | None]]:
+        """(transcript, talker alias) of each call in an incident."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT c.transcript, c.talker_alias FROM call_places p JOIN calls c ON c.id = p.call_id "
+                "WHERE p.incident_id = ?", (incident_id,)).fetchall()
+        return [(row["transcript"], row["talker_alias"]) for row in rows]
+
     def incident_precisions(self, incident_id: int) -> list[str]:
         with self._lock:
             rows = self._conn.execute("SELECT precision FROM call_places WHERE incident_id = ?",

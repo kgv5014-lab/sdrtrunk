@@ -62,11 +62,12 @@
 <header>
   <h1>Incident map</h1>
   <a href="./">Call log</a>
-  <select id="range">
+  <select id="range" title="Time range">
     <option value="3600">Last hour</option>
     <option value="21600">Last 6 hours</option>
-    <option value="86400" selected>Last 24 hours</option>
-    <option value="604800">Last 7 days</option>
+    <option value="today">Today</option>
+    <option value="86400">Last 24 hours</option>
+    <option value="week">This week</option>
     <option value="2592000">Last 30 days</option>
   </select>
   <div class="types" id="types"></div>
@@ -111,7 +112,8 @@ function markSeen(incident) {
   $('seen').hidden = !fresh;
 }
 const PRECISION = { address: 'house address', intersection: 'intersection', landmark: 'landmark',
-                    street: 'street only, approximate' };
+                    street: 'street only, approximate',
+                    'follow-up': 'follow-up, same unit' };
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -264,8 +266,18 @@ $('seen').addEventListener('click', () => {
   render(lastIncidents);
 });
 
+// Start of the chosen time range, in seconds. "This week" starts Sunday at midnight.
+function rangeStart(value) {
+  if (value === 'today' || value === 'week') {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    if (value === 'week') d.setDate(d.getDate() - d.getDay());
+    return Math.floor(d.getTime() / 1000);
+  }
+  return Math.floor(Date.now() / 1000) - Number(value);
+}
+
 async function load() {
-  const since = Math.floor(Date.now() / 1000) - Number($('range').value);
+  const since = rangeStart($('range').value);
   const p = new URLSearchParams({ since, hidden: $('hidden').checked });
   try {
     render(await (await fetch('api/incidents?' + p)).json());
@@ -298,7 +310,9 @@ function playing() { return [...document.querySelectorAll('audio')].some(a => !a
   await load();
   setInterval(async () => { await status(); if (!popupOpen && !playing()) await load(); }, 10000);
 })();
-$('range').addEventListener('change', () => { fitted = false; load(); });
+$('range').value = stored('map.range', '86400');
+if (!$('range').value) $('range').value = '86400';
+$('range').addEventListener('change', () => { store('map.range', $('range').value); fitted = false; load(); });
 $('hidden').addEventListener('change', load);
 </script>
 </body>

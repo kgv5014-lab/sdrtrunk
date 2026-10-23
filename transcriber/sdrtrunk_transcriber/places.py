@@ -49,6 +49,8 @@ SPOKEN_ORDINAL_STREET = re.compile(rf"\b({_ORDINAL})(\s+)(street|st\b\.?|avenue|
 
 # "route twenty two", "route two forty eight", "interstate seventy eight". Not "en route twenty minutes".
 _ROUTE_NUMBER = rf"(?:\d{{1,3}}|(?:{'|'.join(ONES)})(?:[\s-](?:{'|'.join(TENS)})(?:[\s-](?:{'|'.join(ONES)}))?|[\s-](?:{'|'.join(ONES)}))?|(?:{'|'.join(TENS)})(?:[\s-](?:{'|'.join(ONES)}))?)"
+# "exit seventy five", "exit fifty one b". Only for exits in the list, so "the exit two miles up" stays.
+SPOKEN_EXIT = re.compile(rf"\bexit\s+({_ROUTE_NUMBER})(?:\s*-?\s*([ab])\b)?\b", re.IGNORECASE)
 SPOKEN_ROUTE = re.compile(rf"(?<!\ben )\b(route|interstate)\s+({_ROUTE_NUMBER})\b", re.IGNORECASE)
 
 # Words that end a street name when looking backwards from "Street".
@@ -125,6 +127,7 @@ class PlaceBook:
         self._by_area: dict[str, list[Place]] = {}
         self._streets: dict[str, dict[str, Place]] = {}
         self._spoken: list[tuple[re.Pattern, str]] = []
+        self._exits: set[str] = set()
         self.reload_if_changed()
 
     def reload_if_changed(self):
@@ -139,7 +142,7 @@ class PlaceBook:
             self._load()
 
     def _load(self):
-        places, by_area, streets, spoken = [], {}, {}, []
+        places, by_area, streets, spoken, exits = [], {}, {}, [], set()
         for row in self._read_rows():
             name = (row.get("name") or "").strip()
             if not name:
@@ -157,6 +160,8 @@ class PlaceBook:
                 rank=rank,
             )
             places.append(place)
+            if re.fullmatch(r"Exit \d+[A-Z]?", name):
+                exits.add(name)
             by_area.setdefault(place.municipality.lower(), []).append(place)
             key = _key(name)
             suffix = key.rsplit(" ", 1)[-1]
@@ -172,6 +177,7 @@ class PlaceBook:
         # Longest aliases first so "the Easton Circle" wins over "the Circle".
         spoken.sort(key=lambda pair: -len(pair[0].pattern))
         self._places, self._by_area, self._streets, self._spoken = places, by_area, streets, spoken
+        self._exits = exits
         log.info("Loaded %d places in %d municipalities from %s", len(places), len(by_area), self.path)
 
     def _read_rows(self) -> list[dict]:
@@ -231,11 +237,18 @@ class PlaceBook:
         self.reload_if_changed()
         text = SPOKEN_ORDINAL_STREET.sub(self._ordinal_street, text)
         text = SPOKEN_ROUTE.sub(_route, text)
+        if self._exits:
+            text = SPOKEN_EXIT.sub(self._exit, text)
         for pattern, name in self._spoken:
             text = pattern.sub(name, text)
         if self._streets:
             text = self._fix_streets(text, set(self.areas_for(*context)))
         return text
+
+    def _exit(self, match):
+        n = route_number(match.group(1))
+        name = f"Exit {n}{(match.group(2) or '').upper()}" if n else None
+        return name if name in self._exits else match.group(0)
 
     @staticmethod
     def _ordinal_street(match):

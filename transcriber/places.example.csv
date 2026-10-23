@@ -1,0 +1,43 @@
+name,kind,municipality,spoken,prompt,rank,osm_id,source
+Route 22,route,,,yes,100,,example
+I-78,route,,interstate seventy eight,yes,100,,example
+Route 33,route,,,yes,95,,example
+Route 248,route,,,yes,80,,example
+Route 611,route,,,yes,80,,example
+Route 378,route,,,yes,75,,example
+Route 412,route,,,yes,75,,example
+Route 512,route,,,yes,75,,example
+Northampton Street,street,Easton,,yes,80,,example
+Larry Holmes Drive,street,Easton,,yes,75,,example
+Washington Street,street,Easton,,yes,60,,example
+Cattell Street,street,Easton,,yes,55,,example
+Butler Street,street,Easton,,yes,55,,example
+Bushkill Drive,street,Easton,,yes,60,,example
+Freemansburg Avenue,street,Palmer Township,,yes,65,,example
+Freemansburg Avenue,street,Easton,,yes,65,,example
+Nazareth Road,street,Palmer Township,,yes,55,,example
+Wood Avenue,street,Wilson,,yes,55,,example
+William Penn Highway,street,Palmer Township,,yes,70,,example
+Sullivan Trail,street,Forks Township,,yes,55,,example
+Broad Street,street,Bethlehem,,yes,75,,example
+Main Street,street,Bethlehem,,yes,60,,example
+Stefko Boulevard,street,Bethlehem,,yes,65,,example
+Linden Street,street,Bethlehem,,yes,65,,example
+Schoenersville Road,street,Bethlehem,,yes,60,,example
+Easton Avenue,street,Bethlehem,,yes,60,,example
+Hamilton Street,street,Allentown,,yes,75,,example
+Tilghman Street,street,Allentown,,yes,70,,example
+Lehigh Street,street,Allentown,,yes,65,,example
+Union Boulevard,street,Allentown,,yes,60,,example
+MacArthur Road,street,Whitehall Township,,yes,70,,example
+Cedar Crest Boulevard,street,Allentown,,yes,65,,example
+Airport Road,street,Hanover Township,,yes,60,,example
+Centre Square,landmark,Easton,the Circle,yes,70,,example
+Lafayette College,landmark,Easton,,yes,60,,example
+Lehigh University,landmark,Bethlehem,,yes,60,,example
+St. Luke's Anderson Campus,landmark,Bethlehem Township,,yes,80,,example
+St. Luke's University Hospital,landmark,Fountain Hill,,yes,80,,example
+Lehigh Valley Hospital-Cedar Crest,landmark,Salisbury Township,,yes,80,,example
+Lehigh Valley Mall,landmark,Whitehall Township,,yes,55,,example
+Palmer Park Mall,landmark,Palmer Township,,yes,55,,example
+Lehigh Valley International Airport,landmark,Hanover Township,,yes,60,,example

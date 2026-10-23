@@ -110,6 +110,38 @@ What happens to each call:
 4. The call log page shows labels such as `10-23 Arrived on scene`, `2081 Easton Fire/EMS, Ambulance` and
    `13:46 1:46 PM`. Whisper's original text is kept in the log as `transcript_raw`.
 
+## Local streets and landmarks
+
+`places.csv` helps Whisper with street names. It starts with a short hand-made list (`places.example.csv`).
+Run **fetch-places.bat** once to replace it with every named road, numbered route and landmark
+(hospitals, schools, colleges, malls, fire and police stations, parks) between Easton and Allentown from
+OpenStreetMap. It takes a minute or two, and running it again later refreshes the list.
+
+| Column | What it does |
+| --- | --- |
+| `name` | How the place is written, e.g. `Northampton Street`, `Route 22`, `I-78` |
+| `kind` | `street`, `route` or `landmark` |
+| `municipality` | Town or township. A street in two towns has a row for each |
+| `spoken` | Other ways it is said, separated by `\|`, e.g. `the Circle` for Centre Square |
+| `prompt` | `yes` makes it a candidate for Whisper's hint list |
+| `rank` | Bigger is more important (road size and length). Picks hints when there are too many |
+| `osm_id`, `source` | Where the row came from. Rows you add with any `source` other than `osm` survive a re-fetch |
+
+What happens to each call:
+
+1. Whisper only reads about 200 words of hints, so each call gets the biggest roads and landmarks of the
+   town in its talkgroup name ("Easton PD" gets Easton's streets), then the biggest roads overall. For
+   talkgroups without a town in the name, list the towns under `[places.areas]` in `config.toml`.
+2. Spoken street numbers and routes are written the way dispatch writes them: "twenty second street"
+   becomes `22nd Street`, "route two forty eight" becomes `Route 248`, "interstate seventy eight"
+   becomes `I-78`. "En route twenty minutes" is left alone.
+3. Near-miss spellings right before a street word are fixed against the list: "Northamton Street"
+   becomes `Northampton Street`. Short names (under five letters) and names already in the list are
+   left alone, and a street in the talkgroup's own town wins a tie.
+
+The script also writes `places-geo.json` (road lines, landmark points, town outlines) for the incident
+map.
+
 ## Fire and EMS tone-outs
 
 SDRTrunk's Two-Tone Paging decoder (turn it on under a channel's Additional Decoders) sends each tone-out

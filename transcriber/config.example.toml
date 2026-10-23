@@ -41,3 +41,15 @@ file = "codes.csv"
 # Dispatch reads the time as "1346". A four-digit time within this many minutes of the call is
 # written as 13:46. 0 turns this off.
 time_window_minutes = 3
+
+[places]
+# Local streets, routes and landmarks (see places.example.csv). Build the full list for your area with
+# fetch-places.bat, which downloads it from OpenStreetMap. Set to "" to turn places off.
+file = "places.csv"
+# Room for place names in Whisper's hint list, in characters. The whole hint list is about 800.
+prompt_chars = 400
+
+# Which towns' streets to hint for talkgroups whose name doesn't say the town. Talkgroups named after
+# a town ("Easton PD", "Bethlehem Fire") pick it up on their own. Keys match part of the talkgroup name.
+[places.areas]
+# "County Fire" = ["Palmer Township", "Forks Township", "Wilson"]

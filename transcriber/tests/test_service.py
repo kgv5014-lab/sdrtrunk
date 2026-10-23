@@ -430,3 +430,24 @@ def test_loopback_detection():
 
     assert _is_loopback("127.0.0.1") and _is_loopback("::1") and _is_loopback("localhost")
     assert not _is_loopback("192.168.1.20") and not _is_loopback(None) and not _is_loopback("testclient")
+
+
+def test_streets_are_hinted_and_cleaned_up(make_client, tmp_path):
+    import shutil
+    from pathlib import Path
+
+    shutil.copy(Path(__file__).resolve().parents[1] / "places.example.csv", tmp_path / "places.csv")
+
+    class Radio(FakeBackend):
+        def transcribe(self, samples, prompt):
+            self.prompts.append(prompt)
+            return Transcript("Engine 2011 to 1201 Northamton Street off route twenty two.", -0.2)
+
+    client, fake = make_client(backend=Radio(), vocabulary="Medic 2081\n")
+    with client:
+        post(client, sdrtrunk_body({**CALL, "talkgroupLabel": "Easton Fire"}, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        call = client.get("/api/calls").json()[0]
+
+    assert call["transcript"] == "Engine 2011 to 1201 Northampton Street off Route 22."
+    assert "Larry Holmes Drive" in fake.prompts[0] and fake.prompts[0].endswith("Medic 2081")

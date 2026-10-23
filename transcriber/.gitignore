@@ -6,3 +6,5 @@ codes.csv
 __pycache__/
 *.pyc
 .pytest_cache/
+places.csv
+places-geo.json

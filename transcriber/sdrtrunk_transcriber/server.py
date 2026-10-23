@@ -28,6 +28,7 @@ from starlette.datastructures import UploadFile
 
 from .backends import create_backend
 from .codes import CodeBook
+from .places import PlaceBook
 from .config import Config
 from .db import Database
 from .worker import TranscriptionWorker
@@ -88,7 +89,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     async def lifespan(app: FastAPI):
         db = Database(data_path / "calls.db")
         codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
-        worker = TranscriptionWorker(config, db, backend_factory, codebook)
+        placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
+        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook)
         worker.start()
         app.state.db = db
         app.state.worker = worker

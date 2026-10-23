@@ -80,6 +80,22 @@ CREATE TABLE IF NOT EXISTS call_places (
 CREATE INDEX IF NOT EXISTS call_places_call ON call_places(call_id);
 CREATE INDEX IF NOT EXISTS call_places_incident ON call_places(incident_id);
 
+CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,                 -- random, as the ntfy phone app expects
+    time INTEGER NOT NULL,               -- unix seconds, when it was sent
+    kind TEXT NOT NULL,                  -- incident, page or test
+    title TEXT,
+    message TEXT,
+    tags TEXT,                           -- comma separated ntfy tags (emoji names)
+    priority INTEGER,
+    click TEXT,                          -- link opened by tapping the alert
+    incident_id INTEGER,
+    call_id INTEGER,
+    page_id INTEGER,
+    page_label TEXT
+);
+CREATE INDEX IF NOT EXISTS alerts_time ON alerts(time);
+
 CREATE TABLE IF NOT EXISTS geocode_cache (
     query TEXT PRIMARY KEY,
     lat REAL,                            -- NULL when nothing was found
@@ -330,6 +346,11 @@ class Database:
                 incident["calls"] = [dict(row) for row in rows]
         return incidents
 
+    def get_incident(self, incident_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)).fetchone()
+        return dict(row) if row else None
+
     def incident_call_texts(self, incident_id: int) -> list[tuple[str | None, str | None]]:
         """(transcript, talker alias) of each call in an incident."""
         with self._lock:
@@ -370,6 +391,45 @@ class Database:
                 (query, result.get("lat"), result.get("lon"), result.get("kind"), result.get("display"),
                  int(time.time())))
             self._conn.commit()
+
+    # ---- phone alerts
+
+    ALERT_FIELDS = ("id", "time", "kind", "title", "message", "tags", "priority", "click", "incident_id",
+                    "call_id", "page_id", "page_label")
+
+    def add_alert(self, alert: dict):
+        with self._lock:
+            self._conn.execute(
+                f"INSERT INTO alerts ({', '.join(self.ALERT_FIELDS)}) "
+                f"VALUES ({', '.join('?' for _ in self.ALERT_FIELDS)})",
+                [alert.get(n) for n in self.ALERT_FIELDS])
+            self._conn.commit()
+
+    def alerted(self, incident_id: int | None = None, call_id: int | None = None,
+                page_label: str | None = None, since: float | None = None) -> bool:
+        """Whether an alert already went out for this incident or call, or for this station since then."""
+        with self._lock:
+            if page_label is not None:
+                row = self._conn.execute("SELECT 1 FROM alerts WHERE page_label = ? AND time >= ?",
+                                         (page_label, since or 0)).fetchone()
+            else:
+                row = self._conn.execute("SELECT 1 FROM alerts WHERE incident_id = ? OR call_id = ?",
+                                         (incident_id, call_id)).fetchone()
+        return row is not None
+
+    def alerts(self, since: float, after_id: str | None = None, alert_id: str | None = None,
+               limit: int = 100) -> list[dict]:
+        """Alerts oldest first: one by id, or those sent after another one, or since a time."""
+        with self._lock:
+            if alert_id is not None:
+                rows = self._conn.execute("SELECT * FROM alerts WHERE id = ?", (alert_id,)).fetchall()
+            else:
+                after = self._conn.execute("SELECT rowid FROM alerts WHERE id = ?", (after_id,)).fetchone() \
+                    if after_id else None
+                rows = self._conn.execute(
+                    "SELECT * FROM alerts WHERE time >= ? AND rowid > ? ORDER BY rowid DESC LIMIT ?",
+                    (since, after[0] if after else 0, limit)).fetchall()[::-1]
+        return [dict(row) for row in rows]
 
     def status_counts(self) -> dict[str, int]:
         with self._lock:

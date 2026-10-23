@@ -68,3 +68,19 @@ area = [40.50, -75.62, 40.78, -75.17]
 # Calls naming places within this distance, within this many minutes, are one incident.
 incident_window_minutes = 45
 incident_radius_m = 500
+
+[alerts]
+# Phone alerts through the ntfy app over Tailscale (see "Phone alerts" in the README).
+enabled = false
+# The topic name entered in the ntfy app. Letters, digits, - and _ only.
+topic = "sdrtrunk-alerts"
+# This PC's address as printed by `tailscale serve --bg 3000` and entered in the ntfy app.
+base_url = ""
+# An iPhone wake-up ping (just a random id) goes through here. "" = no ping; Android doesn't need it.
+wakeup_url = "https://ntfy.sh"
+# Incident types from the map that alert.
+incidents = ["MVA", "Structure fire"]
+# Tone-outs alert when the station name contains one of these, e.g. ["Station 4", "Easton"].
+stations = []
+# Calls and tone-outs older than this don't alert.
+max_age_minutes = 15

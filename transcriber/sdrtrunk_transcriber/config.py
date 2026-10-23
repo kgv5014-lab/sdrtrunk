@@ -89,6 +89,25 @@ class MapConfig:
 
 
 @dataclass
+class AlertsConfig:
+    # Phone alerts through the ntfy app, answered by this service itself (see the README).
+    enabled: bool = False
+    # The topic name entered in the ntfy app. Letters, digits, - and _ only.
+    topic: str = "sdrtrunk-alerts"
+    # This PC's address exactly as entered in the ntfy app, e.g. "https://desktop.tail1234.ts.net".
+    base_url: str = ""
+    # iPhones can only be woken up through Apple. This server passes on a wake-up ping holding just
+    # a random id; the phone then fetches the alert from this PC. Empty = no ping (Android only).
+    wakeup_url: str = "https://ntfy.sh"
+    # Incident types (as shown on the map) that send an alert.
+    incidents: list = field(default_factory=lambda: ["MVA", "Structure fire"])
+    # Tone-outs whose station name (from SDRTrunk's paging_tones.csv) contains one of these.
+    stations: list = field(default_factory=list)
+    # Calls and tone-outs older than this don't alert (e.g. old calls placed after a restart).
+    max_age_minutes: int = 15
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
@@ -97,6 +116,7 @@ class Config:
     codes: CodesConfig = field(default_factory=CodesConfig)
     places: PlacesConfig = field(default_factory=PlacesConfig)
     map: MapConfig = field(default_factory=MapConfig)
+    alerts: AlertsConfig = field(default_factory=AlertsConfig)
     base_dir: Path = Path(".")
 
     @property

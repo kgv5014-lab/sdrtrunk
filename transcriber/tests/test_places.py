@@ -301,3 +301,48 @@ def test_failed_download_changes_nothing_and_keeps_what_worked(overpass_servers,
     args[1] = url2
     assert fetch_places.main(args) == 0
     assert len(hits2) == 2
+
+
+@pytest.mark.parametrize("tags,expected", [
+    ({"highway": "motorway_junction", "ref": "75"}, ("Exit 75", "exit", fetch_places.EXIT_RANK)),
+    ({"highway": "motorway_junction", "ref": "51B;51"}, ("Exit 51B", "exit", fetch_places.EXIT_RANK)),
+    ({"highway": "primary", "bridge": "yes", "bridge:name": "Free Bridge", "name": "Northampton Street"},
+     ("Free Bridge", "bridge", fetch_places.BRIDGE_RANK)),
+    ({"man_made": "bridge", "name": "Hill to Hill Bridge"}, ("Hill to Hill Bridge", "bridge", fetch_places.BRIDGE_RANK)),
+    ({"shop": "supermarket", "name": "Giant"}, ("Giant", "shop=supermarket", 45)),
+    ({"landuse": "residential", "name": "Hampton Woods"}, ("Hampton Woods", "landuse=residential", 35)),
+    ({"amenity": "hospital", "building": "apartments", "name": "X"}, ("X", "amenity=hospital", 85)),
+])
+def test_landmark_name(tags, expected):
+    assert fetch_places.landmark_name(tags) == expected
+
+
+def test_more_kinds_of_places_are_downloaded():
+    query = fetch_places.queries(fetch_places.DEFAULT_BBOX)
+    assert "|service)$" in query["roads"]
+    for wanted in ('"shop"="supermarket"', '"amenity"="fuel"', '"landuse"="residential"', '"bridge:name"',
+                   '"highway"="motorway_junction"', '"leisure"="golf_course"', '"amenity"="place_of_worship"'):
+        assert wanted in query["landmarks"]
+
+
+def test_bridges_exits_and_stores_become_landmarks():
+    extra = {"elements": LANDMARKS["elements"] + [
+        {"type": "node", "id": 40, "tags": {"highway": "motorway_junction", "ref": "75"}, "lat": 40.69, "lon": -75.22},
+        {"type": "way", "id": 41, "tags": {"shop": "supermarket", "name": "Giant"}, "center": {"lat": 40.72, "lon": -75.25}},
+        {"type": "node", "id": 42, "tags": {"amenity": "fuel"}, "lat": 40.69, "lon": -75.21},  # no name: skipped
+    ]}
+    rows, geo = fetch_places.build(ROADS, ROUTES, extra, TOWNS)
+    found = {(r["name"], r["municipality"]): r for r in rows}
+    assert found[("Exit 75", "Easton")]["kind"] == "landmark"
+    assert found[("Giant", "Palmer Township")]["osm_id"] == "way/41"
+    assert {"exit", "shop=supermarket"} <= {l["type"] for l in geo["landmarks"]}
+    assert len(geo["landmarks"]) == 4
+
+
+def test_spoken_exits_only_for_exits_in_the_list(tmp_path):
+    path = tmp_path / "places.csv"
+    path.write_text("name,kind,municipality\nExit 75,landmark,Easton\nExit 51B,landmark,Bethlehem\n", encoding="utf-8")
+    book = PlaceBook(path)
+    assert book.normalize("crash at exit seventy five westbound") == "crash at Exit 75 westbound"
+    assert book.normalize("disabled at exit fifty one b") == "disabled at Exit 51B"
+    assert book.normalize("take the exit two miles up") == "take the exit two miles up"

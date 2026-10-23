@@ -43,6 +43,8 @@ ROAD_CLASSES = {
     "motorway": 100, "trunk": 90, "primary": 80, "secondary": 65, "tertiary": 50,
     "motorway_link": 30, "trunk_link": 30, "primary_link": 30, "secondary_link": 25,
     "unclassified": 25, "residential": 15, "living_street": 10,
+    # Named private drives: inside apartment complexes, shopping plazas, business parks.
+    "service": 8,
 }
 LANDMARKS = {
     ("amenity", "hospital"): 85, ("aeroway", "aerodrome"): 70, ("amenity", "university"): 65,
@@ -50,7 +52,23 @@ LANDMARKS = {
     ("amenity", "police"): 55, ("amenity", "townhall"): 45, ("amenity", "courthouse"): 50,
     ("amenity", "school"): 40, ("amenity", "nursing_home"): 40, ("amenity", "clinic"): 30,
     ("leisure", "stadium"): 45, ("leisure", "park"): 30, ("tourism", "hotel"): 25,
+    # Stores and businesses dispatch calls by name.
+    ("shop", "supermarket"): 45, ("shop", "department_store"): 45, ("shop", "wholesale"): 40,
+    ("shop", "doityourself"): 40, ("shop", "convenience"): 30, ("amenity", "fuel"): 35,
+    ("amenity", "restaurant"): 20, ("amenity", "fast_food"): 20, ("amenity", "bank"): 20,
+    ("amenity", "pharmacy"): 25, ("amenity", "cinema"): 30, ("amenity", "community_centre"): 30,
+    # Shopping centers, plazas, industrial and business parks.
+    ("landuse", "retail"): 45, ("landuse", "commercial"): 30, ("landuse", "industrial"): 35,
+    # Apartment and townhouse complexes, mobile home parks, neighborhoods.
+    ("landuse", "residential"): 35, ("building", "apartments"): 30, ("place", "neighbourhood"): 35,
+    # Other landmarks.
+    ("amenity", "place_of_worship"): 30, ("landuse", "cemetery"): 30, ("amenity", "grave_yard"): 25,
+    ("leisure", "golf_course"): 35, ("leisure", "sports_centre"): 30, ("tourism", "attraction"): 30,
+    ("tourism", "museum"): 30, ("railway", "station"): 40,
 }
+# Named bridges (rank) and highway exits (rank); see landmark_name().
+BRIDGE_RANK = 55
+EXIT_RANK = 50
 # Places ranked at least this high are Whisper hint candidates (prompt = yes).
 PROMPT_RANK = 60
 # ...plus the top few roads of every town, so small boroughs get their main streets.
@@ -62,7 +80,11 @@ ROUTE_REF = re.compile(r"^(US|PA|SR|I)[\s-]*(\d{1,3})$", re.IGNORECASE)
 def queries(bbox) -> dict[str, str]:
     box = ",".join(f"{v:.5f}" for v in bbox)
     roads = "|".join(ROAD_CLASSES)
-    landmark_lines = "\n".join(f'  nwr["{k}"="{v}"]["name"]({box});' for k, v in LANDMARKS)
+    landmark_lines = "\n".join([f'  nwr["{k}"="{v}"]["name"]({box});' for k, v in LANDMARKS] + [
+        f'  way["bridge"]["bridge:name"]({box});',
+        f'  nwr["man_made"="bridge"]["name"]({box});',
+        f'  node["highway"="motorway_junction"]["ref"]({box});',
+    ])
     return {
         "roads": f'[out:json][timeout:300];\nway["highway"~"^({roads})$"]["name"]({box});\nout tags geom;',
         "routes": f'[out:json][timeout:300];\nway["highway"~"^(motorway|trunk|primary|secondary)$"]["ref"]({box});\n'
@@ -199,6 +221,20 @@ def route_names(ref: str) -> list[str]:
     return names
 
 
+def landmark_name(tags: dict) -> tuple[str | None, str | None, int]:
+    """Name, type ("amenity=hospital", "bridge", "exit") and rank of a landmark."""
+    if tags.get("highway") == "motorway_junction":
+        ref = (tags.get("ref") or "").split(";")[0].strip()
+        return (f"Exit {ref}" if ref else None), "exit", EXIT_RANK
+    if tags.get("bridge:name"):
+        return tags["bridge:name"], "bridge", BRIDGE_RANK
+    if tags.get("man_made") == "bridge":
+        return tags.get("name"), "bridge", BRIDGE_RANK
+    matches = [(r, f"{k}={v}") for (k, v), r in LANDMARKS.items() if tags.get(k) == v]
+    rank, kind = max(matches, default=(30, None))
+    return tags.get("name"), kind, rank
+
+
 def build(roads: dict, routes: dict, landmarks: dict, towns_data: dict):
     towns = Towns([e for e in towns_data.get("elements", []) if e.get("type") == "relation"])
     places: dict[tuple[str, str], dict] = {}
@@ -245,14 +281,13 @@ def build(roads: dict, routes: dict, landmarks: dict, towns_data: dict):
         tags = element.get("tags", {})
         center = element.get("center") or ({"lat": element["lat"], "lon": element["lon"]}
                                            if "lat" in element else None)
-        if not tags.get("name") or not center:
+        name, kind, rank = landmark_name(tags)
+        if not name or not center:
             continue
-        rank = max((r for (k, v), r in LANDMARKS.items() if tags.get(k) == v), default=30)
         town = towns.find(center["lat"], center["lon"])
         osm_id = f"{element['type']}/{element['id']}"
-        add(tags["name"], "landmark", town, rank, osm_id)
-        geo_landmarks.append({"id": osm_id, "name": tags["name"], "municipality": town,
-                              "type": next((f"{k}={v}" for k, v in LANDMARKS if tags.get(k) == v), None),
+        add(name, "landmark", town, rank, osm_id)
+        geo_landmarks.append({"id": osm_id, "name": name, "municipality": town, "type": kind,
                               "lat": round(center["lat"], 6), "lon": round(center["lon"], 6)})
 
     # Size plus length: a long secondary road outranks a short one, a 3 km residential street a cul-de-sac.

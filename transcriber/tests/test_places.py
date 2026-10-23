@@ -205,7 +205,8 @@ def test_main_writes_both_files_and_keeps_hand_made_rows(tmp_path, monkeypatch):
         return answers[name]
 
     monkeypatch.setattr(fetch_places, "overpass", fake_overpass)
-    assert fetch_places.main(["--out", str(out), "--geo", str(tmp_path / "geo.json")]) == 0
+    assert fetch_places.main(["--out", str(out), "--geo", str(tmp_path / "geo.json"),
+                              "--cache", str(tmp_path / "cache")]) == 0
 
     with open(out, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))
@@ -217,3 +218,81 @@ def test_main_writes_both_files_and_keeps_hand_made_rows(tmp_path, monkeypatch):
 
     book = PlaceBook(out)
     assert book.normalize("smoke at Northamton Street") == "smoke at Northampton Street"
+
+
+@pytest.fixture
+def overpass_servers(monkeypatch):
+    """Local stand-ins for Overpass servers. Each answers from its own list of replies in turn:
+    "cut" sends half a reply and hangs up, "busy" is HTTP 429, anything else is sent as JSON."""
+    import http.server
+    import threading
+
+    monkeypatch.setattr(fetch_places.time, "sleep", lambda _s: None)
+    servers = []
+
+    def start(*replies):
+        replies = list(replies)
+        hits = []
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                self.rfile.read(int(self.headers["Content-Length"]))
+                hits.append(1)
+                reply = replies.pop(0) if replies else "busy"
+                if reply == "busy":
+                    self.send_response(429)
+                    self.end_headers()
+                    return
+                body = json.dumps({"elements": []} if reply == "cut" else reply).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body) * 2 if reply == "cut" else len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                if reply == "cut":
+                    self.wfile.flush()
+                    self.close_connection = True
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append(server)
+        return f"http://127.0.0.1:{server.server_address[1]}/api/interpreter", hits
+
+    yield start
+    for server in servers:
+        server.shutdown()
+
+
+def test_cut_off_downloads_are_retried(overpass_servers):
+    url, hits = overpass_servers("cut", {"elements": [{"id": 1}]})
+    assert fetch_places.overpass("q", url) == {"elements": [{"id": 1}]}
+    assert len(hits) == 2
+
+
+def test_next_server_is_tried_when_one_keeps_failing(overpass_servers, monkeypatch):
+    bad, bad_hits = overpass_servers("cut", "busy", {"elements": [], "remark": "runtime error: Query timed out"})
+    good, _ = overpass_servers({"elements": [{"id": 2}]})
+    monkeypatch.setattr(fetch_places, "OVERPASS_MIRRORS", [bad, good])
+    assert fetch_places.overpass("q") == {"elements": [{"id": 2}]}
+    assert len(bad_hits) == 3
+
+
+def test_failed_download_changes_nothing_and_keeps_what_worked(overpass_servers, tmp_path):
+    out = tmp_path / "places.csv"
+    out.write_text("name,kind\nMain Street,street\n", encoding="utf-8")
+    good_answers = [{"elements": []}] * 2  # roads and routes download, landmarks never does
+    url, hits = overpass_servers(*good_answers)
+    args = ["--url", url, "--out", str(out), "--geo", str(tmp_path / "geo.json"), "--cache", str(tmp_path / "cache")]
+
+    assert fetch_places.main(args) == 1
+    assert out.read_text(encoding="utf-8") == "name,kind\nMain Street,street\n"
+    assert not (tmp_path / "geo.json").exists()
+    assert sorted(p.name for p in (tmp_path / "cache").iterdir()) == ["roads.json", "routes.json"]
+
+    # The next run only asks for what's missing.
+    url2, hits2 = overpass_servers({"elements": []}, {"elements": []})
+    args[1] = url2
+    assert fetch_places.main(args) == 0
+    assert len(hits2) == 2

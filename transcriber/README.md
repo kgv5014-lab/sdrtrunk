@@ -115,7 +115,9 @@ What happens to each call:
 `places.csv` helps Whisper with street names. It starts with a short hand-made list (`places.example.csv`).
 Run **fetch-places.bat** once to replace it with every named road, numbered route and landmark
 (hospitals, schools, colleges, malls, fire and police stations, parks) between Easton and Allentown from
-OpenStreetMap. It takes a minute or two, and running it again later refreshes the list.
+OpenStreetMap. It takes a minute or two, and running it again later refreshes the list. If a download
+gets cut off it is retried, then other public OpenStreetMap servers are tried. Downloads that worked are
+kept for a day in `data\osm-cache`, so running it again after a failure only fetches what's missing.
 
 | Column | What it does |
 | --- | --- |

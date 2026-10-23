@@ -60,7 +60,7 @@ class CodesConfig:
 
 @dataclass
 class PlacesConfig:
-    # Local streets, routes and landmarks; see places.example.csv and tools/fetch_places.py. Empty = off.
+    # Local streets, routes and landmarks; see places.example.csv and fetch-places.bat. Empty = off.
     file: str = "places.csv"
     # Room in Whisper's hint list for place names, in characters (the whole hint list is ~800).
     prompt_chars: int = 400

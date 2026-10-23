@@ -113,9 +113,12 @@ What happens to each call:
 ## Local streets and landmarks
 
 `places.csv` helps Whisper with street names. It starts with a short hand-made list (`places.example.csv`).
-Run **fetch-places.bat** once to replace it with every named road, numbered route and landmark
-(hospitals, schools, colleges, malls, fire and police stations, parks) between Easton and Allentown from
-OpenStreetMap. It takes a minute or two, and running it again later refreshes the list. If a download
+Run **fetch-places.bat** once to replace it with every named road (including private drives in
+complexes and plazas), numbered route, highway exit, named bridge and landmark between Easton and
+Allentown from OpenStreetMap. Landmarks include hospitals, schools, colleges, fire and police stations,
+malls, shopping centers, supermarkets and big stores, gas stations and convenience stores, restaurants,
+banks, pharmacies, apartment and townhouse complexes, neighborhoods, industrial and business parks,
+churches, cemeteries, parks, golf courses, stadiums, hotels and train stations. It takes a minute or two, and running it again later refreshes the list. If a download
 gets cut off it is retried, then other public OpenStreetMap servers are tried. Downloads that worked are
 kept for a day in `data\osm-cache`, so running it again after a failure only fetches what's missing.
 
@@ -136,7 +139,8 @@ What happens to each call:
    talkgroups without a town in the name, list the towns under `[places.areas]` in `config.toml`.
 2. Spoken street numbers and routes are written the way dispatch writes them: "twenty second street"
    becomes `22nd Street`, "route two forty eight" becomes `Route 248`, "interstate seventy eight"
-   becomes `I-78`. "En route twenty minutes" is left alone.
+   becomes `I-78`, "exit fifty one b" becomes `Exit 51B` (exits in the list only). "En route twenty
+   minutes" is left alone.
 3. Near-miss spellings right before a street word are fixed against the list: "Northamton Street"
    becomes `Northampton Street`. Short names (under five letters) and names already in the list are
    left alone, and a street in the talkgroup's own town wins a tie.

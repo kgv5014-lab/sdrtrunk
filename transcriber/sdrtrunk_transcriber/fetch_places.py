@@ -14,6 +14,7 @@ Rows in an existing places.csv whose source isn't "osm" or "example" are hand-ma
 
 import argparse
 import csv
+import http.client
 import json
 import logging
 import math
@@ -27,7 +28,13 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+# Public Overpass servers, tried in order.
+OVERPASS_MIRRORS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+]
+CACHE_SECONDS = 24 * 3600
 # Easton (east) to Allentown (west), Pennsylvania: south, west, north, east.
 DEFAULT_BBOX = (40.50, -75.62, 40.78, -75.17)
 USER_AGENT = "sdrtrunk-transcriber/1 (places list for a scanner)"
@@ -66,20 +73,59 @@ def queries(bbox) -> dict[str, str]:
     }
 
 
-def overpass(query: str, url: str = OVERPASS_URL, attempts: int = 4) -> dict:
+def overpass(query: str, url: str | None = None, attempts: int = 3) -> dict:
+    """Runs one Overpass query. Busy servers, dropped connections and cut-off downloads are retried,
+    then the next public Overpass server is tried."""
     data = urllib.parse.urlencode({"data": query}).encode()
-    for attempt in range(attempts):
-        request = urllib.request.Request(url, data=data, headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(request, timeout=360) as response:
-                return json.load(response)
-        except urllib.error.HTTPError as e:
-            if e.code not in (429, 502, 503, 504) or attempt == attempts - 1:
-                raise
-            wait = 30 * (attempt + 1)
-            log.warning("Overpass is busy (HTTP %d), trying again in %d s", e.code, wait)
-            time.sleep(wait)
-    raise RuntimeError("unreachable")
+    servers = [url] if url else OVERPASS_MIRRORS
+    last_error = None
+    for server in servers:
+        for attempt in range(attempts):
+            request = urllib.request.Request(server, data=data, headers={"User-Agent": USER_AGENT})
+            try:
+                with urllib.request.urlopen(request, timeout=360) as response:
+                    result = json.loads(response.read())
+                remark = result.get("remark") or ""
+                if "error" in remark.lower():
+                    raise OverpassError(remark)  # e.g. "runtime error: Query timed out"
+                return result
+            except urllib.error.HTTPError as e:
+                if e.code not in (429, 502, 503, 504):
+                    raise
+                last_error = f"HTTP {e.code}"
+            except (http.client.IncompleteRead, http.client.HTTPException, urllib.error.URLError, OSError,
+                    ValueError, OverpassError) as e:
+                last_error = f"{type(e).__name__}: {str(e)[:200]}"
+            if attempt < attempts - 1:
+                wait = 20 * (attempt + 1)
+                log.warning("  %s failed (%s), trying again in %d s", server, last_error, wait)
+                time.sleep(wait)
+        log.warning("  %s didn't work (%s)", server, last_error)
+    raise OverpassError(f"Couldn't download from OpenStreetMap ({last_error}). Try again in a few minutes.")
+
+
+class OverpassError(Exception):
+    pass
+
+
+def cached(cache_dir: Path, name: str, query: str, fetch) -> dict:
+    """Reuses a download from the last day so a re-run after a failure only fetches what's missing."""
+    path = cache_dir / f"{name}.json"
+    try:
+        if time.time() - path.stat().st_mtime < CACHE_SECONDS:
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            if saved.get("query") == query:
+                log.info("  using the copy downloaded at %s", time.strftime("%H:%M", time.localtime(path.stat().st_mtime)))
+                return saved["result"]
+    except (OSError, ValueError, KeyError):
+        pass
+    result = fetch()
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"query": query, "result": result}), encoding="utf-8")
+    except OSError as e:
+        log.warning("  couldn't save %s: %s", path, e)
+    return result
 
 
 class Towns:
@@ -251,7 +297,8 @@ def main(argv=None):
     parser.add_argument("--bbox", help="south,west,north,east (default: Easton to Allentown, PA)")
     parser.add_argument("--out", default="places.csv", help="CSV to write (default places.csv)")
     parser.add_argument("--geo", default="places-geo.json", help="map geometry to write")
-    parser.add_argument("--url", default=OVERPASS_URL, help="Overpass API address")
+    parser.add_argument("--url", help="Overpass API address (default: try the public servers in turn)")
+    parser.add_argument("--cache", default="data/osm-cache", help="where downloads are kept for a day")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -262,7 +309,12 @@ def main(argv=None):
     results = {}
     for name, query in queries(bbox).items():
         log.info("Downloading %s from OpenStreetMap...", name)
-        results[name] = overpass(query, args.url)
+        try:
+            results[name] = cached(Path(args.cache), name, query, lambda: overpass(query, args.url))
+        except OverpassError as e:
+            log.error("%s", e)
+            log.error("Nothing was changed. Downloads that worked are kept, so the next run picks up from here.")
+            return 1
         log.info("  %d items", len(results[name].get("elements", [])))
 
     rows, geo = build(results["roads"], results["routes"], results["landmarks"], results["towns"])

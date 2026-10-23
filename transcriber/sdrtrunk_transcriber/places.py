@@ -1,6 +1,6 @@
 """Local streets, routes and landmarks: Whisper hints and street-name cleanup.
 
-Everything comes from one CSV (places.csv), built by tools/fetch_places.py from OpenStreetMap and
+Everything comes from one CSV (places.csv), built by fetch_places.py (fetch-places.bat) from OpenStreetMap and
 editable by hand, with columns:
     name          how the place is written, e.g. "Northampton Street", "Route 22", "Easton Area High School"
     kind          street | route | landmark

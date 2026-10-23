@@ -72,6 +72,8 @@ class MapWorker:
         self._queue: "queue.Queue[int | None]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="incident-map", daemon=True)
         self._backlog_loaded = False
+        # Called with (call id, incident id, call) after a call is placed (phone alerts listen here).
+        self.on_placed = None
 
     def start(self):
         self._load_backlog()
@@ -151,6 +153,8 @@ class MapWorker:
         self.db.add_call_place(place)
         self.db.set_map_status(call_id, "placed")
         log.info("Incident map: call %d at %s (%s)", call_id, found.label, precision)
+        if self.on_placed:
+            self.on_placed(call_id, place["incident_id"], call)
 
     def place(self, found: Found, call_time: int) -> tuple[tuple[float, float] | None, str]:
         """Where a found place is, and how exactly: address, intersection, landmark or street."""

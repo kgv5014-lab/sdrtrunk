@@ -14,6 +14,7 @@ name from SDRTrunk's paging_tones.csv, or null), system, site, channel, frequenc
 
 import hmac
 import ipaddress
+import json
 import logging
 import re
 import secrets
@@ -26,6 +27,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from starlette.datastructures import UploadFile
 
+from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
 from .places import PlaceBook
@@ -94,6 +96,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
         worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook)
+        alerter = Alerter(config, db) if config.alerts.enabled else None
         map_worker = None
         if config.map.enabled:
             gazetteer = Gazetteer(config.geo_path, config.places_path)
@@ -101,18 +104,24 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 if config.map.online_lookup else None
             map_worker = MapWorker(config, db, gazetteer, geocoder)
             worker.on_done = map_worker.submit
+            if alerter:
+                map_worker.on_placed = lambda call_id, incident_id, call: alerter.incident_call(
+                    call_id, incident_id, call["call_time"], call["transcript"])
             map_worker.start()
         worker.start()
         app.state.db = db
         app.state.worker = worker
         app.state.codebook = codebook
         app.state.map_worker = map_worker
+        app.state.alerter = alerter
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
         worker.stop()
         if map_worker:
             map_worker.stop()
+        if alerter:
+            alerter.stop()
         db.close()
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
@@ -192,7 +201,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             return PlainTextResponse("Page needs toneA", status_code=400)
         tone_b = _number(body.get("toneB"))
         frequency = _number(body.get("frequency"))
-        page_id = request.app.state.db.insert_page({
+        page = {
             "page_time": _number(body.get("dateTime")) or time.time(),
             "received_at": int(time.time()),
             "tone_a": tone_a,
@@ -203,8 +212,11 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "site": _clip(body.get("site")),
             "channel": _clip(body.get("channel")),
             "frequency": int(frequency) if frequency else None,
-        })
-        return {"id": page_id}
+        }
+        page["id"] = request.app.state.db.insert_page(page)
+        if request.app.state.alerter:
+            request.app.state.alerter.page(page)
+        return {"id": page["id"]}
 
     @app.get("/api/pages")
     def list_pages(request: Request, since: float | None = None, until: float | None = None, q: str = "",
@@ -300,6 +312,43 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "area": config.map.area,
             "tiles_url": config.map.tiles_url,
         }
+
+    if config.alerts.enabled:
+        # The two addresses the ntfy phone app asks, at this PC's address plus the topic name.
+        topic = config.alerts.topic
+        hosts_seen = set()
+
+        def _alerter(request: Request) -> Alerter:
+            alerter = request.app.state.alerter
+            host = request.headers.get("host")
+            # Through `tailscale serve` the host may read localhost; only a real name tells anything.
+            if host and host.split(":")[0] in ("localhost", "127.0.0.1", "testserver"):
+                host = None
+            if config.alerts.base_url and host and host not in config.alerts.base_url and host not in hosts_seen:
+                hosts_seen.add(host)
+                log.warning("Phone alerts: the phone used %s but [alerts] base_url is %s; iPhone wake-ups "
+                            "need them to match", request.headers["host"], config.alerts.base_url)
+            return alerter
+
+        @app.get(f"/{topic}/auth")
+        def ntfy_auth(request: Request):
+            _alerter(request)
+            return {"success": True}
+
+        @app.get(f"/{topic}/json")
+        def ntfy_poll(request: Request, since: str | None = None, id: str | None = None):
+            lines = [json.dumps(m) for m in _alerter(request).messages(since, id)]
+            return PlainTextResponse("".join(line + "\n" for line in lines), media_type="application/x-ndjson")
+
+        @app.post("/api/alerts/test")
+        def test_alert(request: Request):
+            """Sends a test alert to the phone. From this computer only."""
+            if not _is_loopback(request.client.host if request.client else None):
+                raise HTTPException(403, "Only from this computer")
+            return request.app.state.alerter.send(
+                "test", "Test alert", "Phone alerts from the SDRTrunk transcriber are working.",
+                tags=["white_check_mark"], click=f"{config.alerts.base_url.rstrip('/')}/map"
+                if config.alerts.base_url else None)
 
     @app.get("/api/status")
     def status(request: Request):

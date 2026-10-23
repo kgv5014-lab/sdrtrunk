@@ -192,6 +192,40 @@ SDRTrunk posts JSON to `/api/page`. Nothing needs setting up when both run on th
 transcriber runs on a different computer, enter its address and your API key in SDRTrunk's Two-Tone
 Paging preferences.
 
+## Phone alerts
+
+The transcriber can buzz your phone for a crash (MVA), a structure fire, or a tone-out for stations you
+pick, for example "Structure fire / North 3rd Street & Northampton Street, Easton". Tapping the alert
+opens the incident map. It uses the free **ntfy** phone app, but the transcriber answers the app itself,
+so the alert text goes only from your PC to your phone. **Tailscale** (free) links the phone to the PC
+over an encrypted connection, so this works away from home too.
+
+iPhones can only be woken up through Apple. For each alert the transcriber sends a wake-up ping holding
+nothing but a random id through ntfy.sh to Apple, and the iPhone then fetches the alert from your PC.
+Set `wakeup_url = ""` to turn the ping off; an iPhone then shows alerts only when the app is opened.
+
+Setting it up, once:
+
+1. Install Tailscale on the PC (<https://tailscale.com/download>) and on the phone (App Store), and sign
+   in to both with the same account. Leave Tailscale connected on the phone.
+2. On the PC, open Command Prompt and run `tailscale serve --bg 3000`. The first time, it shows a link
+   to turn on HTTPS for your Tailscale network: open it, approve, and run the command again. It prints
+   this PC's address, like `https://desktop-j74k3qe.tail1234.ts.net`. Only your own Tailscale devices
+   can open it.
+3. In `config.toml`, add (or edit) the `[alerts]` section from `config.example.toml`: `enabled = true`,
+   `base_url` set to that address, and the stations you want in `stations`. Restart the transcriber.
+4. On the phone, install **ntfy** from the App Store, tap **+**, turn on **Use another server**, enter the
+   same address, and enter the topic name `sdrtrunk-alerts`. Allow notifications when it asks.
+5. Double-click **send-test-alert.bat** on the PC. The phone should buzz within a few seconds.
+
+What alerts:
+
+* An incident on the map whose type is in `incidents` (MVA and structure fire to start), once per
+  incident, as soon as a call about it has an address. Calls with no address heard don't alert.
+* A tone-out whose station name (from SDRTrunk's `paging_tones.csv`) contains one of `stations`, for
+  example `stations = ["Station 4", "Easton"]`. The same station again within two minutes is skipped.
+* Nothing older than `max_age_minutes`, so old calls mapped after a restart stay quiet.
+
 ## Accuracy tips
 
 * Whisper invents words on silence. The service drops calls shorter than `min_duration_s`, runs voice

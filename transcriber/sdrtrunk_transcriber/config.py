@@ -59,12 +59,24 @@ class CodesConfig:
 
 
 @dataclass
+class PlacesConfig:
+    # Local streets, routes and landmarks; see places.example.csv and tools/fetch_places.py. Empty = off.
+    file: str = "places.csv"
+    # Room in Whisper's hint list for place names, in characters (the whole hint list is ~800).
+    prompt_chars: int = 400
+    # Talkgroup name (or part of it) -> municipalities whose streets to hint, e.g. {"County Fire" = [...]}.
+    # Talkgroups whose name already contains a town ("Easton PD") don't need an entry.
+    areas: dict = field(default_factory=dict)
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     codes: CodesConfig = field(default_factory=CodesConfig)
+    places: PlacesConfig = field(default_factory=PlacesConfig)
     base_dir: Path = Path(".")
 
     @property
@@ -78,6 +90,10 @@ class Config:
     @property
     def codes_path(self) -> Path | None:
         return self._resolve(self.codes.file) if self.codes.file else None
+
+    @property
+    def places_path(self) -> Path | None:
+        return self._resolve(self.places.file) if self.places.file else None
 
     def _resolve(self, value: str) -> Path:
         path = Path(value)

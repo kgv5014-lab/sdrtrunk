@@ -12,6 +12,7 @@ from .backends import Backend
 from .codes import CodeBook
 from .config import Config
 from .db import Database
+from .places import PlaceBook
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,8 @@ def build_prompt(*term_lists: list[str]) -> str:
 
 
 class TranscriptionWorker:
-    def __init__(self, config: Config, db: Database, backend_factory, codebook: CodeBook):
+    def __init__(self, config: Config, db: Database, backend_factory, codebook: CodeBook,
+                 placebook: PlaceBook | None = None):
         self.config = config
         self.db = db
         self._backend_factory = backend_factory
@@ -52,12 +54,13 @@ class TranscriptionWorker:
         self._thread = threading.Thread(target=self._run, name="transcriber", daemon=True)
         self.ready = threading.Event()
         self.codebook = codebook
+        self.placebook = placebook or PlaceBook(None)
         self.vocabulary = load_vocabulary(config.vocabulary_path)
 
-    @property
-    def prompt(self) -> str:
-        # Codes first, then the user's own vocabulary, which Whisper weighs most as it comes last.
-        return build_prompt(self.codebook.prompt_terms(), self.vocabulary)
+    def prompt(self, *context: str | None) -> str:
+        # Places first (dropped first when it's too long), then codes, then the user's own vocabulary,
+        # which Whisper weighs most as it comes last.
+        return build_prompt(self.placebook.prompt_terms(*context), self.codebook.prompt_terms(), self.vocabulary)
 
     def start(self):
         for call_id in self.db.pending_ids():
@@ -122,9 +125,12 @@ class TranscriptionWorker:
             return
 
         started = time.perf_counter()
-        result = self._backend.transcribe(samples, self.prompt)
+        context = (call["talkgroup_label"], call["talkgroup_group"])
+        result = self._backend.transcribe(samples, self.prompt(*context))
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        transcript = self.codebook.normalize(result.text, datetime.fromtimestamp(call["call_time"]))
+        # Places first, so "route ten" becomes Route 10 before the codes see "ten".
+        transcript = self.placebook.normalize(result.text, *context)
+        transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))
 
         self.db.update_call(
             call_id,

@@ -61,16 +61,18 @@ def test_file(config, path: Path) -> int:
     from . import audio
     from .backends import create_backend
     from .codes import CodeBook
+    from .places import PlaceBook
     from .worker import build_prompt, load_vocabulary
 
     codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
+    placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
     backend = create_backend(config)
     samples = audio.decode(path)
     started = time.perf_counter()
-    result = backend.transcribe(samples, build_prompt(codebook.prompt_terms(),
+    result = backend.transcribe(samples, build_prompt(placebook.prompt_terms(), codebook.prompt_terms(),
                                                       load_vocabulary(config.vocabulary_path)))
     elapsed = time.perf_counter() - started
-    text = codebook.normalize(result.text)
+    text = codebook.normalize(placebook.normalize(result.text))
     print(f"{path.name}: {audio.duration_seconds(samples):.1f}s of audio in {elapsed:.2f}s "
           f"with {backend.name} ({backend.model}), confidence {result.confidence}")
     print(text or "(no speech found)")

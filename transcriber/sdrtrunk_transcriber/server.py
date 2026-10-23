@@ -29,8 +29,11 @@ from starlette.datastructures import UploadFile
 from .backends import create_backend
 from .codes import CodeBook
 from .places import PlaceBook
+from .addresses import Gazetteer
 from .config import Config
 from .db import Database
+from .geocode import Geocoder
+from .incidents import MapWorker
 from .worker import TranscriptionWorker
 
 log = logging.getLogger(__name__)
@@ -91,14 +94,25 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
         worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook)
+        map_worker = None
+        if config.map.enabled:
+            gazetteer = Gazetteer(config.geo_path, config.places_path)
+            geocoder = Geocoder(db, config.map.area, contact=config.map.contact_email) \
+                if config.map.online_lookup else None
+            map_worker = MapWorker(config, db, gazetteer, geocoder)
+            worker.on_done = map_worker.submit
+            map_worker.start()
         worker.start()
         app.state.db = db
         app.state.worker = worker
         app.state.codebook = codebook
+        app.state.map_worker = map_worker
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
         worker.stop()
+        if map_worker:
+            map_worker.stop()
         db.close()
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
@@ -221,6 +235,71 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if not path.is_relative_to(data_path.resolve()) or not path.exists():
             raise HTTPException(404)
         return FileResponse(path)
+
+    @app.get("/map", response_class=HTMLResponse)
+    def map_page():
+        return (WEB_DIR / "map.html").read_text(encoding="utf-8")
+
+    def _map_worker(request: Request) -> MapWorker:
+        if request.app.state.map_worker is None:
+            raise HTTPException(404, "The incident map is turned off in config.toml ([map] enabled)")
+        return request.app.state.map_worker
+
+    @app.get("/api/incidents")
+    def list_incidents(request: Request, since: int | None = None, until: int | None = None,
+                       hidden: bool = False, limit: int = 300):
+        _map_worker(request)
+        db = request.app.state.db
+        codebook = request.app.state.codebook
+        incidents = db.incidents(since, until, hidden, limit)
+        for incident in incidents:
+            for call in incident["calls"]:
+                call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
+                                                  call["talkgroup_group"])
+            # Tone-outs just before the first call (pages carry no address, so this is by time only).
+            incident["pages"] = db.pages(incident["first_time"] - 600, incident["first_time"] + 60, limit=10)
+        return incidents
+
+    @app.delete("/api/incidents/{incident_id}")
+    def hide_incident(request: Request, incident_id: int):
+        _map_worker(request)
+        if not request.app.state.db.update_incident(incident_id, hidden=1):
+            raise HTTPException(404)
+        return {"hidden": incident_id}
+
+    @app.post("/api/incidents/{incident_id}/restore")
+    def restore_incident(request: Request, incident_id: int):
+        _map_worker(request)
+        if not request.app.state.db.update_incident(incident_id, hidden=0):
+            raise HTTPException(404)
+        return {"restored": incident_id}
+
+    @app.post("/api/map/rebuild")
+    def rebuild_map(request: Request):
+        """Places every call again, e.g. after places.csv or places-geo.json changed."""
+        if not _is_loopback(request.client.host if request.client else None):
+            raise HTTPException(403, "Only from this computer")
+        worker = _map_worker(request)
+        worker.gazetteer.reload_if_changed()
+        worker.rebuild()
+        return {"queued": worker.queue_size()}
+
+    @app.get("/api/map/status")
+    def map_status(request: Request):
+        worker = request.app.state.map_worker
+        if worker is None:
+            return {"enabled": False}
+        gazetteer = worker.gazetteer
+        return {
+            "enabled": True,
+            "streets": len(gazetteer.streets),
+            "towns": len(gazetteer.town_names),
+            "has_shapes": gazetteer.has_shapes,
+            "online_lookup": worker.geocoder is not None,
+            "queue": worker.queue_size(),
+            "area": config.map.area,
+            "tiles_url": config.map.tiles_url,
+        }
 
     @app.get("/api/status")
     def status(request: Request):

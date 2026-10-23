@@ -142,6 +142,42 @@ What happens to each call:
 The script also writes `places-geo.json` (road lines, landmark points, town outlines) for the incident
 map.
 
+## Incident map
+
+<http://localhost:3000/map> shows possible incidents on a street map, built from the transcripts. Click a
+dot for the address, the time, the tone-outs just before it, the 10-codes heard, and the calls with play
+buttons. Colors: red fire, green EMS, blue police, gray unknown (from the talkgroup name, then words like
+"structure fire" or "chest pain", then a tone-out just before).
+
+It needs the street list: run **fetch-places.bat** once (see above). Calls logged before that are mapped
+as soon as the list exists.
+
+What happens to each transcribed call:
+
+1. **Find a place.** The transcript is checked against the street list for a house address
+   ("1234 Northampton Street", "the 1200 block of Northampton St"), an intersection ("North 3rd and
+   Northampton", "Route 22 at Freemansburg Ave", "Main Street between 3rd and 4th") or a landmark
+   ("Easton Hospital"). Unit numbers aren't house numbers ("Engine 4 Route 22", "Medic 2081 Main St").
+   "In Nazareth", "Palmer Township" or a town in the talkgroup name picks the town when a street name
+   exists in several.
+2. **Put it on the map.** Intersections and landmarks are placed offline from `places-geo.json`. House
+   addresses are looked up with OpenStreetMap's free search, at most one a second, and every answer is
+   saved in `calls.db` so nothing is looked up twice. Answers that aren't on the named street are
+   ignored. With `online_lookup = false`, an address on a short street (under 2 km) is placed at the
+   middle of the street and marked approximate; others are skipped.
+3. **Group into incidents.** Calls naming places within 500 m of each other within 45 minutes are one
+   incident. A house address heard later moves the dot from the intersection to the house.
+
+Radio speech is messy, so some calls are missed and some land in the wrong place. Each call in a popup
+shows its transcript and how it was placed (house address, intersection, landmark, or street only), and
+**Remove from map** hides a wrong one ("Show removed" brings it back).
+
+After editing `places.csv` by hand, map earlier calls again with (from the same PC):
+`curl -X POST http://localhost:3000/api/map/rebuild`
+
+Settings are under `[map]` in `config.toml`. The map page loads Leaflet and the map tiles from the
+internet; map data is © OpenStreetMap contributors.
+
 ## Fire and EMS tone-outs
 
 SDRTrunk's Two-Tone Paging decoder (turn it on under a channel's Additional Decoders) sends each tone-out

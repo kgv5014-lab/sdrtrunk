@@ -3,6 +3,7 @@
 import logging
 import sqlite3
 import threading
+import time
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -51,6 +52,42 @@ CREATE TABLE IF NOT EXISTS pages (
     frequency INTEGER
 );
 CREATE INDEX IF NOT EXISTS pages_time ON pages(page_time);
+
+CREATE TABLE IF NOT EXISTS incidents (
+    id INTEGER PRIMARY KEY,
+    first_time INTEGER NOT NULL,         -- unix seconds of the first and latest call placed here
+    last_time INTEGER NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    label TEXT,                          -- "1234 Northampton St, Easton"
+    category TEXT,                       -- fire, ems, police or NULL
+    nature TEXT,                         -- "Structure fire", from words in the calls
+    hidden INTEGER NOT NULL DEFAULT 0    -- removed from the map by the user
+);
+CREATE INDEX IF NOT EXISTS incidents_time ON incidents(last_time);
+
+CREATE TABLE IF NOT EXISTS call_places (
+    id INTEGER PRIMARY KEY,
+    call_id INTEGER NOT NULL,
+    incident_id INTEGER,
+    kind TEXT NOT NULL,                  -- address, intersection, landmark
+    heard TEXT,                          -- the transcript words it came from
+    label TEXT,
+    lat REAL,
+    lon REAL,
+    precision TEXT                       -- address, intersection, landmark, street (approximate)
+);
+CREATE INDEX IF NOT EXISTS call_places_call ON call_places(call_id);
+CREATE INDEX IF NOT EXISTS call_places_incident ON call_places(incident_id);
+
+CREATE TABLE IF NOT EXISTS geocode_cache (
+    query TEXT PRIMARY KEY,
+    lat REAL,                            -- NULL when nothing was found
+    lon REAL,
+    kind TEXT,
+    display TEXT,
+    fetched_at INTEGER NOT NULL
+);
 """
 
 FTS_SCHEMA = """
@@ -112,6 +149,9 @@ class Database:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(calls)")}
         if "transcript_raw" not in columns:
             self._conn.execute("ALTER TABLE calls ADD COLUMN transcript_raw TEXT")
+        if "map_status" not in columns:
+            # NULL: not looked at yet; none: no place heard; placed; unplaced: heard but not found.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN map_status TEXT")
 
     def close(self):
         with self._lock:
@@ -210,6 +250,116 @@ class Database:
         params.append(max(1, min(limit, 1000)))
         with self._lock:
             return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    # ---- incident map
+
+    def calls_to_map(self) -> list[int]:
+        """Transcribed calls the map hasn't looked at yet, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id FROM calls WHERE status = 'done' AND map_status IS NULL ORDER BY id").fetchall()
+        return [row["id"] for row in rows]
+
+    def set_map_status(self, call_id: int, status: str | None):
+        with self._lock:
+            # A direct UPDATE of one column; the search-index trigger only re-indexes the same text.
+            self._conn.execute("UPDATE calls SET map_status = ? WHERE id = ?", (status, call_id))
+            self._conn.commit()
+
+    def add_call_place(self, place: dict) -> int:
+        names = ("call_id", "incident_id", "kind", "heard", "label", "lat", "lon", "precision")
+        with self._lock:
+            cur = self._conn.execute(
+                f"INSERT INTO call_places ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
+                [place.get(n) for n in names])
+            self._conn.commit()
+            return cur.lastrowid
+
+    def nearby_incidents(self, since: int, until: int) -> list[dict]:
+        """Incidents (hidden ones too) active in [since, until]."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM incidents WHERE last_time >= ? AND first_time <= ? ORDER BY last_time DESC",
+                (since, until)).fetchall()
+        return [dict(row) for row in rows]
+
+    def create_incident(self, incident: dict) -> int:
+        names = ("first_time", "last_time", "lat", "lon", "label", "category", "nature")
+        with self._lock:
+            cur = self._conn.execute(
+                f"INSERT INTO incidents ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
+                [incident.get(n) for n in names])
+            self._conn.commit()
+            return cur.lastrowid
+
+    def update_incident(self, incident_id: int, **values):
+        assignments = ", ".join(f"{name} = ?" for name in values)
+        with self._lock:
+            cur = self._conn.execute(f"UPDATE incidents SET {assignments} WHERE id = ?",
+                                     [*values.values(), incident_id])
+            self._conn.commit()
+            return cur.rowcount
+
+    def incidents(self, since: int | None = None, until: int | None = None, hidden: bool = False,
+                  limit: int = 300) -> list[dict]:
+        """Incidents newest first, each with its placed calls."""
+        where, params = [], []
+        if since is not None:
+            where.append("last_time >= ?")
+            params.append(since)
+        if until is not None:
+            where.append("first_time < ?")
+            params.append(until)
+        if not hidden:
+            where.append("hidden = 0")
+        sql = "SELECT * FROM incidents"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY last_time DESC LIMIT ?"
+        params.append(max(1, min(limit, 2000)))
+        with self._lock:
+            incidents = [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+            for incident in incidents:
+                rows = self._conn.execute(
+                    "SELECT p.kind, p.heard, p.label, p.lat, p.lon, p.precision, c.id, c.call_time, c.talkgroup, "
+                    "c.talkgroup_label, c.talkgroup_group, c.talker_alias, c.source, c.transcript, c.duration_s "
+                    "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
+                    "ORDER BY c.call_time", (incident["id"],)).fetchall()
+                incident["calls"] = [dict(row) for row in rows]
+        return incidents
+
+    def incident_precisions(self, incident_id: int) -> list[str]:
+        with self._lock:
+            rows = self._conn.execute("SELECT precision FROM call_places WHERE incident_id = ?",
+                                      (incident_id,)).fetchall()
+        return [row["precision"] for row in rows]
+
+    def clear_map(self):
+        """Forgets every incident so all calls are placed again (after editing the street list)."""
+        with self._lock:
+            self._conn.execute("DELETE FROM call_places")
+            self._conn.execute("DELETE FROM incidents")
+            self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
+            self._conn.commit()
+
+    def geocode_cached(self, query: str) -> dict | None:
+        """The saved answer: a dict, {} for "not found", None when never asked."""
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM geocode_cache WHERE query = ?", (query,)).fetchone()
+        if row is None:
+            return None
+        if row["lat"] is None:
+            return {}
+        return {"lat": row["lat"], "lon": row["lon"], "kind": row["kind"], "display": row["display"]}
+
+    def geocode_store(self, query: str, result: dict):
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO geocode_cache (query, lat, lon, kind, display, fetched_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (query, result.get("lat"), result.get("lon"), result.get("kind"), result.get("display"),
+                 int(time.time())))
+            self._conn.commit()
 
     def status_counts(self) -> dict[str, int]:
         with self._lock:

@@ -53,3 +53,18 @@ prompt_chars = 400
 # a town ("Easton PD", "Bethlehem Fire") pick it up on their own. Keys match part of the talkgroup name.
 [places.areas]
 # "County Fire" = ["Palmer Township", "Forks Township", "Wilson"]
+
+[map]
+# Possible incidents on a map at http://localhost:3000/map, from addresses heard in transcripts.
+enabled = true
+# Road shapes written by fetch-places.bat; needed to place intersections.
+geo_file = "places-geo.json"
+# Look up house-number addresses with OpenStreetMap's free search (one a second, answers are saved).
+online_lookup = true
+# Optional: your email, sent with lookups as OpenStreetMap asks.
+contact_email = ""
+# South, west, north, east: Easton to Allentown. Lookups outside this box are ignored.
+area = [40.50, -75.62, 40.78, -75.17]
+# Calls naming places within this distance, within this many minutes, are one incident.
+incident_window_minutes = 45
+incident_radius_m = 500

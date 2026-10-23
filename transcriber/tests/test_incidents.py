@@ -148,6 +148,9 @@ def test_not_places(gaz, text):
 def test_landmark(gaz):
     found = gaz.find("Respond to Easton Hospital, the ER entrance, for a fall")
     assert found.kind == "landmark" and near(found.points[0], 40.6930, -75.2290)
+    # One-word landmark names are ignored: they are too often ordinary words.
+    gaz.landmarks[("target",)] = gaz.landmarks[("easton", "hospital")]
+    assert gaz.find("Respond to the target, a fall") is None
     # Taking a patient there doesn't make it an incident.
     assert gaz.find("Medic 2081 transporting one to Easton Hospital") is None
 

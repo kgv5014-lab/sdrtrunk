@@ -33,6 +33,7 @@ import io.github.dsheirer.scanner.ScannerPanel;
 import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
+import io.github.dsheirer.transcription.IncidentsPanel;
 import io.github.dsheirer.transcription.TranscriptsPanel;
 import java.awt.Dimension;
 import jiconfont.icons.font_awesome.FontAwesome;
@@ -44,6 +45,7 @@ import org.slf4j.LoggerFactory;
 import javax.swing.Icon;
 import javax.swing.JLabel;
 import javax.swing.JPanel;
+import javax.swing.JTabbedPane;
 
 public class ControllerPanel extends JPanel
 {
@@ -107,7 +109,11 @@ public class ControllerPanel extends JPanel
         mTabbedPane.setFont(this.getFont());
         mTabbedPane.addTab("Now Playing", mNowPlayingPanel);
         mTabbedPane.addTab("Scanner", mScannerPanel);
-        mTabbedPane.addTab("Transcripts", mTranscriptsPanel);
+        //Transcripts tab: the call log, and the incidents the transcriber's incident map grouped from it
+        JTabbedPane transcriptsTabs = new JTabbedPane();
+        transcriptsTabs.addTab("Calls", mTranscriptsPanel);
+        transcriptsTabs.addTab("Incidents", new IncidentsPanel());
+        mTabbedPane.addTab("Transcripts", transcriptsTabs);
         mTabbedPane.addTab("Map", mMapPanel);
         mTabbedPane.addTab("Tuners", mTunerManagerPanel);
 

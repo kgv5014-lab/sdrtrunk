@@ -168,6 +168,8 @@ class Database:
         if "map_status" not in columns:
             # NULL: not looked at yet; none: no place heard; placed; unplaced: heard but not found.
             self._conn.execute("ALTER TABLE calls ADD COLUMN map_status TEXT")
+        # Crashes were called "Vehicle crash" before they became MVA.
+        self._conn.execute("UPDATE incidents SET nature = 'MVA' WHERE nature = 'Vehicle crash'")
 
     def close(self):
         with self._lock:
@@ -348,6 +350,14 @@ class Database:
         with self._lock:
             row = self._conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)).fetchone()
         return dict(row) if row else None
+
+    def incident_call_texts(self, incident_id: int) -> list[tuple[str | None, str | None]]:
+        """(transcript, talker alias) of each call in an incident."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT c.transcript, c.talker_alias FROM call_places p JOIN calls c ON c.id = p.call_id "
+                "WHERE p.incident_id = ?", (incident_id,)).fetchall()
+        return [(row["transcript"], row["talker_alias"]) for row in rows]
 
     def incident_precisions(self, incident_id: int) -> list[str]:
         with self._lock:

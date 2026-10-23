@@ -132,3 +132,22 @@ def test_topic_must_be_a_plain_name(tmp_path):
     with pytest.raises(ValueError):
         with TestClient(create_app(config, backend_factory=lambda _c: Radio([]))):
             pass
+
+
+def test_a_follow_up_call_that_makes_it_an_mva_alerts(tmp_path, wakeups):
+    config = make_config(tmp_path)
+    radio = Radio([
+        "Medic 49 responding Main and Center in Nazareth for a fall.",
+        "Medic 49 on location, it's a rollover, two cars.",
+    ])
+    now = int(time.time())
+    client = TestClient(create_app(config, backend_factory=lambda _c: radio))
+    with client:
+        for offset in (0, 60):
+            post(client, sdrtrunk_body({**CALL, "dateTime": str(now - 120 + offset)}, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        assert client.app.state.map_worker.wait_idle()
+        sent = lines(client.get("/sdrtrunk-alerts/json", params={"poll": 1}))
+
+    assert [m["title"] for m in sent] == ["MVA"]
+    assert sent[0]["message"].startswith("Main Street & Center Street, Nazareth\nMedic 49 on location")

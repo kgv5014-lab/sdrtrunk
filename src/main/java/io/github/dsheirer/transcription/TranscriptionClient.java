@@ -88,9 +88,48 @@ public class TranscriptionClient
     }
 
     /**
-     * Builds the /api/calls request address.
+     * Fetches the incident map's incidents active since a time.
+     * @param baseUrl service address, e.g. http://localhost:3000
+     * @param since seconds since epoch
+     * @return incidents, most recent first
      */
-    static URI callsUri(String baseUrl, String search, String talkgroup, int limit)
+    public CompletableFuture<List<TranscriptIncident>> fetchIncidents(String baseUrl, long since)
+    {
+        return get(URI.create(base(baseUrl) + "/api/incidents?since=" + since)).thenApply(TranscriptionClient::parseIncidents);
+    }
+
+    private CompletableFuture<String> get(URI uri)
+    {
+        HttpRequest request;
+
+        try
+        {
+            request = HttpRequest.newBuilder(uri)
+                .timeout(TIMEOUT)
+                .header("Accept", "application/json")
+                .GET()
+                .build();
+        }
+        catch(IllegalArgumentException e)
+        {
+            return CompletableFuture.failedFuture(e);
+        }
+
+        return mHttpClient.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8))
+            .thenApply(response -> {
+                if(response.statusCode() != 200)
+                {
+                    throw new IllegalStateException("HTTP " + response.statusCode());
+                }
+
+                return response.body();
+            });
+    }
+
+    /**
+     * Service address without a trailing slash, the default when empty.
+     */
+    static String base(String baseUrl)
     {
         String base = baseUrl == null || baseUrl.isBlank() ? DEFAULT_URL : baseUrl.trim();
 
@@ -99,8 +138,105 @@ public class TranscriptionClient
             base = base.substring(0, base.length() - 1);
         }
 
-        return URI.create(base + "/api/calls?limit=" + limit + "&q=" + encode(search) +
+        return base;
+    }
+
+    /**
+     * Builds the /api/calls request address.
+     */
+    static URI callsUri(String baseUrl, String search, String talkgroup, int limit)
+    {
+        return URI.create(base(baseUrl) + "/api/calls?limit=" + limit + "&q=" + encode(search) +
             "&talkgroup=" + encode(talkgroup));
+    }
+
+    /**
+     * Parses the JSON array returned by /api/incidents.
+     */
+    static List<TranscriptIncident> parseIncidents(String json)
+    {
+        List<TranscriptIncident> incidents = new ArrayList<>();
+
+        for(JsonElement element : array(json))
+        {
+            if(!element.isJsonObject())
+            {
+                continue;
+            }
+
+            JsonObject incident = element.getAsJsonObject();
+            List<TranscriptIncident.Call> calls = new ArrayList<>();
+            List<TranscriptIncident.Page> pages = new ArrayList<>();
+
+            if(incident.has("calls") && incident.get("calls").isJsonArray())
+            {
+                for(JsonElement item : incident.getAsJsonArray("calls"))
+                {
+                    if(item.isJsonObject())
+                    {
+                        JsonObject call = item.getAsJsonObject();
+                        String talkgroup = string(call, "talkgroup_label");
+                        calls.add(new TranscriptIncident.Call(number(call, "id", 0L), number(call, "call_time", 0L),
+                            talkgroup != null ? talkgroup : string(call, "talkgroup"), string(call, "talker_alias"),
+                            string(call, "transcript"), string(call, "precision")));
+                    }
+                }
+            }
+
+            if(incident.has("pages") && incident.get("pages").isJsonArray())
+            {
+                for(JsonElement item : incident.getAsJsonArray("pages"))
+                {
+                    if(item.isJsonObject())
+                    {
+                        pages.add(new TranscriptIncident.Page(number(item.getAsJsonObject(), "page_time", 0L),
+                            string(item.getAsJsonObject(), "label")));
+                    }
+                }
+            }
+
+            incidents.add(new TranscriptIncident(number(incident, "id", 0L), number(incident, "first_time", 0L),
+                number(incident, "last_time", 0L), decimal(incident, "lat"), decimal(incident, "lon"),
+                string(incident, "label"), string(incident, "category"), string(incident, "nature"),
+                string(incident, "type"), calls, pages));
+        }
+
+        return incidents;
+    }
+
+    private static JsonArray array(String json)
+    {
+        JsonElement root;
+
+        try
+        {
+            root = JsonParser.parseString(json);
+        }
+        catch(JsonParseException e)
+        {
+            throw new IllegalStateException("Unexpected reply from the transcription service", e);
+        }
+
+        if(!root.isJsonArray())
+        {
+            throw new IllegalStateException("Unexpected reply from the transcription service");
+        }
+
+        return root.getAsJsonArray();
+    }
+
+    private static double decimal(JsonObject object, String name)
+    {
+        JsonElement element = object.get(name);
+
+        try
+        {
+            return element == null || element.isJsonNull() ? 0 : element.getAsDouble();
+        }
+        catch(NumberFormatException | UnsupportedOperationException e)
+        {
+            return 0;
+        }
     }
 
     private static String encode(String value)
@@ -192,7 +328,14 @@ public class TranscriptionClient
         }
         catch(NumberFormatException | UnsupportedOperationException e)
         {
-            return defaultValue;
+            try
+            {
+                return (long)element.getAsDouble();     //page times have fractions of a second
+            }
+            catch(NumberFormatException | UnsupportedOperationException e2)
+            {
+                return defaultValue;
+            }
         }
     }
 }

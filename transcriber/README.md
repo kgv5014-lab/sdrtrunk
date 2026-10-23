@@ -150,10 +150,19 @@ map.
 
 ## Incident map
 
-<http://localhost:3000/map> shows possible incidents on a street map, built from the transcripts. Click a
-dot for the address, the time, the tone-outs just before it, the 10-codes heard, and the calls with play
-buttons. Colors: red fire, green EMS, blue police, gray unknown (from the talkgroup name, then words like
-"structure fire" or "chest pain", then a tone-out just before).
+<http://localhost:3000/map> shows possible incidents on a street map, built from the transcripts. It
+updates itself every 10 seconds. Click a dot for the address, the time, the tone-outs just before it, the
+10-codes heard, and the calls with play buttons; the words that set the type ("MVA", "structure fire") are
+highlighted. Colors: red fire, green EMS, blue police, orange MVA (motor vehicle accident: "MVA",
+"M.V.A.", "MVC", "rollover", ...), gray unknown. The type comes from the talkgroup name, then words in the
+calls, then a tone-out just before.
+
+* **Time and type filters**: last hour, 6 hours, today, 24 hours, this week (since Sunday) or 30 days, and
+  tick boxes for Fire, EMS, Police, MVA and Other. Both are remembered by the browser.
+* **New incidents** pulse and have a NEW badge; the browser tab shows how many, e.g. "(2) Incident map".
+  Opening one, or **Mark all seen**, clears it.
+* SDRTrunk's **Transcripts** tab has the same list under **Incidents**, with the same filters and an
+  **Open Map** button.
 
 It needs the street list: run **fetch-places.bat** once (see above). Calls logged before that are mapped
 as soon as the list exists.
@@ -173,6 +182,9 @@ What happens to each transcribed call:
    middle of the street and marked approximate; others are skipped.
 3. **Group into incidents.** Calls naming places within 500 m of each other within 45 minutes are one
    incident. A house address heard later moves the dot from the intersection to the house.
+4. **Follow-up calls.** A call that names no place but names a unit ("Engine 2011 on scene", "2081 on
+   location") joins the most recent incident in the last 45 minutes that the same unit was in. A radio's
+   talker alias (e.g. `ENGINE 41`) counts too. Four-digit call signs match with or without the unit word.
 
 Radio speech is messy, so some calls are missed and some land in the wrong place. Each call in a popup
 shows its transcript and how it was placed (house address, intersection, landmark, or street only), and

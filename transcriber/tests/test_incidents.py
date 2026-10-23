@@ -11,7 +11,7 @@ from sdrtrunk_transcriber.backends import Transcript
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.db import Database
 from sdrtrunk_transcriber.geocode import Geocoder
-from sdrtrunk_transcriber.incidents import MapWorker, nature_of
+from sdrtrunk_transcriber.incidents import MapWorker, highlights, nature_of, units_in
 from sdrtrunk_transcriber.server import create_app
 
 from test_service import CALL, FakeBackend, make_mp3, post, sdrtrunk_body
@@ -148,6 +148,9 @@ def test_not_places(gaz, text):
 def test_landmark(gaz):
     found = gaz.find("Respond to Easton Hospital, the ER entrance, for a fall")
     assert found.kind == "landmark" and near(found.points[0], 40.6930, -75.2290)
+    # One-word landmark names are ignored: they are too often ordinary words.
+    gaz.landmarks[("target",)] = gaz.landmarks[("easton", "hospital")]
+    assert gaz.find("Respond to the target, a fall") is None
     # Taking a patient there doesn't make it an incident.
     assert gaz.find("Medic 2081 transporting one to Easton Hospital") is None
 
@@ -170,8 +173,77 @@ def test_names_only_without_shapes_go_to_the_online_lookup(tmp_path):
 
 def test_nature():
     assert nature_of("Report of a structure fire, smoke showing") == ("Structure fire", "fire")
-    assert nature_of("two vehicle MVA with injuries") == ("Vehicle crash", None)
     assert nature_of("Medic 49, 10-8") == (None, None)
+
+
+@pytest.mark.parametrize("text", [
+    "two vehicle MVA with injuries", "M.V.A. on Route 22", "respond for an M V A", "MVC, one car",
+    "motor vehicle accident, unknown injuries", "car into a pole, rollover",
+])
+def test_mva(text):
+    assert nature_of(text) == ("MVA", None)
+
+
+@pytest.mark.parametrize("text,units", [
+    ("Engine 4-1 on location", {"engine 41"}),
+    ("Medic 2081 respond", {"medic 2081", "2081"}),
+    ("2081 on scene, 10-23", {"2081"}),
+    ("Chief 20 and Ladder 2041 responding", {"chief 20", "ladder 2041", "2041"}),
+    ("dispatched at 13:46", set()),
+    ("ENGINE 12", {"engine 12"}),
+    ("Medic 49 10-8.", {"medic 49"}),
+    (None, set()),
+])
+def test_units_in(text, units):
+    assert units_in(text) == units
+
+
+def make_worker(tmp_path, gaz):
+    config = Config()
+    return MapWorker(config, Database(tmp_path / "calls.db"), gaz, None)
+
+
+def log_call(db, transcript, t, alias=None, talkgroup="Fire Dispatch"):
+    call_id = db.insert_call({"call_time": t, "received_at": t, "talkgroup": "1", "talkgroup_label": talkgroup,
+                              "talker_alias": alias, "audio_path": "x.mp3"})
+    db.update_call(call_id, status="done", transcript=transcript)
+    return call_id
+
+
+def test_follow_up_calls_join_the_incident_their_unit_was_sent_to(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    db = worker.db
+    t = 1_800_000_000
+    for text, offset in (("Medic 2081 respond North 3rd and Northampton for a fall", 0),
+                         ("Engine 41 respond Route 22 at Freemansburg Ave for an MVA", 60),
+                         ("2081 on scene", 300),                       # call sign alone
+                         ("Engine 41 on location, two cars, one rollover", 400),
+                         ("Medic 77 available", 500),                  # unit in no incident
+                         ("Medic 2081 on scene", 60 * 60 * 3)):       # hours later: too late
+        worker.process(log_call(db, text, t + offset))
+    incidents = {i["label"].split(" & ")[0]: i for i in db.incidents()}
+    fall, crash = incidents["North 3rd Street"], incidents["Route 22"]
+    assert [c["transcript"] for c in fall["calls"]] == ["Medic 2081 respond North 3rd and Northampton for a fall",
+                                                        "2081 on scene"]
+    assert fall["last_time"] == t + 300
+    assert len(crash["calls"]) == 2 and crash["calls"][1]["precision"] == "follow-up"
+    assert db.status_counts() == {"done": 6}
+    assert len(db.incidents()) == 2
+
+
+def test_follow_up_by_talker_alias(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    t = 1_800_000_000
+    worker.process(log_call(worker.db, "Respond North 3rd and Northampton, structure fire", t, alias="ENGINE 41"))
+    worker.process(log_call(worker.db, "On location, working fire", t + 120, alias="ENGINE 41"))
+    [incident] = worker.db.incidents()
+    assert [c["heard"] for c in incident["calls"]] == ["n 3rd and northampton", "engine 41"]
+
+
+def test_highlights():
+    text = "Respond for an MVA with a car fire, smoke showing"
+    assert [text[a:b] for a, b in highlights(text)] == ["MVA", "car fire", "smoke showing"]
+    assert highlights(None) == []
 
 
 class FakeResponse:
@@ -272,7 +344,13 @@ def test_calls_become_incidents_on_the_map(tmp_path):
     assert fire["category"] == "fire" and fire["nature"] == "Structure fire"
     assert [p["label"] for p in fire["pages"]] == ["Station 4"]
     ems = next(i for i in incidents if "Main" in i["label"])
-    assert ems["category"] == "ems" and ems["nature"] == "Fall" and len(ems["calls"]) == 1
+    assert ems["category"] == "ems" and ems["nature"] == "Fall"
+    # "Medic 49 10-8" names no place, but Medic 49 was sent to Main and Center.
+    assert [(c["kind"], c["heard"]) for c in ems["calls"]] == [("intersection", "main and center"),
+                                                               ("follow-up", "medic 49")]
+    assert fire["type"] == "fire" and ems["type"] == "ems"
+    assert [fire["calls"][0]["transcript"][a:b] for a, b in fire["calls"][0]["highlights"]] == \
+        ["structure fire", "smoke showing"]
     assert hidden.status_code == 200
     assert [i["id"] for i in after] == [ems["id"]]
     assert len(with_hidden) == 2
@@ -302,5 +380,6 @@ def test_calls_logged_before_the_street_list_are_mapped_later(tmp_path):
         client.app.state.map_worker.rebuild()
         assert client.app.state.map_worker.wait_idle()
         again = client.get("/api/incidents").json()
+    assert after[0]["nature"] == "MVA" and after[0]["type"] == "mva"
     assert len(after) == 1 and after[0]["label"] == "Route 22 & Freemansburg Avenue, Palmer Township"
     assert len(again) == 1

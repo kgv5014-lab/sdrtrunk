@@ -13,6 +13,7 @@
   body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
   header { position: sticky; top: 0; background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   h1 { font-size: 16px; margin: 0 12px 0 0; }
+  header a { color: var(--accent); margin-right: 8px; }
   input { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
   #q { flex: 1 1 220px; }
   #status { color: var(--muted); font-size: 12px; margin-left: auto; }
@@ -39,6 +40,7 @@
 <body>
 <header>
   <h1>Call log</h1>
+  <a href="map">Incident map</a>
   <input id="q" type="search" placeholder="Search transcripts">
   <input id="talkgroup" type="search" placeholder="Talkgroup" size="12">
   <input id="source" type="search" placeholder="Radio ID or alias" size="14">

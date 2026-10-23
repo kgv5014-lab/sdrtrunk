@@ -70,6 +70,25 @@ class PlacesConfig:
 
 
 @dataclass
+class MapConfig:
+    # Possible incidents on a map at /map, from addresses heard in transcripts.
+    enabled: bool = True
+    # Road shapes written by fetch_places.py next to places.csv; needed to place intersections.
+    geo_file: str = "places-geo.json"
+    # Look up house-number addresses with OpenStreetMap's free search (one a second, results cached).
+    online_lookup: bool = True
+    # Optional: an email address sent with lookups, as OpenStreetMap asks heavy users to.
+    contact_email: str = ""
+    # South, west, north, east. Lookups outside this box are ignored. Easton to Allentown, PA.
+    area: list = field(default_factory=lambda: [40.50, -75.62, 40.78, -75.17])
+    # Calls naming places this close together, this close in time, are one incident.
+    incident_window_minutes: int = 45
+    incident_radius_m: int = 500
+    # Map background tiles.
+    tiles_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
@@ -77,6 +96,7 @@ class Config:
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     codes: CodesConfig = field(default_factory=CodesConfig)
     places: PlacesConfig = field(default_factory=PlacesConfig)
+    map: MapConfig = field(default_factory=MapConfig)
     base_dir: Path = Path(".")
 
     @property
@@ -94,6 +114,10 @@ class Config:
     @property
     def places_path(self) -> Path | None:
         return self._resolve(self.places.file) if self.places.file else None
+
+    @property
+    def geo_path(self) -> Path | None:
+        return self._resolve(self.map.geo_file) if self.map.geo_file else None
 
     def _resolve(self, value: str) -> Path:
         path = Path(value)

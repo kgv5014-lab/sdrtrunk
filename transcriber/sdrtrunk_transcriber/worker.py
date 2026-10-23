@@ -56,6 +56,8 @@ class TranscriptionWorker:
         self.codebook = codebook
         self.placebook = placebook or PlaceBook(None)
         self.vocabulary = load_vocabulary(config.vocabulary_path)
+        # Called with the call id after each transcript is saved (the incident map listens here).
+        self.on_done = None
 
     def prompt(self, *context: str | None) -> str:
         # Places first (dropped first when it's too long), then codes, then the user's own vocabulary,
@@ -146,3 +148,5 @@ class TranscriptionWorker:
         )
         log.info("Call %d TG %s (%.1fs) in %d ms: %s", call_id, call["talkgroup"], duration,
                  elapsed_ms, transcript or "(no speech)")
+        if self.on_done:
+            self.on_done(call_id)

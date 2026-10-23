@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --warn: #b26a00;
+          --fire: #d33c2f; --ems: #1f8a5b; --police: #2a6fdb; --other: #7a7a82; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --warn: #f0a640;
+            --fire: #ff6b5e; --ems: #4cc38a; --police: #6ea2ff; --other: #a0a0a8; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; display: flex; flex-direction: column; }
+  header { background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  h1 { font-size: 16px; margin: 0; }
+  a { color: var(--accent); }
+  select, button { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  button { color: var(--accent); cursor: pointer; }
+  label { color: var(--muted); font-size: 13px; }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .body { flex: 1; display: flex; min-height: 0; }
+  #list { width: 340px; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px; }
+  #map { flex: 1; min-height: 300px; }
+  @media (max-width: 760px) {
+    .body { flex-direction: column-reverse; }
+    #list { width: auto; max-height: 40vh; border-right: 0; border-top: 1px solid var(--line); }
+  }
+  .item { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--other); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; cursor: pointer; }
+  .item.hidden-item { opacity: 0.55; }
+  .item .where { font-weight: 600; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .empty { color: var(--muted); padding: 12px; }
+  .pop { max-width: 360px; }
+  .pop .where { font-size: 15px; font-weight: 600; }
+  .pop .call { border-top: 1px solid #ddd; padding-top: 6px; margin-top: 6px; }
+  .pop audio { width: 100%; height: 28px; margin-top: 4px; }
+  .pop .tags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 4px; }
+  .pop .tag { font-size: 11px; border: 1px solid #ccc; border-radius: 10px; padding: 0 6px; color: #555; }
+  .pop .page { color: #9a5800; font-weight: 600; }
+  .pop .actions { margin-top: 8px; }
+  .notice { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Incident map</h1>
+  <a href="./">Call log</a>
+  <select id="range">
+    <option value="3600">Last hour</option>
+    <option value="21600">Last 6 hours</option>
+    <option value="86400" selected>Last 24 hours</option>
+    <option value="604800">Last 7 days</option>
+    <option value="2592000">Last 30 days</option>
+  </select>
+  <label><input type="checkbox" id="hidden"> Show removed</label>
+  <span id="status"></span>
+</header>
+<div class="body">
+  <div id="list"></div>
+  <div id="map"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const COLORS = () => {
+  const s = getComputedStyle(document.documentElement);
+  return { fire: s.getPropertyValue('--fire'), ems: s.getPropertyValue('--ems'),
+           police: s.getPropertyValue('--police'), other: s.getPropertyValue('--other') };
+};
+const NAMES = { fire: 'Fire', ems: 'EMS', police: 'Police' };
+const PRECISION = { address: 'house address', intersection: 'intersection', landmark: 'landmark',
+                    street: 'street only, approximate' };
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+
+const map = L.map('map', { zoomControl: true });
+const layer = L.layerGroup().addTo(map);
+let markers = {};
+let fitted = false;
+let popupOpen = false;
+map.on('popupopen', () => { popupOpen = true; });
+map.on('popupclose', () => { popupOpen = false; });
+
+function time(t) { return new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
+function clock(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+
+function popup(incident) {
+  const box = el('div', 'pop');
+  box.append(el('div', 'where', incident.label || 'Unknown place'));
+  const what = [NAMES[incident.category], incident.nature].filter(Boolean).join(' · ');
+  if (what) box.append(el('div', '', what));
+  const span = incident.first_time === incident.last_time ? time(incident.first_time)
+    : time(incident.first_time) + ' – ' + clock(incident.last_time);
+  box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
+  incident.pages.forEach(p => {
+    const tones = p.tone_b ? p.tone_a.toFixed(1) + ' + ' + p.tone_b.toFixed(1) + ' Hz' : p.tone_a.toFixed(1) + ' Hz long tone';
+    box.append(el('div', 'page', 'Tone out ' + clock(p.page_time) + ': ' + (p.label || 'not on the station list') + ' (' + tones + ')'));
+  });
+  incident.calls.forEach(c => {
+    const call = el('div', 'call');
+    call.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
+      (c.talker_alias ? ' · ' + c.talker_alias : '') + ' · ' + (PRECISION[c.precision] || c.precision)));
+    call.append(el('div', '', c.transcript || 'no transcript'));
+    if (c.codes && c.codes.length) {
+      const tags = el('div', 'tags');
+      c.codes.forEach(code => tags.append(el('span', 'tag', code.code + ' ' + code.meaning)));
+      call.append(tags);
+    }
+    const audio = el('audio'); audio.controls = true; audio.preload = 'none'; audio.src = 'api/calls/' + c.id + '/audio';
+    call.append(audio);
+    box.append(call);
+  });
+  const actions = el('div', 'actions');
+  const btn = el('button', '', incident.hidden ? 'Put back on the map' : 'Remove from map');
+  btn.onclick = async () => {
+    await fetch('api/incidents/' + incident.id + (incident.hidden ? '/restore' : ''), { method: incident.hidden ? 'POST' : 'DELETE' });
+    map.closePopup();
+    load();
+  };
+  actions.append(btn);
+  box.append(actions);
+  return box;
+}
+
+function render(incidents) {
+  const colors = COLORS();
+  layer.clearLayers();
+  markers = {};
+  const list = $('list');
+  list.querySelectorAll('.item, .empty').forEach(n => n.remove());
+  if (!incidents.length) list.append(el('div', 'empty', 'No incidents in this time range yet. They appear when a transcript names an address or intersection.'));
+  const bounds = [];
+  incidents.forEach(incident => {
+    const color = colors[incident.category] || colors.other;
+    const marker = L.circleMarker([incident.lat, incident.lon], {
+      radius: Math.min(16, 7 + 2 * Math.log2(incident.calls.length)), color, weight: 2,
+      fillColor: color, fillOpacity: incident.hidden ? 0.15 : 0.55,
+    }).addTo(layer);
+    marker.bindPopup(() => popup(incident), { maxWidth: 380 });
+    marker.bindTooltip(incident.label || '');
+    markers[incident.id] = marker;
+    bounds.push([incident.lat, incident.lon]);
+
+    const item = el('div', 'item' + (incident.hidden ? ' hidden-item' : ''));
+    item.style.borderLeftColor = color;
+    item.append(el('div', 'where', incident.label || 'Unknown place'));
+    const what = [NAMES[incident.category], incident.nature].filter(Boolean).join(' · ');
+    item.append(el('div', 'muted', time(incident.last_time) + (what ? ' · ' + what : '') + ' · ' +
+      incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
+    item.onclick = () => { map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); marker.openPopup(); };
+    list.append(item);
+  });
+  if (!fitted && bounds.length) { map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 }); fitted = true; }
+}
+
+async function load() {
+  const since = Math.floor(Date.now() / 1000) - Number($('range').value);
+  const p = new URLSearchParams({ since, hidden: $('hidden').checked });
+  try {
+    render(await (await fetch('api/incidents?' + p)).json());
+  } catch (e) { $('status').textContent = 'service unreachable'; }
+}
+
+async function status() {
+  try {
+    const s = await (await fetch('api/map/status')).json();
+    const list = $('list');
+    list.querySelectorAll('.notice').forEach(n => n.remove());
+    if (!s.enabled) { list.prepend(el('div', 'notice', 'The incident map is turned off in config.toml ([map] enabled).')); return s; }
+    if (!s.streets) list.prepend(el('div', 'notice', 'No street list yet. Run fetch-places.bat once to download local streets, then new calls will be mapped.'));
+    else if (!s.has_shapes) list.prepend(el('div', 'notice', 'Street names are loaded but not road shapes, so intersections can\'t be placed. Run fetch-places.bat to get places-geo.json.'));
+    $('status').textContent = `${s.streets} streets in ${s.towns} towns` + (s.online_lookup ? ' · address lookup on' : ' · offline') +
+      (s.queue ? ` · ${s.queue} calls to check` : '');
+    return s;
+  } catch (e) { $('status').textContent = 'service unreachable'; return null; }
+}
+
+function playing() { return [...document.querySelectorAll('audio')].some(a => !a.paused); }
+
+(async () => {
+  const s = await status();
+  const area = (s && s.area) || [40.50, -75.62, 40.78, -75.17];
+  map.fitBounds([[area[0], area[1]], [area[2], area[3]]]);
+  L.tileLayer((s && s.tiles_url) || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+  await load();
+  setInterval(async () => { await status(); if (!popupOpen && !playing()) await load(); }, 10000);
+})();
+$('range').addEventListener('change', () => { fitted = false; load(); });
+$('hidden').addEventListener('change', load);
+</script>
+</body>
+</html>

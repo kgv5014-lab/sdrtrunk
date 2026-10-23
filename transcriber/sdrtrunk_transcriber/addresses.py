@@ -500,7 +500,8 @@ class Gazetteer:
         if TRANSPORT_WORDS & set(w):
             return None
         for i in range(len(w)):
-            for length in range(min(6, len(w) - i), 0, -1):
+            # One-word names ("Target", "Wawa", a church called "Grace") are too often ordinary words.
+            for length in range(min(6, len(w) - i), 1, -1):
                 marks = self.landmarks.get(tuple(w[i:i + length]))
                 if not marks:
                     continue

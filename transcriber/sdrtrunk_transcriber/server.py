@@ -33,7 +33,7 @@ from .addresses import Gazetteer
 from .config import Config
 from .db import Database
 from .geocode import Geocoder
-from .incidents import MapWorker
+from .incidents import MapWorker, highlights
 from .worker import TranscriptionWorker
 
 log = logging.getLogger(__name__)
@@ -256,6 +256,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             for call in incident["calls"]:
                 call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
                                                   call["talkgroup_group"])
+                call["highlights"] = highlights(call["transcript"])
+            # What the map colors and filters by: MVA first, since crashes go to every agency.
+            incident["type"] = "mva" if incident["nature"] == "MVA" else incident["category"] or "other"
             # Tone-outs just before the first call (pages carry no address, so this is by time only).
             incident["pages"] = db.pages(incident["first_time"] - 600, incident["first_time"] + 60, limit=10)
         return incidents

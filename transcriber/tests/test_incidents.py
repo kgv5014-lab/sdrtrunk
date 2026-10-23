@@ -11,7 +11,7 @@ from sdrtrunk_transcriber.backends import Transcript
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.db import Database
 from sdrtrunk_transcriber.geocode import Geocoder
-from sdrtrunk_transcriber.incidents import MapWorker, nature_of
+from sdrtrunk_transcriber.incidents import MapWorker, highlights, nature_of
 from sdrtrunk_transcriber.server import create_app
 
 from test_service import CALL, FakeBackend, make_mp3, post, sdrtrunk_body
@@ -170,8 +170,21 @@ def test_names_only_without_shapes_go_to_the_online_lookup(tmp_path):
 
 def test_nature():
     assert nature_of("Report of a structure fire, smoke showing") == ("Structure fire", "fire")
-    assert nature_of("two vehicle MVA with injuries") == ("Vehicle crash", None)
     assert nature_of("Medic 49, 10-8") == (None, None)
+
+
+@pytest.mark.parametrize("text", [
+    "two vehicle MVA with injuries", "M.V.A. on Route 22", "respond for an M V A", "MVC, one car",
+    "motor vehicle accident, unknown injuries", "car into a pole, rollover",
+])
+def test_mva(text):
+    assert nature_of(text) == ("MVA", None)
+
+
+def test_highlights():
+    text = "Respond for an MVA with a car fire, smoke showing"
+    assert [text[a:b] for a, b in highlights(text)] == ["MVA", "car fire", "smoke showing"]
+    assert highlights(None) == []
 
 
 class FakeResponse:
@@ -273,6 +286,9 @@ def test_calls_become_incidents_on_the_map(tmp_path):
     assert [p["label"] for p in fire["pages"]] == ["Station 4"]
     ems = next(i for i in incidents if "Main" in i["label"])
     assert ems["category"] == "ems" and ems["nature"] == "Fall" and len(ems["calls"]) == 1
+    assert fire["type"] == "fire" and ems["type"] == "ems"
+    assert [fire["calls"][0]["transcript"][a:b] for a, b in fire["calls"][0]["highlights"]] == \
+        ["structure fire", "smoke showing"]
     assert hidden.status_code == 200
     assert [i["id"] for i in after] == [ems["id"]]
     assert len(with_hidden) == 2
@@ -302,5 +318,6 @@ def test_calls_logged_before_the_street_list_are_mapped_later(tmp_path):
         client.app.state.map_worker.rebuild()
         assert client.app.state.map_worker.wait_idle()
         again = client.get("/api/incidents").json()
+    assert after[0]["nature"] == "MVA" and after[0]["type"] == "mva"
     assert len(after) == 1 and after[0]["label"] == "Route 22 & Freemansburg Avenue, Palmer Township"
     assert len(again) == 1

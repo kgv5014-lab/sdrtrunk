@@ -33,8 +33,10 @@ NATURES = [
      "Fire alarm", "fire"),
     (r"wires? down|tree down|pole down|transformer", "Wires or tree down", "fire"),
     (r"water rescue|swift water", "Water rescue", "fire"),
-    (r"motor vehicle|vehicle accident|\bmva\b|\bmvc\b|\bcrash\b|accident|rollover|vehicle versus|"
-     r"pedestrian struck|car versus", "Vehicle crash", None),
+    # MVA: motor vehicle accident. Whisper writes it "MVA", "M.V.A." or "M V A".
+    (r"\bm\.?\s?v\.?\s?[ac]\b\.?|motor vehicle|vehicle accident|car accident|auto accident|traffic accident|"
+     r"\bcrash\b|accident|rollover|roll over|vehicle versus|car versus|pedestrian struck|hit and run|"
+     r"vehicle into", "MVA", None),
     (r"cardiac arrest|\bcpr\b|not breathing|unresponsive|code blue", "Cardiac arrest", "ems"),
     (r"chest pains?", "Chest pain", "ems"),
     (r"difficulty breathing|trouble breathing|short(ness)? of breath|respiratory", "Breathing problem", "ems"),
@@ -48,6 +50,18 @@ NATURES = [
 ]
 NATURES = [(re.compile(pattern, re.IGNORECASE), label, category) for pattern, label, category in NATURES]
 PRECISION_RANK = {"address": 0, "intersection": 1, "landmark": 2, "street": 3}
+
+
+def highlights(text: str | None) -> list[tuple[int, int]]:
+    """Where the words that set an incident's type are in a transcript, for highlighting."""
+    spans = sorted(m.span() for pattern, _, _ in NATURES for m in pattern.finditer(text or ""))
+    merged: list[tuple[int, int]] = []
+    for start, end in spans:
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(end, merged[-1][1]))
+        else:
+            merged.append((start, end))
+    return merged
 
 
 def nature_of(text: str | None) -> tuple[str | None, str | None]:
@@ -211,7 +225,8 @@ class MapWorker:
         changes = {"first_time": min(nearest["first_time"], t), "last_time": max(nearest["last_time"], t)}
         if not nearest["category"] and category:
             changes["category"] = category
-        if not nearest["nature"] and nature:
+        # A crash heard on any call makes it an MVA, even if an earlier call only said "injuries".
+        if nature and (not nearest["nature"] or nature == "MVA"):
             changes["nature"] = nature
         # A house number heard later beats the intersection heard first.
         current = min((PRECISION_RANK.get(p, 9) for p in self.db.incident_precisions(nearest["id"])), default=9)

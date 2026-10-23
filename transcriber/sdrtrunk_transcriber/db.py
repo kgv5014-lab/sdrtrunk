@@ -152,6 +152,8 @@ class Database:
         if "map_status" not in columns:
             # NULL: not looked at yet; none: no place heard; placed; unplaced: heard but not found.
             self._conn.execute("ALTER TABLE calls ADD COLUMN map_status TEXT")
+        # Crashes were called "Vehicle crash" before they became MVA.
+        self._conn.execute("UPDATE incidents SET nature = 'MVA' WHERE nature = 'Vehicle crash'")
 
     def close(self):
         with self._lock:

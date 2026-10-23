@@ -8,10 +8,10 @@
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --warn: #b26a00;
-          --fire: #d33c2f; --ems: #1f8a5b; --police: #2a6fdb; --other: #7a7a82; }
+          --fire: #d33c2f; --ems: #1f8a5b; --police: #2a6fdb; --mva: #e07b00; --other: #7a7a82; --mark: #ffe08a; }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --warn: #f0a640;
-            --fire: #ff6b5e; --ems: #4cc38a; --police: #6ea2ff; --other: #a0a0a8; }
+            --fire: #ff6b5e; --ems: #4cc38a; --police: #6ea2ff; --mva: #ffa13d; --other: #a0a0a8; --mark: #6b5310; }
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; }
@@ -43,6 +43,18 @@
   .pop .tag { font-size: 11px; border: 1px solid #ccc; border-radius: 10px; padding: 0 6px; color: #555; }
   .pop .page { color: #9a5800; font-weight: 600; }
   .pop .actions { margin-top: 8px; }
+  .types { display: flex; flex-wrap: wrap; gap: 4px; }
+  .types label { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 14px; padding: 2px 9px 2px 6px; color: var(--fg); cursor: pointer; user-select: none; }
+  .types label:has(input:not(:checked)) { opacity: 0.45; }
+  .types input { margin: 0; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .new-badge { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: #fff; background: var(--fire); border-radius: 8px; padding: 0 6px; margin-right: 6px; vertical-align: 1px; }
+  .item.new { box-shadow: 0 0 0 2px var(--accent) inset; }
+  .mva-text { color: var(--mva); font-weight: 600; }
+  .pop mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 3px; }
+  .pulse { animation: pulse 1.4s ease-out infinite; }
+  @keyframes pulse { 0% { stroke-width: 2; stroke-opacity: 1; } 100% { stroke-width: 18; stroke-opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { .pulse { animation: none; stroke-width: 5; } }
   .notice { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; }
 </style>
 </head>
@@ -57,7 +69,9 @@
     <option value="604800">Last 7 days</option>
     <option value="2592000">Last 30 days</option>
   </select>
+  <div class="types" id="types"></div>
   <label><input type="checkbox" id="hidden"> Show removed</label>
+  <button id="seen" hidden>Mark all seen</button>
   <span id="status"></span>
 </header>
 <div class="body">
@@ -69,9 +83,33 @@ const $ = id => document.getElementById(id);
 const COLORS = () => {
   const s = getComputedStyle(document.documentElement);
   return { fire: s.getPropertyValue('--fire'), ems: s.getPropertyValue('--ems'),
-           police: s.getPropertyValue('--police'), other: s.getPropertyValue('--other') };
+           police: s.getPropertyValue('--police'), mva: s.getPropertyValue('--mva'), other: s.getPropertyValue('--other') };
 };
 const NAMES = { fire: 'Fire', ems: 'EMS', police: 'Police' };
+const TYPES = [['fire', 'Fire'], ['ems', 'EMS'], ['police', 'Police'], ['mva', 'MVA'], ['other', 'Other']];
+
+// Per-browser settings: which types are shown, and which incidents have been seen.
+function stored(key, fallback) { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch (e) { return fallback; } }
+function store(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private window */ } }
+let shownTypes = new Set(stored('map.types', TYPES.map(t => t[0])));
+let seenUpTo = stored('map.seenUpTo', null);   // incidents with a bigger id are new
+let seenIds = new Set(stored('map.seenIds', []));
+let lastIncidents = [];
+let items = {};
+function isNew(incident) { return seenUpTo !== null && incident.id > seenUpTo && !seenIds.has(incident.id); }
+function markSeen(incident) {
+  if (!isNew(incident)) return;
+  seenIds.add(incident.id);
+  store('map.seenIds', [...seenIds].slice(-500));
+  // Update in place: re-rendering would close the open popup.
+  const marker = markers[incident.id];
+  if (marker && marker._path) marker._path.classList.remove('pulse');
+  const item = items[incident.id];
+  if (item) { item.classList.remove('new'); item.querySelector('.new-badge')?.remove(); }
+  const fresh = lastIncidents.filter(isNew).length;
+  document.title = (fresh ? '(' + fresh + ') ' : '') + 'Incident map';
+  $('seen').hidden = !fresh;
+}
 const PRECISION = { address: 'house address', intersection: 'intersection', landmark: 'landmark',
                     street: 'street only, approximate' };
 
@@ -93,11 +131,30 @@ map.on('popupclose', () => { popupOpen = false; });
 function time(t) { return new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
 function clock(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
 
+// The transcript with the words that set the incident type ("MVA", "structure fire") highlighted.
+function highlighted(text, spans) {
+  const box = el('div');
+  if (!text) { box.append(el('span', 'muted', 'no transcript')); return box; }
+  let at = 0;
+  (spans || []).forEach(([start, end]) => { box.append(text.slice(at, start), el('mark', '', text.slice(start, end))); at = end; });
+  box.append(text.slice(at));
+  return box;
+}
+
+function describe(incident) {
+  const box = el('span');
+  const parts = [NAMES[incident.category], incident.nature].filter(Boolean);
+  parts.forEach((part, i) => {
+    if (i) box.append(' · ');
+    box.append(part === 'MVA' ? el('span', 'mva-text', 'MVA') : part);
+  });
+  return box;
+}
+
 function popup(incident) {
   const box = el('div', 'pop');
   box.append(el('div', 'where', incident.label || 'Unknown place'));
-  const what = [NAMES[incident.category], incident.nature].filter(Boolean).join(' · ');
-  if (what) box.append(el('div', '', what));
+  if (incident.category || incident.nature) { const what = el('div'); what.append(describe(incident)); box.append(what); }
   const span = incident.first_time === incident.last_time ? time(incident.first_time)
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
   box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
@@ -109,7 +166,7 @@ function popup(incident) {
     const call = el('div', 'call');
     call.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
       (c.talker_alias ? ' · ' + c.talker_alias : '') + ' · ' + (PRECISION[c.precision] || c.precision)));
-    call.append(el('div', '', c.transcript || 'no transcript'));
+    call.append(highlighted(c.transcript, c.highlights));
     if (c.codes && c.codes.length) {
       const tags = el('div', 'tags');
       c.codes.forEach(code => tags.append(el('span', 'tag', code.code + ' ' + code.meaning)));
@@ -132,35 +189,80 @@ function popup(incident) {
 }
 
 function render(incidents) {
+  lastIncidents = incidents;
+  if (seenUpTo === null) {
+    // First visit: nothing counts as new until the next incident arrives.
+    seenUpTo = incidents.reduce((m, i) => Math.max(m, i.id), 0);
+    store('map.seenUpTo', seenUpTo);
+  }
   const colors = COLORS();
   layer.clearLayers();
   markers = {};
+  items = {};
   const list = $('list');
   list.querySelectorAll('.item, .empty').forEach(n => n.remove());
-  if (!incidents.length) list.append(el('div', 'empty', 'No incidents in this time range yet. They appear when a transcript names an address or intersection.'));
+  const shown = incidents.filter(i => shownTypes.has(i.type || 'other'));
+  const fresh = incidents.filter(isNew);
+  document.title = (fresh.length ? '(' + fresh.length + ') ' : '') + 'Incident map';
+  $('seen').hidden = !fresh.length;
+  if (!shown.length) list.append(el('div', 'empty', incidents.length ? 'No incidents of the ticked types in this time range.'
+    : 'No incidents in this time range yet. They appear when a transcript names an address or intersection.'));
   const bounds = [];
-  incidents.forEach(incident => {
-    const color = colors[incident.category] || colors.other;
+  // Oldest first on the map so the newest dot is drawn on top; the list stays newest first.
+  [...shown].reverse().forEach(incident => {
+    const color = colors[incident.type] || colors.other;
+    const neu = isNew(incident);
     const marker = L.circleMarker([incident.lat, incident.lon], {
       radius: Math.min(16, 7 + 2 * Math.log2(incident.calls.length)), color, weight: 2,
-      fillColor: color, fillOpacity: incident.hidden ? 0.15 : 0.55,
+      fillColor: color, fillOpacity: incident.hidden ? 0.15 : 0.55, className: neu ? 'pulse' : '',
     }).addTo(layer);
     marker.bindPopup(() => popup(incident), { maxWidth: 380 });
+    marker.on('popupopen', () => setTimeout(() => markSeen(incident), 1500));
     marker.bindTooltip(incident.label || '');
     markers[incident.id] = marker;
     bounds.push([incident.lat, incident.lon]);
-
-    const item = el('div', 'item' + (incident.hidden ? ' hidden-item' : ''));
+  });
+  shown.forEach(incident => {
+    const color = colors[incident.type] || colors.other;
+    const item = el('div', 'item' + (incident.hidden ? ' hidden-item' : '') + (isNew(incident) ? ' new' : ''));
     item.style.borderLeftColor = color;
-    item.append(el('div', 'where', incident.label || 'Unknown place'));
-    const what = [NAMES[incident.category], incident.nature].filter(Boolean).join(' · ');
-    item.append(el('div', 'muted', time(incident.last_time) + (what ? ' · ' + what : '') + ' · ' +
-      incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
-    item.onclick = () => { map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); marker.openPopup(); };
+    const where = el('div', 'where');
+    if (isNew(incident)) where.append(el('span', 'new-badge', 'NEW'));
+    where.append(incident.label || 'Unknown place');
+    item.append(where);
+    const meta = el('div', 'muted', time(incident.last_time) + ' · ');
+    if (incident.category || incident.nature) meta.append(describe(incident), ' · ');
+    meta.append(incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's'));
+    item.append(meta);
+    items[incident.id] = item;
+    item.onclick = () => { map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); markers[incident.id].openPopup(); };
     list.append(item);
   });
   if (!fitted && bounds.length) { map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 }); fitted = true; }
 }
+
+function buildTypes() {
+  const colors = COLORS();
+  TYPES.forEach(([key, name]) => {
+    const label = el('label');
+    const box = el('input'); box.type = 'checkbox'; box.checked = shownTypes.has(key);
+    box.onchange = () => {
+      box.checked ? shownTypes.add(key) : shownTypes.delete(key);
+      store('map.types', [...shownTypes]);
+      render(lastIncidents);
+    };
+    const dot = el('span', 'dot'); dot.style.background = colors[key];
+    label.append(box, dot, name);
+    $('types').append(label);
+  });
+}
+buildTypes();
+$('seen').addEventListener('click', () => {
+  seenUpTo = lastIncidents.reduce((m, i) => Math.max(m, i.id), seenUpTo || 0);
+  seenIds = new Set();
+  store('map.seenUpTo', seenUpTo); store('map.seenIds', []);
+  render(lastIncidents);
+});
 
 async function load() {
   const since = Math.floor(Date.now() / 1000) - Number($('range').value);

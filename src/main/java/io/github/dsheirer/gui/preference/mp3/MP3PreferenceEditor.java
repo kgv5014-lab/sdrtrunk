@@ -164,7 +164,7 @@ public class MP3PreferenceEditor extends HBox
     {
         if(mNormalizeAudioCheckBox == null)
         {
-            mNormalizeAudioCheckBox = new CheckBox("Normalize Audio Before Encoding");
+            mNormalizeAudioCheckBox = new CheckBox("Normalize Audio Before Encoding (skipped while Audio Leveling is on)");
             mNormalizeAudioCheckBox.setSelected(mMP3Preference.isNormalizeAudioBeforeEncode());
             mNormalizeAudioCheckBox.onActionProperty().set(event ->
                     mMP3Preference.setNormalizeAudioBeforeEncode(getNormalizeAudioCheckBox().isSelected()));

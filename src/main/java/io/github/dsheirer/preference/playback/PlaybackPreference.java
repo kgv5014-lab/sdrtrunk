@@ -46,6 +46,8 @@ public class PlaybackPreference extends Preference
 
     private static final String PREFERENCE_KEY_AUDIO_DEVICE_NAME = "audio.playback.device.name";
     private static final String PREFERENCE_KEY_AUDIO_CHANNEL_COUNT = "audio.playback.channel.count";
+    private static final String PREFERENCE_KEY_AUDIO_LEVELING = "audio.playback.leveling.enabled";
+    private static final String PREFERENCE_KEY_AUDIO_LEVEL_TARGET = "audio.playback.leveling.target";
     public static final int TONE_LENGTH_SAMPLES = 160;
 
     private final static Logger mLog = LoggerFactory.getLogger(PlaybackPreference.class);
@@ -57,6 +59,8 @@ public class PlaybackPreference extends Preference
     private ToneFrequency mDropToneFrequency;
     private ToneVolume mDropToneVolume;
     private AudioPlaybackDeviceDescriptor mAudioPlaybackDeviceDescriptor;
+    private Boolean mAudioLeveling;
+    private AudioLevelTarget mAudioLevelTarget;
 
     /**
      * Constructs this preference with an update listener
@@ -293,6 +297,57 @@ public class PlaybackPreference extends Preference
             mAudioPlaybackDeviceDescriptor = descriptor;
             mPreferences.put(PREFERENCE_KEY_AUDIO_DEVICE_NAME, descriptor.getMixerInfo().getName());
             mPreferences.putInt(PREFERENCE_KEY_AUDIO_CHANNEL_COUNT, descriptor.getAudioFormat().getChannels());
+            notifyPreferenceUpdated();
+        }
+    }
+
+    /**
+     * Indicates if call audio should be leveled so that all channels play, record and stream at about the same
+     * loudness.  On by default.
+     */
+    public boolean isAudioLeveling()
+    {
+        if(mAudioLeveling == null)
+        {
+            mAudioLeveling = mPreferences.getBoolean(PREFERENCE_KEY_AUDIO_LEVELING, true);
+        }
+
+        return mAudioLeveling;
+    }
+
+    /**
+     * Sets the preference for leveling call audio
+     */
+    public void setAudioLeveling(boolean leveling)
+    {
+        mAudioLeveling = leveling;
+        mPreferences.putBoolean(PREFERENCE_KEY_AUDIO_LEVELING, leveling);
+        notifyPreferenceUpdated();
+    }
+
+    /**
+     * Loudness that the audio leveler aims for
+     */
+    public AudioLevelTarget getAudioLevelTarget()
+    {
+        if(mAudioLevelTarget == null)
+        {
+            mAudioLevelTarget = AudioLevelTarget.fromName(mPreferences.get(PREFERENCE_KEY_AUDIO_LEVEL_TARGET,
+                    AudioLevelTarget.NORMAL.name()));
+        }
+
+        return mAudioLevelTarget;
+    }
+
+    /**
+     * Sets the loudness that the audio leveler aims for
+     */
+    public void setAudioLevelTarget(AudioLevelTarget target)
+    {
+        if(target != null)
+        {
+            mAudioLevelTarget = target;
+            mPreferences.put(PREFERENCE_KEY_AUDIO_LEVEL_TARGET, target.name());
             notifyPreferenceUpdated();
         }
     }

@@ -151,6 +151,16 @@ public class DecoderFactory
         List<Module> modules = getPrimaryModules(channelMapModel, channel, aliasModel, userPreferences,
                 trafficChannelManager, channelDescriptor);
         modules.addAll(getAuxiliaryDecoders(channel.getAuxDecodeConfiguration(), userPreferences));
+
+        //Level every call's audio so all channels play, record and stream at about the same loudness
+        for(Module module : modules)
+        {
+            if(module instanceof AbstractAudioModule audioModule)
+            {
+                audioModule.setAudioLeveling(userPreferences.getPlaybackPreference());
+            }
+        }
+
         return modules;
     }
 

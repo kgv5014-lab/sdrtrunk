@@ -113,7 +113,9 @@ public class AudioSegmentRecorder
             InputAudioFormat inputAudioFormat = userPreferences.getMP3Preference().getAudioSampleRate();
             MP3Setting mp3Setting = userPreferences.getMP3Preference().getMP3Setting();
 
-            boolean normalizeAudio = userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode();
+            //Peak normalizing would undo audio leveling and make steady tones louder than speech again
+            boolean normalizeAudio = userPreferences.getMP3Preference().isNormalizeAudioBeforeEncode() &&
+                    !userPreferences.getPlaybackPreference().isAudioLeveling();
 
             MP3AudioConverter converter = new MP3AudioConverter(inputAudioFormat, mp3Setting, normalizeAudio);
             List<byte[]> mp3Frames = converter.convert(audioSegment.getAudioBuffers());

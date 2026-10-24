@@ -13,7 +13,7 @@ import re
 import threading
 import time
 
-from .codes import _agency
+from .codes import AGENCY_WORDS
 from .config import Config
 from .db import Database
 from .geocode import Geocoder
@@ -23,8 +23,8 @@ log = logging.getLogger(__name__)
 
 # What the call is about, from words in the transcript. First match wins.
 NATURES = [
-    (r"structure fire|working fire|house fire|building fire|fully involved|heavy smoke|smoke showing|"
-     r"flames showing|fire in the", "Structure fire", "fire"),
+    (r"(structure|working|house|building|facility|apartment|dwelling|commercial|residential|kitchen|chimney) fire|"
+     r"fully involved|heavy smoke|smoke showing|flames showing|fire in the", "Structure fire", "fire"),
     (r"vehicle fire|car fire|truck fire", "Vehicle fire", "fire"),
     (r"brush fire|grass fire|field fire|mulch fire|outside fire|dumpster fire", "Outside fire", "fire"),
     (r"odor of gas|gas leak|smell of gas|natural gas", "Gas leak", "fire"),
@@ -32,28 +32,38 @@ NATURES = [
     (r"fire alarm|automatic alarm|alarm activation|general alarm|smoke detector|alarm sounding",
      "Fire alarm", "fire"),
     (r"wires? down|tree down|pole down|transformer", "Wires or tree down", "fire"),
+    (r"\bodor\b|smells? (really |very )?bad|burning smell|smell of (burning|smoke|plastic)|melted",
+     "Odor investigation", "fire"),
     (r"water rescue|swift water", "Water rescue", "fire"),
-    # MVA: motor vehicle accident. Whisper writes it "MVA", "M.V.A." or "M V A".
-    (r"\bm\.?\s?v\.?\s?[ac]\b\.?|motor vehicle|vehicle accident|car accident|auto accident|traffic accident|"
+    # MVA: motor vehicle accident. Whisper writes it "MVA", "M.V.A.", "M V A" or "MBI".
+    (r"\bm\.?\s?v\.?\s?[ac]\b\.?|\bmbi\b|motor vehicle|vehicle accident|car accident|auto accident|traffic accident|"
      r"\bcrash\b|accident|rollover|roll over|vehicle versus|car versus|pedestrian struck|hit and run|"
      r"vehicle into", "MVA", None),
-    (r"cardiac arrest|\bcpr\b|not breathing|unresponsive|code blue", "Cardiac arrest", "ems"),
+    (r"dia[bp]etic|blood sugar", "Diabetic emergency", "ems"),
+    (r"cardiac arrest|\bcpr\b|not breathing|code blue", "Cardiac arrest", "ems"),
+    (r"unresponsive|unconscious", "Unresponsive", "ems"),
     (r"chest pains?", "Chest pain", "ems"),
     (r"difficulty breathing|trouble breathing|short(ness)? of breath|respiratory", "Breathing problem", "ems"),
     (r"overdose|\bod\b|narcan", "Overdose", "ems"),
-    (r"stroke|seizure|diabetic|unconscious|syncope|passed out|fainted", "Medical", "ems"),
-    (r"\bfall\b|fallen|lift assist", "Fall", "ems"),
-    (r"sick person|medical emergency|bleeding|injur", "Medical", "ems"),
+    (r"stroke|seizure|syncope|passed out|fainted", "Medical", "ems"),
+    (r"li[fs]t assist", "Lift assist", "ems"),
+    (r"\bfalls?\b|fallen", "Fall", "ems"),
+    (r"(leg|back|abdominal|stomach|head|hip|arm|neck|chest wall) pains?|pain in (his|her|the)", "Pain", "ems"),
+    (r"\bsick\b|medical emergency|bleeding|injur", "Medical", "ems"),
     (r"shots fired|gunshot|shooting|stabbing|armed", "Weapons", "police"),
     (r"domestic|disturbance|fight|assault", "Disturbance", "police"),
     (r"burglary|robbery|theft|shoplift", "Theft", "police"),
 ]
 NATURES = [(re.compile(pattern, re.IGNORECASE), label, category) for pattern, label, category in NATURES]
+# ALS (paramedics) and BLS (EMTs). Whisper often hears BLS as "PLS" or "DLS".
+LIFE_SUPPORT = re.compile(r"\b(?:(a)|[bpd])\.?\s?l\.?\s?s\b|\b(advanced|basic) life support", re.IGNORECASE)
+# An EMS unit: "Medic 5", "EMS 27", or as Whisper writes them, "MS-5", "AMS-5", "PMS 5", "Mb. 14", "E-M-S-14".
+EMS_UNIT = re.compile(r"\b(?:medic|ems|e-m-s|a?ms|pms|mb\.?|ambulance|qrs)[\s#-]*\d", re.IGNORECASE)
 PRECISION_RANK = {"address": 0, "intersection": 1, "landmark": 2, "street": 3}
 
 
-UNIT = re.compile(r"\b(engine|medic|ladder|truck|tanker|rescue|squad|ambulance|chief|brush|utility|qrs|"
-                  r"tower|battalion|deputy|car|unit)\s*#?\s*(\d{1,4}(?:[- ]\d{1,2}(?![\d-]))?)\b", re.IGNORECASE)
+UNIT = re.compile(r"\b(engine|medic|ems|e-m-s|a?ms|pms|mb\.?|ladder|truck|tanker|rescue|squad|ambulance|chief|"
+                  r"brush|utility|qrs|tower|battalion|deputy|car|unit)[\s-]*#?\s*(\d{1,4}(?:[- ]\d{1,2}(?![\d-]))?)\b", re.IGNORECASE)
 BARE_CALL_SIGN = re.compile(r"(?<![\d:.-])\b(\d{4})\b(?![:.-]\d)")
 
 
@@ -63,7 +73,10 @@ def units_in(text: str | None) -> set[str]:
     units = set()
     for m in UNIT.finditer(text or ""):
         number = re.sub(r"[- ]", "", m.group(2))
-        units.add(f"{m.group(1).lower()} {number}")
+        word = m.group(1).lower().rstrip(".")
+        # "EMS 27", "MS-27" and "Medic 27" are the same unit.
+        word = "medic" if word in ("ems", "e-m-s", "ms", "ams", "pms", "mb") else word
+        units.add(f"{word} {number}")
         if len(number) == 4:
             units.add(number)
     # Spoken times were already rewritten as "13:46", which this skips.
@@ -81,6 +94,65 @@ def highlights(text: str | None) -> list[tuple[int, int]]:
         else:
             merged.append((start, end))
     return merged
+
+
+def life_support(text: str | None) -> str | None:
+    """"ALS" or "BLS" when the call asks for an ambulance crew of that level."""
+    found = [m for m in LIFE_SUPPORT.finditer(text or "")]
+    if not found:
+        return None
+    return "ALS" if any(m.group(1) or (m.group(2) or "").lower() == "advanced" for m in found) else "BLS"
+
+
+def talkgroup_agency(*names: str | None) -> str | None:
+    """fire, ems, police or None from the talkgroup name and group. A "Fire / EMS" talkgroup says
+    nothing about which, so it counts as fire only when the calls don't say."""
+    text = f" {' '.join(n for n in names if n).lower()} "
+    agencies = {agency for agency, words in AGENCY_WORDS.items() if any(word in text for word in words)}
+    if agencies == {"fire", "ems"}:
+        return "fire-ems"
+    return next((a for a in ("police", "fire", "ems") if a in agencies), None)
+
+
+def classify(calls: list[dict]) -> tuple[str | None, str | None]:
+    """(category, nature) of an incident from all its calls, oldest first. Words in the calls beat
+    the talkgroup name: a fire nature makes it fire, then anything medical (a medical nature, ALS/BLS,
+    an EMS unit) makes it EMS, then a police nature makes it police, then the talkgroups decide."""
+    natures, categories, levels, ems_units, talkgroups = [], set(), [], False, []
+    for call in calls:
+        nature, category = nature_of(call.get("transcript"))
+        if nature:
+            natures.append(nature)
+        if category:
+            categories.add(category)
+        level = life_support(call.get("transcript"))
+        if level:
+            levels.append(level)
+        ems_units = ems_units or bool(EMS_UNIT.search(call.get("transcript") or ""))
+        agency = talkgroup_agency(call.get("talkgroup_label"), call.get("talkgroup_group"))
+        if agency:
+            talkgroups.append("fire" if agency == "fire-ems" else agency)
+
+    if "fire" in categories:
+        category = "fire"
+    elif "ems" in categories or levels or ems_units:
+        category = "ems"
+    elif "police" in categories:
+        category = "police"
+    elif talkgroups:
+        category = max(dict.fromkeys(talkgroups), key=talkgroups.count)
+    else:
+        category = None
+
+    if "MVA" in natures:
+        nature = "MVA"
+    elif natures:
+        nature = natures[0]
+    elif levels:
+        nature = "ALS" if "ALS" in levels else "BLS"
+    else:
+        nature = None
+    return category, nature
 
 
 def nature_of(text: str | None) -> tuple[str | None, str | None]:
@@ -187,6 +259,7 @@ class MapWorker:
         place["lat"], place["lon"] = point
         place["incident_id"] = self.assign(call, found, point, precision)
         self.db.add_call_place(place)
+        self.reclassify(place["incident_id"])
         self.db.set_map_status(call_id, "placed")
         log.info("Incident map: call %d at %s (%s)", call_id, found.label, precision)
         if self.on_placed:
@@ -204,8 +277,8 @@ class MapWorker:
             if incident["id"] == call.get("incident_id"):
                 continue
             known = set()
-            for transcript, alias in self.db.incident_call_texts(incident["id"]):
-                known |= units_in(transcript) | units_in(alias)
+            for other in self.db.incident_calls_brief(incident["id"]):
+                known |= units_in(other["transcript"]) | units_in(other["talker_alias"])
             shared = units & known
             if not shared:
                 continue
@@ -214,18 +287,23 @@ class MapWorker:
             unit = max(spoken or shared, key=lambda u: (len(u), u))
             self.db.add_call_place({"call_id": call["id"], "incident_id": incident["id"], "kind": "follow-up",
                                     "heard": unit, "label": unit.title(), "precision": "follow-up"})
-            changes = {"first_time": min(incident["first_time"], t), "last_time": max(incident["last_time"], t)}
-            nature, nature_category = nature_of(call["transcript"])
-            if nature and (not incident["nature"] or nature == "MVA"):
-                changes["nature"] = nature
-            if not incident["category"] and nature_category:
-                changes["category"] = nature_category
-            self.db.update_incident(incident["id"], **changes)
+            self.db.update_incident(incident["id"], first_time=min(incident["first_time"], t),
+                                    last_time=max(incident["last_time"], t))
+            self.reclassify(incident["id"])
             log.info("Incident map: call %d follows up incident %d (%s)", call["id"], incident["id"], unit)
             if self.on_placed:
                 self.on_placed(call["id"], incident["id"], call)
             return True
         return False
+
+    def reclassify(self, incident_id: int):
+        """Works out an incident's category and nature again from all of its calls."""
+        calls = self.db.incident_calls_brief(incident_id)
+        category, nature = classify(calls)
+        if category is None and calls and self.db.pages(since=calls[0]["call_time"] - 600,
+                                                        until=calls[0]["call_time"] + 60, limit=1):
+            category = "fire"      # a tone-out just before, and nothing else to go on
+        self.db.update_incident(incident_id, category=category, nature=nature)
 
     def place(self, found: Found, call_time: int) -> tuple[tuple[float, float] | None, str]:
         """Where a found place is, and how exactly: address, intersection, landmark or street."""
@@ -266,10 +344,6 @@ class MapWorker:
         settings = self.config.map
         t = call["call_time"]
         window = settings.incident_window_minutes * 60
-        nature, nature_category = nature_of(call["transcript"])
-        category = _agency(" ".join(filter(None, (call["talkgroup_label"], call["talkgroup_group"])))) \
-            or nature_category
-
         nearest, best = None, None
         for incident in self.db.nearby_incidents(t - window, t + window):
             d = distance_m(*point, incident["lat"], incident["lon"])
@@ -277,18 +351,11 @@ class MapWorker:
                 nearest, best = incident, d
 
         if nearest is None:
-            if category is None and self.db.pages(since=t - 600, until=t + 60, limit=1):
-                category = "fire"
+            # Category and nature are filled in by reclassify() once the call is attached.
             return self.db.create_incident({
-                "first_time": t, "last_time": t, "lat": point[0], "lon": point[1], "label": found.label,
-                "category": category, "nature": nature})
+                "first_time": t, "last_time": t, "lat": point[0], "lon": point[1], "label": found.label})
 
         changes = {"first_time": min(nearest["first_time"], t), "last_time": max(nearest["last_time"], t)}
-        if not nearest["category"] and category:
-            changes["category"] = category
-        # A crash heard on any call makes it an MVA, even if an earlier call only said "injuries".
-        if nature and (not nearest["nature"] or nature == "MVA"):
-            changes["nature"] = nature
         # A house number heard later beats the intersection heard first.
         current = min((PRECISION_RANK.get(p, 9) for p in self.db.incident_precisions(nearest["id"])), default=9)
         if PRECISION_RANK.get(precision, 9) < current:

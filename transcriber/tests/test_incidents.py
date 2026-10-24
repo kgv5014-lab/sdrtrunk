@@ -11,7 +11,8 @@ from sdrtrunk_transcriber.backends import Transcript
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.db import Database
 from sdrtrunk_transcriber.geocode import Geocoder
-from sdrtrunk_transcriber.incidents import MapWorker, highlights, nature_of, units_in
+from sdrtrunk_transcriber.incidents import (MapWorker, classify, highlights, life_support, nature_of,
+                                            units_in)
 from sdrtrunk_transcriber.server import create_app
 
 from test_service import CALL, FakeBackend, make_mp3, post, sdrtrunk_body
@@ -383,3 +384,80 @@ def test_calls_logged_before_the_street_list_are_mapped_later(tmp_path):
     assert after[0]["nature"] == "MVA" and after[0]["type"] == "mva"
     assert len(after) == 1 and after[0]["label"] == "Route 22 & Freemansburg Avenue, Palmer Township"
     assert len(again) == 1
+
+
+# Lines as they came out of Whisper on Ken's scanner (house numbers changed), with the talkgroups they were on.
+FIRE_EMS = ("Countywide", "County Fire / EMS")
+POLICE = ("Co PD N1 Patch", "County Police")
+
+
+@pytest.mark.parametrize("transcript,talkgroup,expected", [
+    ("9-49-85, ALS, Diabetic Emergency, 120 Meijer Drive, Cross of Butternut Drive", FIRE_EMS,
+     ("ems", "Diabetic emergency")),
+    ("And a 10-EMS-1, 10-73, and 3-ALS, Unresponsive Diapetic, 40 East 5th Street", FIRE_EMS,
+     ("ems", "Diabetic emergency")),
+    ("90-50, MS-5, PLS, Leg Pain, 7 East Walnut Street, Cross South Liberty Street", FIRE_EMS, ("ems", "Pain")),
+    ("962, Messick, DLS, List Assist, 300 Mail Road", FIRE_EMS, ("ems", "Lift assist")),
+    ("County to 50-23 for BLS.", POLICE, ("ems", "BLS")),
+    ("PMS 5, responding at 20:17, 7 East Walnut Street", FIRE_EMS, ("ems", None)),
+    ("fire 50, fire 54, 48, 82 in place of the MS-50 committed for a high occupancy facility fire", FIRE_EMS,
+     ("fire", "Structure fire")),
+    ("The dishwasher melted the plastic. There's no flame seen, but it smells really bad, and it's making her sick.",
+     ("Norco Tac 1", "County Fire / EMS"), ("fire", "Odor investigation")),
+    ("a neighbor reporting an MBI at the intersection, negative injuries", POLICE, ("police", "MVA")),
+    ("20-54 for an MVA, 9-injury.", POLICE, ("police", "MVA")),
+    ("Respond to the Station 4 parking lot", FIRE_EMS, ("fire", None)),
+    ("Respond to 12 Main Street", POLICE, ("police", None)),
+])
+def test_classify_local_wording(transcript, talkgroup, expected):
+    call = {"transcript": transcript, "talkgroup_label": talkgroup[0], "talkgroup_group": talkgroup[1]}
+    assert classify([call]) == expected
+
+
+def test_words_in_any_call_beat_the_talkgroup():
+    calls = [{"transcript": "Respond to 12 Main Street", "talkgroup_label": "Co PD N1 Patch",
+              "talkgroup_group": "County Police"},
+             {"transcript": "Medic 49 responding, chest pains", "talkgroup_label": "Norco Ops 2",
+              "talkgroup_group": "County Fire / EMS"}]
+    assert classify(calls) == ("ems", "Chest pain")
+
+
+@pytest.mark.parametrize("text,level", [
+    ("ALS, diabetic emergency", "ALS"), ("for BLS", "BLS"), ("MS-5, PLS, leg pain", "BLS"),
+    ("962, DLS, lift assist", "BLS"), ("3-ALS", "ALS"), ("advanced life support", "ALS"),
+    ("please respond", None), ("deals", None), (None, None),
+])
+def test_life_support(text, level):
+    assert life_support(text) == level
+
+
+@pytest.mark.parametrize("text,units", [
+    ("MS-5, PLS", {"medic 5"}), ("EMS 27", {"medic 27"}), ("Mb. 14 Focus Hospital", {"medic 14"}),
+    ("E-M-S-14", {"medic 14"}), ("PMS 5", {"medic 5"}), ("AMS-5", {"medic 5"}),
+])
+def test_ems_units_as_whisper_writes_them(text, units):
+    assert units_in(text) == units
+
+
+def test_ten_codes_are_not_house_numbers(gaz):
+    assert gaz.find("10-24, 10-4, Northampton Street") is None
+    assert gaz.find("at 20-24 hours, you're going to 12 Northampton Street").label == "12 Northampton Street, Easton"
+
+
+def test_old_incidents_are_rebuilt_after_an_update(tmp_path):
+    import sqlite3
+    db = Database(tmp_path / "calls.db")
+    call_id = db.insert_call({"call_time": 1, "received_at": 1, "talkgroup": "1", "audio_path": "x.mp3"})
+    db.set_map_status(call_id, "placed")
+    db.create_incident({"first_time": 1, "last_time": 1, "lat": 40.6, "lon": -75.2, "label": "x"})
+    db.close()
+    conn = sqlite3.connect(tmp_path / "calls.db")
+    conn.execute("PRAGMA user_version = 1")
+    conn.commit()
+    conn.close()
+
+    db = Database(tmp_path / "calls.db")
+    assert db.incidents() == [] and db.get_call(call_id)["map_status"] is None
+    db.create_incident({"first_time": 1, "last_time": 1, "lat": 40.6, "lon": -75.2, "label": "y"})
+    db.close()
+    assert len(Database(tmp_path / "calls.db").incidents()) == 1     # only once

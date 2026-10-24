@@ -74,7 +74,8 @@ def words(text: str) -> list[str]:
     """Normalized words: lowercase, no punctuation, street words folded, ordinals as "22nd",
     route numbers as "route 22"."""
     text = text.lower().replace("&", " and ").replace("'", "").replace("’", "")
-    raw = re.findall(r"[a-z0-9]+", text)
+    # "10-4" and "20-24" stay one word, so a ten-code or a time is never read as a house number.
+    raw = re.findall(r"\d+(?:-\d+)+|[a-z0-9]+", text)
     out: list[str] = []
     i = 0
     while i < len(raw):

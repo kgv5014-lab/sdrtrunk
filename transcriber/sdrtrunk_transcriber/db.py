@@ -126,6 +126,10 @@ CREATE TRIGGER IF NOT EXISTS calls_au AFTER UPDATE ON calls BEGIN
 END;
 """
 
+# Bumped when a change to the incident map means existing incidents should be rebuilt.
+# 2: EMS type, ALS/BLS, ten-codes no longer read as house numbers.
+MAP_VERSION = 2
+
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",
     "talkgroup_group", "source", "talker_alias", "frequency", "patches", "audio_path",
@@ -170,6 +174,13 @@ class Database:
             self._conn.execute("ALTER TABLE calls ADD COLUMN map_status TEXT")
         # Crashes were called "Vehicle crash" before they became MVA.
         self._conn.execute("UPDATE incidents SET nature = 'MVA' WHERE nature = 'Vehicle crash'")
+        version = self._conn.execute("PRAGMA user_version").fetchone()[0]
+        if version < MAP_VERSION:
+            # How calls are placed and sorted changed: place every call again (lookups stay cached).
+            self._conn.execute("DELETE FROM call_places")
+            self._conn.execute("DELETE FROM incidents")
+            self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
+            self._conn.execute(f"PRAGMA user_version = {MAP_VERSION}")
 
     def close(self):
         with self._lock:
@@ -351,13 +362,14 @@ class Database:
             row = self._conn.execute("SELECT * FROM incidents WHERE id = ?", (incident_id,)).fetchone()
         return dict(row) if row else None
 
-    def incident_call_texts(self, incident_id: int) -> list[tuple[str | None, str | None]]:
-        """(transcript, talker alias) of each call in an incident."""
+    def incident_calls_brief(self, incident_id: int) -> list[dict]:
+        """Transcript, talker alias, talkgroup and time of each call in an incident, oldest first."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT c.transcript, c.talker_alias FROM call_places p JOIN calls c ON c.id = p.call_id "
-                "WHERE p.incident_id = ?", (incident_id,)).fetchall()
-        return [(row["transcript"], row["talker_alias"]) for row in rows]
+                "SELECT c.call_time, c.transcript, c.talker_alias, c.talkgroup_label, c.talkgroup_group "
+                "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
+                "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
+        return [dict(row) for row in rows]
 
     def incident_precisions(self, incident_id: int) -> list[str]:
         with self._lock:

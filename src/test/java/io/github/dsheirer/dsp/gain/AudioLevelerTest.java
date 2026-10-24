@@ -122,4 +122,24 @@ public class AudioLevelerTest
         run(leveler, hiss);
         assertEquals(0.0, leveler.getGainDb(), 0.01, "gain moved during background hiss");
     }
+
+    @Test
+    void badSamplesDoNotSilenceLaterAudio()
+    {
+        AudioLeveler leveler = new AudioLeveler();
+        float[] bad = speech(0.1f, 1, 6);
+        bad[100] = Float.NaN;
+        bad[200] = Float.POSITIVE_INFINITY;
+        bad[300] = Float.NEGATIVE_INFINITY;
+        bad[400] = 1e30f;
+        float[] output = run(leveler, bad);
+        for(float sample : output)
+        {
+            assertTrue(Float.isFinite(sample) && Math.abs(sample) <= 0.8913f, "bad output sample " + sample);
+        }
+
+        //Speech after the bad samples is still heard at about the normal level
+        float[] after = run(leveler, speech(0.1f, 5, 7));
+        assertTrue(rmsDb(after) > -35.0, "audio after bad samples is " + rmsDb(after) + " dB");
+    }
 }

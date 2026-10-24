@@ -22,9 +22,6 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
-from cryptography.hazmat.primitives import padding
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .config import Config
 from .db import Database
@@ -50,6 +47,11 @@ def _type(name: str | None) -> str:
 def bark_encrypt(payload: dict, key: str, mode: str) -> tuple[str, str]:
     """Encrypts a Bark push the way the Bark app decrypts it: AES with the key and IV read as text,
     GCM with the tag after the ciphertext, or CBC with PKCS7 padding. Returns (ciphertext, iv)."""
+    # Imported here so a copy installed before Bark support still starts; only Bark needs it.
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
     data = json.dumps(payload).encode()
     alphabet = string.ascii_letters + string.digits
     if mode.upper() == "GCM":
@@ -151,16 +153,17 @@ class Alerter:
                 "level": "timeSensitive" if (alert["priority"] or 3) >= 4 else "active"}
         if alert["click"]:
             push["url"] = alert["click"]
-        if self.settings.bark_encryption_key:
-            ciphertext, iv = bark_encrypt(push, self.settings.bark_encryption_key,
-                                          self.settings.bark_encryption_mode)
-            push = {"ciphertext": ciphertext, "iv": iv}
         url = f"{self.settings.bark_server.rstrip('/')}/{self.settings.bark_key.strip()}"
         try:
+            if self.settings.bark_encryption_key:
+                ciphertext, iv = bark_encrypt(push, self.settings.bark_encryption_key,
+                                              self.settings.bark_encryption_mode)
+                push = {"ciphertext": ciphertext, "iv": iv}
             reply = self.session.post(url, data=push, timeout=15)
             reply.raise_for_status()
         except Exception as e:
-            log.warning("Phone alerts: sending to Bark failed (%s)", e)
+            hint = "; run install.bat to add it" if isinstance(e, ImportError) else ""
+            log.warning("Phone alerts: sending to Bark failed (%s%s)", e, hint)
 
     def _wake(self, alert_id: str):
         url = f"{self.settings.wakeup_url.rstrip('/')}/{wakeup_topic(self.base_url, self.settings.topic)}"

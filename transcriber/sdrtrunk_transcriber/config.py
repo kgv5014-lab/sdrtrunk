@@ -30,6 +30,14 @@ class TranscriptionConfig:
 
 
 @dataclass
+class AudioConfig:
+    # Before Whisper hears a call: keep only the voice band and set speech to a standard level.
+    clean: bool = True
+    # Also cut out steady tones (paging tones, alert beeps); Whisper tends to invent words over them.
+    remove_tones: bool = True
+
+
+@dataclass
 class FasterWhisperConfig:
     model: str = "large-v3-turbo"
     # cuda | cpu
@@ -111,6 +119,7 @@ class AlertsConfig:
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
+    audio: AudioConfig = field(default_factory=AudioConfig)
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     codes: CodesConfig = field(default_factory=CodesConfig)

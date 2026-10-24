@@ -246,6 +246,10 @@ What alerts:
 
 * Whisper invents words on silence. The service drops calls shorter than `min_duration_s`, runs voice
   activity filtering, discards segments Whisper flags as non-speech, and treats each call on its own.
+* Each call is cleaned before Whisper hears it (`[audio]` in config.toml): only the voice band is kept,
+  steady tones such as paging tones are cut out, and the speech is brought to a standard level so quiet
+  channels transcribe as well as loud ones. The saved recording is not changed. The log line for a call
+  says how many seconds of tones were cut.
 * A good vocabulary list helps more than any other setting with unit and street names.
 * Clean decoding matters most: transcripts are only as good as the audio SDRTrunk produces.
 

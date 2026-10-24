@@ -20,10 +20,12 @@
 package io.github.dsheirer.audio;
 
 import io.github.dsheirer.alias.AliasList;
+import io.github.dsheirer.dsp.gain.AudioLeveler;
 import io.github.dsheirer.identifier.IdentifierUpdateListener;
 import io.github.dsheirer.identifier.IdentifierUpdateNotification;
 import io.github.dsheirer.identifier.MutableIdentifierCollection;
 import io.github.dsheirer.module.Module;
+import io.github.dsheirer.preference.playback.PlaybackPreference;
 import io.github.dsheirer.sample.Broadcaster;
 import io.github.dsheirer.sample.Listener;
 import org.slf4j.Logger;
@@ -46,6 +48,8 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
     private int mAudioSampleCount = 0;
     private boolean mRecordAudioOverride;
     private int mTimeslot;
+    private PlaybackPreference mPlaybackPreference;
+    private AudioLeveler mAudioLeveler;
 
     /**
      * Constructs an abstract audio module
@@ -128,15 +132,37 @@ public abstract class AbstractAudioModule extends Module implements IAudioSegmen
                 }
 
                 mAudioSampleCount = 0;
+
+                if(mAudioLeveler != null)
+                {
+                    mAudioLeveler.resetDetector();
+                }
             }
 
             return mAudioSegment;
         }
     }
 
+    /**
+     * Turns on audio leveling for this module, so that the audio it produces is at about the same loudness as all
+     * other channels.  Leveling follows the on/off and target level settings in the playback preference.
+     * @param playbackPreference with the leveling settings
+     */
+    public void setAudioLeveling(PlaybackPreference playbackPreference)
+    {
+        mPlaybackPreference = playbackPreference;
+        mAudioLeveler = playbackPreference != null ? new AudioLeveler() : null;
+    }
+
     public void addAudio(float[] audioBuffer)
     {
         AudioSegment audioSegment = getAudioSegment();
+
+        if(mAudioLeveler != null && mPlaybackPreference.isAudioLeveling())
+        {
+            mAudioLeveler.setTargetDb(mPlaybackPreference.getAudioLevelTarget().getTargetDb());
+            audioBuffer = mAudioLeveler.process(audioBuffer);
+        }
 
         //If the current segment exceeds the max samples length, close it so that a new segment gets generated
         //and then link the segments together

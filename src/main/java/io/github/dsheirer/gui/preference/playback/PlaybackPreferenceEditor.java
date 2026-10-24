@@ -23,6 +23,7 @@ import io.github.dsheirer.audio.playback.AudioPlaybackDeviceDescriptor;
 import io.github.dsheirer.audio.playback.AudioPlaybackDeviceManager;
 import io.github.dsheirer.eventbus.MyEventBus;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.preference.playback.AudioLevelTarget;
 import io.github.dsheirer.preference.playback.PlayTestAudioRequest;
 import io.github.dsheirer.preference.playback.PlaybackPreference;
 import javafx.geometry.HPos;
@@ -62,6 +63,8 @@ public class PlaybackPreferenceEditor extends HBox
     private ComboBox<ToneVolume> mStartToneVolumeComboBox;
     private ComboBox<ToneFrequency> mDropToneFrequencyComboBox;
     private ComboBox<ToneVolume> mDropToneVolumeComboBox;
+    private ToggleSwitch mAudioLevelingSwitch;
+    private ComboBox<AudioLevelTarget> mAudioLevelTargetComboBox;
 
     public PlaybackPreferenceEditor(UserPreferences userPreferences)
     {
@@ -111,6 +114,19 @@ public class PlaybackPreferenceEditor extends HBox
             mEditorPane.add(dropVolumeLabel, 3, row);
             mEditorPane.add(getDropToneVolumeComboBox(), 4, row);
             mEditorPane.add(getTestDropToneButton(), 5, row);
+
+            mEditorPane.add(new Separator(Orientation.HORIZONTAL), 0, ++row, 6, 1);
+            mEditorPane.add(new Label("Audio Leveling"), 0, ++row, 2, 1);
+            mEditorPane.add(getAudioLevelingSwitch(), 0, ++row);
+            mEditorPane.add(new Label("Even out loud and quiet channels"), 1, row, 3, 1);
+            Label levelLabel = new Label("Level:");
+            GridPane.setHalignment(levelLabel, HPos.RIGHT);
+            mEditorPane.add(levelLabel, 1, ++row);
+            mEditorPane.add(getAudioLevelTargetComboBox(), 2, row);
+            Label levelingHelp = new Label("Turns quiet channels up and loud ones (like paging tones) down, for " +
+                    "listening, recordings and streaming. Changes apply right away.");
+            levelingHelp.setWrapText(true);
+            mEditorPane.add(levelingHelp, 1, ++row, 5, 1);
         }
 
         return mEditorPane;
@@ -265,6 +281,34 @@ public class PlaybackPreferenceEditor extends HBox
         }
 
         return mStartToneVolumeComboBox;
+    }
+
+    private ToggleSwitch getAudioLevelingSwitch()
+    {
+        if(mAudioLevelingSwitch == null)
+        {
+            mAudioLevelingSwitch = new ToggleSwitch();
+            mAudioLevelingSwitch.setSelected(mPlaybackPreference.isAudioLeveling());
+            mAudioLevelingSwitch.selectedProperty().addListener((observable, oldValue, newValue) ->
+                    mPlaybackPreference.setAudioLeveling(newValue));
+        }
+
+        return mAudioLevelingSwitch;
+    }
+
+    private ComboBox<AudioLevelTarget> getAudioLevelTargetComboBox()
+    {
+        if(mAudioLevelTargetComboBox == null)
+        {
+            mAudioLevelTargetComboBox = new ComboBox<>();
+            mAudioLevelTargetComboBox.getItems().addAll(AudioLevelTarget.values());
+            mAudioLevelTargetComboBox.getSelectionModel().select(mPlaybackPreference.getAudioLevelTarget());
+            mAudioLevelTargetComboBox.getSelectionModel().selectedItemProperty()
+                .addListener((observable, oldValue, newValue) -> mPlaybackPreference.setAudioLevelTarget(newValue));
+            mAudioLevelTargetComboBox.disableProperty().bind(getAudioLevelingSwitch().selectedProperty().not());
+        }
+
+        return mAudioLevelTargetComboBox;
     }
 
     /**

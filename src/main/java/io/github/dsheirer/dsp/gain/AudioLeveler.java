@@ -42,6 +42,8 @@ public class AudioLeveler
     private static final float MIN_GAIN_DB = -24.0f;
     private static final float GATE_DB = -50.0f;
     private static final float CEILING = 0.89f; // -1 dBFS
+    //Input is clamped to this so its square can't overflow
+    private static final float MAX_INPUT = 100.0f;
 
     //Level detector time constants
     private static final float DETECTOR_ATTACK_SECONDS = 0.010f;
@@ -110,6 +112,17 @@ public class AudioLeveler
     }
 
     /**
+     * Returns everything, including the gain, to the starting state.
+     */
+    private void resetState()
+    {
+        mPower = 0.0f;
+        mGain = 1.0f;
+        mLimiterEnvelope = 0.0f;
+        mDcEstimate = 0.0f;
+    }
+
+    /**
      * Levels a buffer of audio samples.
      * @param samples to level, not modified
      * @return new buffer of leveled samples
@@ -120,14 +133,20 @@ public class AudioLeveler
 
         for(int x = 0; x < samples.length; x++)
         {
-            //Slowly track and remove any DC offset so it doesn't count as loudness
-            mDcEstimate += (samples[x] - mDcEstimate) * 0.0005f;
-            float sample = samples[x] - mDcEstimate;
+            //Decoders occasionally produce a NaN or infinite sample.  Drop it here, before it reaches the
+            //filter state below, or it would stay there and silence every call after it.
+            float input = samples[x];
 
-            if(Float.isNaN(sample) || Float.isInfinite(sample))
+            if(!Float.isFinite(input))
             {
-                sample = 0.0f;
+                input = 0.0f;
             }
+
+            input = Math.max(-MAX_INPUT, Math.min(MAX_INPUT, input));
+
+            //Slowly track and remove any DC offset so it doesn't count as loudness
+            mDcEstimate += (input - mDcEstimate) * 0.0005f;
+            float sample = input - mDcEstimate;
 
             float power = sample * sample;
             mPower += (power - mPower) * (power > mPower ? mDetectorAttack : mDetectorRelease);
@@ -165,6 +184,13 @@ public class AudioLeveler
             if(mLimiterEnvelope > CEILING)
             {
                 leveled *= CEILING / mLimiterEnvelope;
+            }
+
+            if(!Float.isFinite(leveled))
+            {
+                //Should never happen with the input checks above, but never let the state get stuck
+                resetState();
+                leveled = 0.0f;
             }
 
             processed[x] = leveled;

@@ -5,3 +5,4 @@ requests>=2.31
 numpy>=1.26
 av>=12
 faster-whisper>=1.1
+cryptography>=42

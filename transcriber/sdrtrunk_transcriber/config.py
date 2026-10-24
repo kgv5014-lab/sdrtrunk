@@ -113,6 +113,15 @@ class AlertsConfig:
     stations: list = field(default_factory=list)
     # Calls and tone-outs older than this don't alert (e.g. old calls placed after a restart).
     max_age_minutes: int = 15
+    # Bark iPhone app, instead of or as well as ntfy. The device key from the app's push URL
+    # (https://api.day.app/<key>/...). Empty = Bark off.
+    bark_key: str = ""
+    bark_server: str = "https://api.day.app"
+    # The key from Bark's Push Encryption settings (16, 24 or 32 characters for AES128/192/256), so
+    # only the phone can read the alert. Empty sends the alert text readable by Bark's server.
+    bark_encryption_key: str = ""
+    # The mode picked in Bark's Push Encryption settings: GCM or CBC.
+    bark_encryption_mode: str = "GCM"
 
 
 @dataclass

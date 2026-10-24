@@ -20,9 +20,13 @@ BASE_URL = "https://desktop.tail1234.ts.net"
 class FakeSession:
     def __init__(self):
         self.posts = []
+        self.bark = []
 
     def post(self, url, data=None, headers=None, timeout=None):
-        self.posts.append((url, headers))
+        if "day.app" in url:
+            self.bark.append((url, data))
+        else:
+            self.posts.append((url, headers))
         return self
 
     def raise_for_status(self):
@@ -30,9 +34,14 @@ class FakeSession:
 
 
 @pytest.fixture
-def wakeups(monkeypatch):
+def session(monkeypatch):
     session = FakeSession()
     monkeypatch.setattr(alerts.requests, "Session", lambda: session)
+    return session
+
+
+@pytest.fixture
+def wakeups(session):
     return session.posts
 
 
@@ -151,3 +160,55 @@ def test_a_follow_up_call_that_makes_it_an_mva_alerts(tmp_path, wakeups):
 
     assert [m["title"] for m in sent] == ["MVA"]
     assert sent[0]["message"].startswith("Main Street & Center Street, Nazareth\nMedic 49 on location")
+
+
+def bark_decrypt(ciphertext: str, iv: str, key: str, mode: str) -> dict:
+    """What the Bark app does with an encrypted push."""
+    import base64
+    from cryptography.hazmat.primitives import padding
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    data = base64.b64decode(ciphertext)
+    if mode == "GCM":
+        plain = AESGCM(key.encode()).decrypt(iv.encode(), data, None)
+    else:
+        decryptor = Cipher(algorithms.AES(key.encode()), modes.CBC(iv.encode())).decryptor()
+        unpadder = padding.PKCS7(128).unpadder()
+        plain = unpadder.update(decryptor.update(data) + decryptor.finalize()) + unpadder.finalize()
+    return json.loads(plain)
+
+
+@pytest.mark.parametrize("key,mode", [("k" * 32, "GCM"), ("0123456789abcdef", "CBC"), ("x" * 24, "GCM")])
+def test_bark_pushes_are_encrypted_for_the_phone(tmp_path, session, key, mode):
+    config = make_config(tmp_path, bark_key="DeviceKey123", bark_encryption_key=key, bark_encryption_mode=mode)
+    client = TestClient(create_app(config, backend_factory=lambda _c: Radio([])))
+    with client:
+        client.app.state.alerter.send("incident", "MVA", "Route 22 & Freemansburg Avenue", priority=4,
+                                      click=f"{BASE_URL}/map")
+        client.app.state.alerter.flush()
+
+    [(url, form)] = session.bark
+    assert url == "https://api.day.app/DeviceKey123"
+    assert set(form) == {"ciphertext", "iv"} and "Route 22" not in form["ciphertext"]
+    assert len(form["iv"]) == (12 if mode == "GCM" else 16)
+    assert bark_decrypt(form["ciphertext"], form["iv"], key, mode) == {
+        "title": "MVA", "body": "Route 22 & Freemansburg Avenue", "group": "SDRTrunk", "level": "timeSensitive",
+        "url": f"{BASE_URL}/map"}
+
+
+def test_bark_without_encryption_and_without_ntfy(tmp_path, session):
+    config = make_config(tmp_path, bark_key="DeviceKey123", base_url="")
+    client = TestClient(create_app(config, backend_factory=lambda _c: Radio([])))
+    with client:
+        client.app.state.alerter.send("test", "Test alert", "hello")
+        client.app.state.alerter.flush()
+    assert session.bark == [("https://api.day.app/DeviceKey123",
+                             {"title": "Test alert", "body": "hello", "group": "SDRTrunk", "level": "active"})]
+    assert session.posts == []
+
+
+def test_bark_key_length_is_checked(tmp_path):
+    config = make_config(tmp_path, bark_key="DeviceKey123", bark_encryption_key="short")
+    with pytest.raises(ValueError):
+        with TestClient(create_app(config, backend_factory=lambda _c: Radio([]))):
+            pass

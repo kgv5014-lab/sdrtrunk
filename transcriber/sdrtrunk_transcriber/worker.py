@@ -126,6 +126,10 @@ class TranscriptionWorker:
             self.db.update_call(call_id, status="skipped", duration_s=duration, error="too short")
             return
 
+        tone_s = 0.0
+        if self.config.audio.clean:
+            samples, tone_s = audio.clean(samples, self.config.audio.remove_tones)
+
         started = time.perf_counter()
         context = (call["talkgroup_label"], call["talkgroup_group"])
         result = self._backend.transcribe(samples, self.prompt(*context))
@@ -146,7 +150,7 @@ class TranscriptionWorker:
             transcribe_ms=elapsed_ms,
             error=None,
         )
-        log.info("Call %d TG %s (%.1fs) in %d ms: %s", call_id, call["talkgroup"], duration,
-                 elapsed_ms, transcript or "(no speech)")
+        log.info("Call %d TG %s (%.1fs%s) in %d ms: %s", call_id, call["talkgroup"], duration,
+                 f", {tone_s:.1f}s of tones cut" if tone_s else "", elapsed_ms, transcript or "(no speech)")
         if self.on_done:
             self.on_done(call_id)

@@ -21,6 +21,15 @@ beam_size = 5
 # One term per line: unit names, street names, 10-codes. Helps Whisper spell local names.
 vocabulary_file = "vocabulary.txt"
 
+[audio]
+# Clean up each call before Whisper hears it: keep only the voice band (drops the low hum of
+# CTCSS/DCS tones and high hiss) and bring the speech to a standard level, so quiet channels
+# transcribe as well as loud ones. Saved recordings are not changed.
+clean = true
+# Also cut out steady tones such as paging tones and alert beeps. Whisper tends to invent words
+# like "Thank you" over them.
+remove_tones = true
+
 [faster_whisper]
 model = "large-v3-turbo"
 device = "cuda"

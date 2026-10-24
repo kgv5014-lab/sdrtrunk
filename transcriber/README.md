@@ -234,6 +234,22 @@ Setting it up, once:
    same address, and enter the topic name `sdrtrunk-alerts`. Allow notifications when it asks.
 5. Double-click **send-test-alert.bat** on the PC. The phone should buzz within a few seconds.
 
+### Bark instead (iPhone)
+
+If ntfy won't buzz the phone, the free **Bark** app can deliver the same alerts. Bark's server passes each
+alert to Apple, so the transcriber encrypts it first with a key only your phone knows: Bark and Apple
+see only scrambled text.
+
+1. Install **Bark** from the App Store and allow notifications. Its home page shows a push address like
+   `https://api.day.app/AbCdEf123/...`; the part after `api.day.app/` is your device key.
+2. In Bark, open **Push Encryption** (encryption settings), choose **AES256** and **GCM**, and type or
+   paste a 32-character key (letters and digits). Tap Done.
+3. In `config.toml` under `[alerts]`, set `bark_key` to the device key and `bark_encryption_key` to the
+   same 32-character key. `enabled = true` must be set too. Restart the transcriber.
+4. Run **send-test-alert.bat**.
+
+This needs the `cryptography` package; run **install.bat** again after updating if it is missing.
+
 What alerts:
 
 * An incident on the map whose type is in `incidents` (MVA and structure fire to start), once per

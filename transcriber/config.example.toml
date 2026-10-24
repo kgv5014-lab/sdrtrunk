@@ -93,3 +93,9 @@ incidents = ["MVA", "Structure fire"]
 stations = []
 # Calls and tone-outs older than this don't alert.
 max_age_minutes = 15
+# Bark iPhone app (see "Bark instead" in the README). The device key from Bark's push address.
+bark_key = ""
+bark_server = "https://api.day.app"
+# The key set in Bark's Push Encryption settings (32 characters for AES256), and its mode (GCM or CBC).
+bark_encryption_key = ""
+bark_encryption_mode = "GCM"

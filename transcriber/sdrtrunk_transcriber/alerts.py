@@ -5,9 +5,14 @@ alert text only ever goes from this PC to the phone, over Tailscale when away fr
 can only be woken up through Apple, so for each alert a wake-up ping holding nothing but a random id
 goes through ntfy.sh to Apple; the iPhone then fetches the alert itself from this PC. That is the
 same thing a self-hosted ntfy server does with its upstream-base-url setting.
+
+Alerts can also go to the Bark iPhone app. Bark's server hands each alert to Apple, so it is encrypted
+here first with a key only the phone has (Bark's Push Encryption): neither Bark nor Apple can read it.
 """
 
+import base64
 import hashlib
+import json
 import logging
 import re
 import secrets
@@ -17,6 +22,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 import requests
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from .config import Config
 from .db import Database
@@ -39,6 +47,22 @@ def _type(name: str | None) -> str:
     return SAME_TYPE.get(name, name)
 
 
+def bark_encrypt(payload: dict, key: str, mode: str) -> tuple[str, str]:
+    """Encrypts a Bark push the way the Bark app decrypts it: AES with the key and IV read as text,
+    GCM with the tag after the ciphertext, or CBC with PKCS7 padding. Returns (ciphertext, iv)."""
+    data = json.dumps(payload).encode()
+    alphabet = string.ascii_letters + string.digits
+    if mode.upper() == "GCM":
+        iv = "".join(secrets.choice(alphabet) for _ in range(12))
+        sealed = AESGCM(key.encode()).encrypt(iv.encode(), data, None)
+    else:
+        iv = "".join(secrets.choice(alphabet) for _ in range(16))
+        padder = padding.PKCS7(128).padder()
+        encryptor = Cipher(algorithms.AES(key.encode()), modes.CBC(iv.encode())).encryptor()
+        sealed = encryptor.update(padder.update(data) + padder.finalize()) + encryptor.finalize()
+    return base64.b64encode(sealed).decode(), iv
+
+
 def wakeup_topic(base_url: str, topic: str) -> str:
     """The name the ntfy iPhone app listens on for wake-ups for a topic on another server."""
     return hashlib.sha256(f"{base_url.rstrip('/')}/{topic}".encode()).hexdigest()
@@ -54,6 +78,11 @@ class Alerter:
         self.session = session or requests.Session()
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="alerts")
         self.incident_types = {_type(t) for t in self.settings.incidents}
+        key = self.settings.bark_encryption_key
+        if key and len(key) not in (16, 24, 32):
+            raise ValueError("[alerts] bark_encryption_key must be 16, 24 or 32 characters, as in Bark's settings")
+        if self.settings.bark_encryption_mode.upper() not in ("GCM", "CBC"):
+            raise ValueError("[alerts] bark_encryption_mode must be GCM or CBC")
         if not self.base_url:
             log.warning("Phone alerts: set [alerts] base_url to this PC's address in the ntfy app, "
                         "or an iPhone only sees alerts when the app is opened")
@@ -112,7 +141,26 @@ class Alerter:
         log.info("Phone alert: %s: %s", title, message.replace("\n", " / "))
         if self.base_url and self.settings.wakeup_url:
             self._pool.submit(self._wake, alert["id"])
+        if self.settings.bark_key:
+            self._pool.submit(self._bark, alert)
         return self.to_ntfy(alert)
+
+    def _bark(self, alert: dict):
+        push = {"title": alert["title"], "body": alert["message"] or alert["title"], "group": "SDRTrunk",
+                # Time-sensitive alerts show through Focus modes.
+                "level": "timeSensitive" if (alert["priority"] or 3) >= 4 else "active"}
+        if alert["click"]:
+            push["url"] = alert["click"]
+        if self.settings.bark_encryption_key:
+            ciphertext, iv = bark_encrypt(push, self.settings.bark_encryption_key,
+                                          self.settings.bark_encryption_mode)
+            push = {"ciphertext": ciphertext, "iv": iv}
+        url = f"{self.settings.bark_server.rstrip('/')}/{self.settings.bark_key.strip()}"
+        try:
+            reply = self.session.post(url, data=push, timeout=15)
+            reply.raise_for_status()
+        except Exception as e:
+            log.warning("Phone alerts: sending to Bark failed (%s)", e)
 
     def _wake(self, alert_id: str):
         url = f"{self.settings.wakeup_url.rstrip('/')}/{wakeup_topic(self.base_url, self.settings.topic)}"

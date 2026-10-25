@@ -1,0 +1,4 @@
+tone_a,tone_b,name
+# One line per station: tone A in Hz, tone B in Hz (empty for a long tone), then the name.
+# Tones match within 1.5 percent. Copy unnamed tones from the call log with the name the dispatcher calls.
+# 349.0,832.5,Example Station 4

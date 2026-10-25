@@ -58,6 +58,8 @@ class TranscriptionWorker:
         self.vocabulary = load_vocabulary(config.vocabulary_path)
         # Called with the call id after each transcript is saved (the incident map listens here).
         self.on_done = None
+        # Called with (call, samples) with the audio as uploaded, before cleaning (the tone finder).
+        self.on_audio = None
 
     def prompt(self, *context: str | None) -> str:
         # Places first (dropped first when it's too long), then codes, then the user's own vocabulary,
@@ -116,6 +118,12 @@ class TranscriptionWorker:
         self.db.update_call(call_id, status="processing")
         samples = audio.decode(self.config.data_path / call["audio_path"])
         duration = round(audio.duration_seconds(samples), 2)
+
+        if self.on_audio:
+            try:
+                self.on_audio(call, samples)
+            except Exception:
+                log.exception("Tone finder failed on call %d", call_id)
 
         if self._backend is None:
             self.db.update_call(call_id, status="failed", duration_s=duration,

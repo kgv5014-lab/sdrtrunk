@@ -99,3 +99,11 @@ bark_server = "https://api.day.app"
 # The key set in Bark's Push Encryption settings (32 characters for AES256), and its mode (GCM or CBC).
 bark_encryption_key = ""
 bark_encryption_mode = "GCM"
+
+[tones]
+# Finds two-tone pages in call recordings, for P25 talkgroups SDRTrunk's paging decoder can't hear.
+enabled = true
+# Station names, tone_a,tone_b,name per line (same format as SDRTrunk's paging_tones.csv).
+file = "paging_tones.csv"
+# Only check calls whose talkgroup name or number contains one of these, e.g. ["Fire Dispatch"]. [] = all.
+talkgroups = []

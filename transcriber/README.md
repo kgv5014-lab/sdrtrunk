@@ -258,6 +258,18 @@ What alerts:
   example `stations = ["Station 4", "Easton"]`. The same station again within two minutes is skipped.
 * Nothing older than `max_age_minutes`, so old calls mapped after a restart stay quiet.
 
+### Tone-outs on P25 talkgroups
+
+SDRTrunk's Two-Tone Paging decoder only hears analog channels. When the tones go out on a P25 (digital)
+talkgroup, the transcriber finds them in the call recordings instead: tone A for 0.3 to 5 seconds, then
+a different tone B, or one tone of 6 seconds or more. They are logged with the other tone-outs and can
+send phone alerts (`stations` under `[alerts]`).
+
+Name them in `paging_tones.csv` next to `config.toml` (same format as SDRTrunk's list:
+`tone_a,tone_b,name`). Unnamed tone-outs show their tones, e.g. "349.0 Hz + 832.5 Hz"; copy those numbers
+into the file with the name the dispatcher calls right after the tones. Changes apply without a
+restart. Settings are under `[tones]`; `talkgroups` limits the search to dispatch talkgroups.
+
 ## Accuracy tips
 
 * Whisper invents words on silence. The service drops calls shorter than `min_duration_s`, runs voice

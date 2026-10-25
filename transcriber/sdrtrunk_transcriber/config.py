@@ -38,6 +38,17 @@ class AudioConfig:
 
 
 @dataclass
+class TonesConfig:
+    # Finds two-tone pages in call recordings, for talkgroups where SDRTrunk's own paging decoder can't
+    # hear them (P25 and other digital voice). Found pages are logged like SDRTrunk's and can alert.
+    enabled: bool = True
+    # Station names: tone_a,tone_b,name per line, the same format as SDRTrunk's paging_tones.csv.
+    file: str = "paging_tones.csv"
+    # Only calls whose talkgroup name or number contains one of these. Empty = every call.
+    talkgroups: list = field(default_factory=list)
+
+
+@dataclass
 class FasterWhisperConfig:
     model: str = "large-v3-turbo"
     # cuda | cpu
@@ -129,6 +140,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
+    tones: TonesConfig = field(default_factory=TonesConfig)
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     codes: CodesConfig = field(default_factory=CodesConfig)
@@ -148,6 +160,10 @@ class Config:
     @property
     def codes_path(self) -> Path | None:
         return self._resolve(self.codes.file) if self.codes.file else None
+
+    @property
+    def tones_path(self) -> Path | None:
+        return self._resolve(self.tones.file) if self.tones.file else None
 
     @property
     def places_path(self) -> Path | None:

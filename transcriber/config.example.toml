@@ -77,6 +77,10 @@ area = [40.50, -75.62, 40.78, -75.17]
 # Calls naming places within this distance, within this many minutes, are one incident.
 incident_window_minutes = 45
 incident_radius_m = 500
+# Calls on these kinds of channel join the incident last sent there ("on TAC 2"), up to this long after
+# its latest call. Ops channels carry many incidents at once, so they are left out.
+follow_channels = ["Tac", "Fireground"]
+channel_window_minutes = 60
 
 [alerts]
 # Phone alerts through the ntfy app over Tailscale (see "Phone alerts" in the README).

@@ -1,9 +1,8 @@
 # Copy to vocabulary.txt. One term per line; lines starting with # are ignored.
 # Whisper uses these as hints for spelling, so list names it would otherwise get wrong.
 # Keep it short: Whisper only reads roughly the last 200 words.
-Dispatch
-Engine 12
-Medic 4
-Battalion 1
-10-4
-Main Street
+# Only list real names from your area. On unclear audio Whisper sometimes reads this list back, so
+# made-up examples turn up in transcripts. For example (remove the # to use a line):
+# Medic 2081
+# Nazareth Communications
+# Freemansburg Avenue

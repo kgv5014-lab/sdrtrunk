@@ -30,6 +30,7 @@ from starlette.datastructures import UploadFile
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
+from .corrections import CorrectionBook
 from .places import PlaceBook
 from .addresses import Gazetteer
 from .config import Config
@@ -96,7 +97,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         db = Database(data_path / "calls.db")
         codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
-        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook)
+        corrections = CorrectionBook(config.corrections_path)
+        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections)
         alerter = Alerter(config, db) if config.alerts.enabled else None
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         map_worker = None
@@ -113,6 +115,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                     summarizer.incident_changed(incident_id)
 
             map_worker.on_placed = placed
+            if summarizer:
+                # Calls moved between incidents by hand on the map.
+                map_worker.on_changed = lambda ids: [summarizer.incident_changed(i) for i in ids]
             map_worker.start()
 
         def done(call_id):
@@ -128,6 +133,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.db = db
         app.state.worker = worker
         app.state.codebook = codebook
+        app.state.corrections = corrections
         app.state.map_worker = map_worker
         app.state.alerter = alerter
         app.state.summarizer = summarizer
@@ -261,6 +267,51 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 attach_summary(summaries, call)
         return calls
 
+    @app.post("/api/calls/{call_id}/transcript")
+    async def correct_transcript(request: Request, call_id: int):
+        """Saves Ken's fix of a transcript and learns the replaced words for later calls."""
+        db = request.app.state.db
+        call = db.get_call(call_id)
+        if call is None:
+            raise HTTPException(404)
+        if call["status"] not in ("done", "skipped", "failed"):
+            raise HTTPException(409, "This call is still being transcribed")
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Expected JSON")
+        text = body.get("text") if isinstance(body, dict) else None
+        if not isinstance(text, str):
+            raise HTTPException(400, "Expected {\"text\": ...}")
+        text = re.sub(r"\s+", " ", text).strip()[:4000]
+        original = call["transcript"] or ""
+        learned = request.app.state.corrections.learn(original, text) if body.get("learn", True) else []
+        db.update_call(call_id, transcript=text, corrected_at=int(time.time()), status="done", error=None)
+        # A fixed street name may put a call on the map that wasn't placed before.
+        map_worker = request.app.state.map_worker
+        if map_worker and call["map_status"] in ("none", "follow-up"):
+            db.set_map_status(call_id, None)
+            map_worker.submit(call_id)
+        return {"id": call_id, "transcript": text, "learned": learned}
+
+    @app.get("/api/corrections")
+    def list_corrections(request: Request):
+        return [c.row() for c in request.app.state.corrections.items()]
+
+    @app.post("/api/corrections/forget")
+    async def forget_correction(request: Request):
+        """Removes a learned correction (the page's Undo)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Expected JSON")
+        heard, correct = (body.get("heard"), body.get("correct")) if isinstance(body, dict) else (None, None)
+        if not isinstance(heard, str) or not isinstance(correct, str):
+            raise HTTPException(400, "Expected {\"heard\": ..., \"correct\": ...}")
+        if not request.app.state.corrections.forget(heard, correct):
+            raise HTTPException(404)
+        return {"forgot": {"heard": heard, "correct": correct}}
+
     @app.get("/api/calls/{call_id}/audio")
     def call_audio(request: Request, call_id: int):
         call = request.app.state.db.get_call(call_id)
@@ -317,6 +368,36 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if not request.app.state.db.update_incident(incident_id, hidden=0):
             raise HTTPException(404)
         return {"restored": incident_id}
+
+    # Fixing which incident a call is in, from the map. Remembered when the map is rebuilt.
+
+    def _edit(action, *args):
+        try:
+            return {"incidents": action(*args)}
+        except KeyError as e:
+            raise HTTPException(404, str(e.args[0]) if e.args else "not found")
+
+    @app.post("/api/calls/{call_id}/move")
+    async def move_call(request: Request, call_id: int):
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("incident_id"), int):
+            raise HTTPException(400, "send {\"incident_id\": <id>}")
+        return _edit(_map_worker(request).move_call, call_id, body["incident_id"])
+
+    @app.post("/api/calls/{call_id}/split")
+    def split_call(request: Request, call_id: int):
+        return _edit(_map_worker(request).split_call, call_id)
+
+    @app.delete("/api/calls/{call_id}/place")
+    def remove_call_from_map(request: Request, call_id: int):
+        return _edit(_map_worker(request).remove_call, call_id)
+
+    @app.post("/api/incidents/{incident_id}/merge")
+    async def merge_incident(request: Request, incident_id: int):
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("into"), int):
+            raise HTTPException(400, "send {\"into\": <incident id>}")
+        return _edit(_map_worker(request).merge, incident_id, body["into"])
 
     @app.post("/api/map/rebuild")
     def rebuild_map(request: Request):

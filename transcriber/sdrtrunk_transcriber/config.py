@@ -27,6 +27,11 @@ class TranscriptionConfig:
     # Segments Whisper itself thinks are probably not speech are dropped.
     no_speech_threshold: float = 0.6
     log_prob_threshold: float = -1.0
+    # Drop text Whisper made up: whole calls of "Thank you." heard with low confidence, words
+    # repeated over and over, counting runs, and echoes of the hint list.
+    junk_filter: bool = True
+    # A call that is only a stock phrase is dropped when Whisper's confidence is below this.
+    stock_phrase_logprob: float = -0.7
 
 
 @dataclass
@@ -67,6 +72,13 @@ class CodesConfig:
 
 
 @dataclass
+class CorrectionsConfig:
+    # Fixes made with the Edit button on the call log page, learned as word replacements for later
+    # calls and given to Whisper as spelling hints. Hand edits apply without a restart. Empty = off.
+    file: str = "corrections.csv"
+
+
+@dataclass
 class PlacesConfig:
     # Local streets, routes and landmarks; see places.example.csv and fetch-places.bat. Empty = off.
     file: str = "places.csv"
@@ -92,6 +104,10 @@ class MapConfig:
     # Calls naming places this close together, this close in time, are one incident.
     incident_window_minutes: int = 45
     incident_radius_m: int = 500
+    # Calls on these kinds of channel join the incident last sent there ("switch to Tac 2"), for this long
+    # after its latest call. Ops channels carry many incidents at once, so they are not followed.
+    follow_channels: list = field(default_factory=lambda: ["Tac", "Fireground"])
+    channel_window_minutes: int = 60
     # Map background tiles.
     tiles_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
@@ -153,6 +169,7 @@ class Config:
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     codes: CodesConfig = field(default_factory=CodesConfig)
+    corrections: CorrectionsConfig = field(default_factory=CorrectionsConfig)
     places: PlacesConfig = field(default_factory=PlacesConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
@@ -170,6 +187,10 @@ class Config:
     @property
     def codes_path(self) -> Path | None:
         return self._resolve(self.codes.file) if self.codes.file else None
+
+    @property
+    def corrections_path(self) -> Path | None:
+        return self._resolve(self.corrections.file) if self.corrections.file else None
 
     @property
     def places_path(self) -> Path | None:

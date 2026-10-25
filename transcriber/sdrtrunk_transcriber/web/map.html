@@ -42,7 +42,11 @@
   .pop .tags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 4px; }
   .pop .tag { font-size: 11px; border: 1px solid #ccc; border-radius: 10px; padding: 0 6px; color: #555; }
   .pop .page { color: #9a5800; font-weight: 600; }
-  .pop .actions { margin-top: 8px; }
+  .pop .actions { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .pop .fix { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .pop .fix button, .pop .fix select, .pop .actions select { font-size: 12px; padding: 2px 6px; }
+  .pop select { max-width: 100%; }
+  .channel { color: var(--accent); font-weight: 600; }
   .types { display: flex; flex-wrap: wrap; gap: 4px; }
   .types label { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 14px; padding: 2px 9px 2px 6px; color: var(--fg); cursor: pointer; user-select: none; }
   .types label:has(input:not(:checked)) { opacity: 0.45; }
@@ -120,7 +124,8 @@ function markSeen(incident) {
 }
 const PRECISION = { address: 'house address', intersection: 'intersection', landmark: 'landmark',
                     street: 'street only, approximate',
-                    'follow-up': 'follow-up, same unit' };
+                    'follow-up': 'follow-up, same unit', channel: 'same Tac channel', 'same-street': 'names its street',
+                    manual: 'moved here by hand' };
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -183,6 +188,7 @@ function popup(incident) {
   const span = incident.first_time === incident.last_time ? time(incident.first_time)
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
   box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
+  if (incident.channel) box.append(el('div', 'channel', 'Working on ' + incident.channel));
   incident.pages.forEach(p => {
     const tones = p.tone_b ? p.tone_a.toFixed(1) + ' + ' + p.tone_b.toFixed(1) + ' Hz' : p.tone_a.toFixed(1) + ' Hz long tone';
     box.append(el('div', 'page', 'Tone out ' + clock(p.page_time) + ': ' + (p.label || 'not on the station list') + ' (' + tones + ')'));
@@ -199,6 +205,7 @@ function popup(incident) {
     }
     const audio = el('audio'); audio.controls = true; audio.preload = 'none'; audio.src = 'api/calls/' + c.id + '/audio';
     call.append(audio);
+    call.append(fixCall(incident, c));
     box.append(call);
   });
   const actions = el('div', 'actions');
@@ -209,8 +216,61 @@ function popup(incident) {
     load();
   };
   actions.append(btn);
+  const others = otherIncidents(incident);
+  if (others.length) {
+    const merge = choose('Merge into…', others);
+    merge.onchange = () => merge.value && edit('api/incidents/' + incident.id + '/merge', 'POST', { into: Number(merge.value) });
+    actions.append(merge);
+  }
   box.append(actions);
   return box;
+}
+
+// Other incidents close in time, nearest in time first, to move a call to or merge with.
+function otherIncidents(incident) {
+  return lastIncidents.filter(i => i.id !== incident.id && Math.abs(i.first_time - incident.first_time) <= 6 * 3600)
+    .sort((a, b) => Math.abs(a.first_time - incident.first_time) - Math.abs(b.first_time - incident.first_time))
+    .slice(0, 25);
+}
+
+function choose(prompt, incidents) {
+  const select = el('select');
+  select.append(new Option(prompt, ''));
+  incidents.forEach(i => select.append(new Option(clock(i.first_time) + ' · ' + (i.label || 'Unknown place') +
+    (i.nature ? ' · ' + i.nature : ''), i.id)));
+  return select;
+}
+
+// Buttons under each call to fix which incident it is in.
+function fixCall(incident, c) {
+  const box = el('div', 'fix');
+  const others = otherIncidents(incident);
+  if (others.length) {
+    const move = choose('Move to…', others);
+    move.onchange = () => move.value && edit('api/calls/' + c.id + '/move', 'POST', { incident_id: Number(move.value) });
+    box.append(move);
+  }
+  if (incident.calls.length > 1) {
+    const split = el('button', '', 'Own incident');
+    split.title = 'Take this call out into an incident of its own';
+    split.onclick = () => edit('api/calls/' + c.id + '/split', 'POST');
+    box.append(split);
+  }
+  const remove = el('button', '', 'Not an incident');
+  remove.title = 'Take this call off the map';
+  remove.onclick = () => edit('api/calls/' + c.id + '/place', 'DELETE');
+  box.append(remove);
+  return box;
+}
+
+async function edit(url, method, body) {
+  try {
+    const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {},
+                                 body: body ? JSON.stringify(body) : undefined });
+    if (!r.ok) throw new Error((await r.json()).detail || r.status);
+  } catch (e) { $('status').textContent = 'Could not change that: ' + e.message; }
+  map.closePopup();
+  load();
 }
 
 function render(incidents) {
@@ -258,6 +318,7 @@ function render(incidents) {
     const meta = el('div', 'muted', time(incident.last_time) + ' · ');
     if (incident.category || incident.nature) meta.append(describe(incident), ' · ');
     meta.append(incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's'));
+    if (incident.channel) meta.append(' · ', el('span', 'channel', incident.channel));
     item.append(meta);
     if (incident.summary) item.append(summary(incident, false));
     items[incident.id] = item;

@@ -185,10 +185,28 @@ What happens to each transcribed call:
 4. **Follow-up calls.** A call that names no place but names a unit ("Engine 2011 on scene", "2081 on
    location") joins the most recent incident in the last 45 minutes that the same unit was in. A radio's
    talker alias (e.g. `ENGINE 41`) counts too. Four-digit call signs match with or without the unit word.
+5. **Tac channels.** A tone-out usually ends with the channel ("Lower Saucon Communications, on TAC 2,
+   16:32"), and the popup shows it ("Working on Tac 2"). Calls on that Tac talkgroup then join the
+   incident for up to an hour after its latest call, even with no place in them. Whisper's "Tag 2",
+   "Pac-1" and "TAC 3-634" count. The latest incident sent to a channel gets its calls. Ops channels are
+   shown but not followed, since they carry many incidents at once (`follow_channels` under `[map]`).
+   When every unit is done ("all the units are available") the channel is free again.
+6. **Other calls with no place** join an incident when they name its street within 15 minutes ("staging
+   on Northampton Street"). A unit that went available, or was sent to another call ("1786, you are
+   responding..."), stops following its earlier incident. A new dispatch never joins by these rules; one
+   more than 100 m away, or to the same place more than 20 minutes after the last call, starts a new
+   incident. The call type comes from the dispatch first, so a later call mentioning a crash doesn't turn
+   a fire alarm into an MVA.
+7. **Made-up transcripts are skipped.** On unclear audio Whisper often reads its hint words back
+   ("Dispatch, Engine 12, Main Street") or repeats a phrase over and over. Those calls stay off the map.
 
 Radio speech is messy, so some calls are missed and some land in the wrong place. Each call in a popup
 shows its transcript and how it was placed (house address, intersection, landmark, or street only), and
 **Remove from map** hides a wrong one ("Show removed" brings it back).
+
+**Fixing it by hand.** Under each call in a popup: **Move to…** puts it in another incident nearby in
+time, **Own incident** takes it out into an incident of its own, and **Not an incident** takes it off the
+map. **Merge into…** at the bottom joins two incidents. Fixes are kept when the map is rebuilt.
 
 After editing `places.csv` by hand, map earlier calls again with (from the same PC):
 `curl -X POST http://localhost:3000/api/map/rebuild`
@@ -258,6 +276,21 @@ What alerts:
   example `stations = ["Station 4", "Easton"]`. The same station again within two minutes is skipped.
 * Nothing older than `max_age_minutes`, so old calls mapped after a restart stay quiet.
 
+## Fixing transcripts
+
+Each call on the call log page has an **Edit** button. Type the right words and press Save. The words
+you replaced are learned (for example "never mind" -> "Nevin"), fixed in every later call, and given to
+Whisper as spelling hints. The page shows what it learned, with an Undo for each. Single everyday words
+("the", "yes"), added or removed words, and changed numbers are treated as one-off fixes and not learned.
+
+Everything learned is in `corrections.csv` (columns heard, correct, talkgroup, hint, count, source). You
+can edit it in Excel or Notepad, and changes apply without a restart. Add a talkgroup to a row to apply it
+only on talkgroups whose name contains that text. Set hint to "no" to keep a word out of Whisper's hints.
+
+To check whether changes help, run **compare-transcripts.bat**. It runs the 50 newest calls, plus every
+call you fixed by hand, through Whisper both the old way (no cleanup) and the new way. Then it opens a
+side-by-side report that scores both against your fixes. The transcriber can keep running while it works.
+
 ## Call summaries
 
 Ollama, a free program that runs AI language models on your own PC, can write a short summary for each
@@ -290,6 +323,11 @@ be listed on the GTX 1070 with about 5 GB of memory.
 
 ## Accuracy tips
 
+* Whisper invents words on noise. `junk_filter` drops a whole call of "Thank you." heard with low
+  confidence, cuts loops ("10-4, 10-4, 10-4...") to one copy, and removes counting runs and echoes of
+  the hint list.
+* Keep vocabulary.txt to your own names. Whisper repeats hint words back on unclear audio, and the old
+  sample terms ("Engine 12", "Main Street") are now ignored for that reason.
 * Whisper invents words on silence. The service drops calls shorter than `min_duration_s`, runs voice
   activity filtering, discards segments Whisper flags as non-speech, and treats each call on its own.
 * Each call is cleaned before Whisper hears it (`[audio]` in config.toml): only the voice band is kept,

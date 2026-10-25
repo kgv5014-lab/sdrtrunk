@@ -115,3 +115,16 @@ bark_server = "https://api.day.app"
 # The key set in Bark's Push Encryption settings (32 characters for AES256), and its mode (GCM or CBC).
 bark_encryption_key = ""
 bark_encryption_mode = "GCM"
+
+[summaries]
+# Short summaries and tags for incidents and long calls, written by Ollama on this PC (see "Call summaries"
+# in the README). Start Ollama with start-ollama.bat first.
+enabled = false
+url = "http://127.0.0.1:11434"
+model = "qwen2.5:7b"
+# Calls with at least this many words also get a one-line summary on the call log. 0 = incidents only.
+call_min_words = 25
+# Wait this long after a call joins an incident, so a burst of calls is summarized together.
+delay_s = 20
+# Incident summaries are kept to about this many words.
+incident_words = 40

@@ -55,6 +55,13 @@
   .new-badge { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: #fff; background: var(--fire); border-radius: 8px; padding: 0 6px; margin-right: 6px; vertical-align: 1px; }
   .item.new { box-shadow: 0 0 0 2px var(--accent) inset; }
   .mva-text { color: var(--mva); font-weight: 600; }
+  .summary { margin: 4px 0; }
+  .summary .ai { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; margin-right: 5px; vertical-align: 1px; }
+  .summary.stale { opacity: 0.7; }
+  .item .summary { font-size: 13px; }
+  .stags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 3px; }
+  .stag { font-size: 11px; border: 1px solid var(--line); border-radius: 10px; padding: 0 6px; color: var(--muted); }
+  .stag.status { color: var(--accent); border-color: var(--accent); }
   .pop mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 3px; }
   .pulse { animation: pulse 1.4s ease-out infinite; }
   @keyframes pulse { 0% { stroke-width: 2; stroke-opacity: 1; } 100% { stroke-width: 18; stroke-opacity: 0; } }
@@ -158,10 +165,26 @@ function describe(incident) {
   return box;
 }
 
+// The Ollama summary and tags, when [summaries] is turned on.
+function summary(incident, withTags) {
+  const box = el('div', 'summary' + (incident.summary_current === false ? ' stale' : ''));
+  box.append(el('span', 'ai', 'AI'), incident.summary);
+  if (incident.summary_current === false) box.title = 'Being updated with the latest calls';
+  const tags = [...(incident.summary_tags || [])];
+  if (withTags && (tags.length || incident.summary_status)) {
+    const row = el('div', 'stags');
+    if (incident.summary_status && incident.summary_status !== 'unknown') row.append(el('span', 'stag status', incident.summary_status));
+    tags.forEach(t => row.append(el('span', 'stag', t)));
+    box.append(row);
+  }
+  return box;
+}
+
 function popup(incident) {
   const box = el('div', 'pop');
   box.append(el('div', 'where', incident.label || 'Unknown place'));
   if (incident.category || incident.nature) { const what = el('div'); what.append(describe(incident)); box.append(what); }
+  if (incident.summary) box.append(summary(incident, true));
   const span = incident.first_time === incident.last_time ? time(incident.first_time)
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
   box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
@@ -297,6 +320,7 @@ function render(incidents) {
     meta.append(incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's'));
     if (incident.channel) meta.append(' · ', el('span', 'channel', incident.channel));
     item.append(meta);
+    if (incident.summary) item.append(summary(incident, false));
     items[incident.id] = item;
     item.onclick = () => { map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); markers[incident.id].openPopup(); };
     list.append(item);

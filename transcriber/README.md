@@ -291,6 +291,36 @@ To check whether changes help, run **compare-transcripts.bat**. It runs the 50 n
 call you fixed by hand, through Whisper both the old way (no cleanup) and the new way. Then it opens a
 side-by-side report that scores both against your fixes. The transcriber can keep running while it works.
 
+## Call summaries
+
+Ollama, a free program that runs AI language models on your own PC, can write a short summary for each
+incident on the map, for example "Two-car MVA at Route 22 and 25th Street, one patient, Medic 2081
+transporting BLS", plus tags such as *injuries* or *road blocked* and the latest status (active, under
+control, cleared, canceled). The summary is written again a little while after each new call joins the
+incident. Long calls (25 words or more) also get a one-line summary on the call log. Summaries show on the
+map, on the call log, and in SDRTrunk's Incidents tab, marked **AI**. Nothing leaves your PC.
+
+The summaries come from the transcripts, so they are only as good as the transcripts. They never change
+how calls are grouped into incidents.
+
+Setting it up, once:
+
+1. Install Ollama for Windows from <https://ollama.com/download>.
+2. Double-click **start-ollama.bat** in the transcriber folder. It finds the GTX 1070 (your
+   `CUDA_VISIBLE_DEVICES` setting keeps that card hidden from everything else, so Whisper keeps the
+   1070 Ti), starts Ollama on it in a minimized window, and the first time downloads the model
+   (`qwen2.5:7b`, about 5 GB). It also closes the Ollama tray app, which would otherwise use the wrong card.
+3. In `config.toml`, add the `[summaries]` section from `config.example.toml` and set `enabled = true`.
+   Restart the transcriber. The log says "Summaries: using Ollama" after the first one.
+
+Run start-ollama.bat before start-transcriber.bat each time, for example from the batch file that opens
+everything. If Ollama isn't running, everything else works as before; the log says so once, and the
+summaries catch up within a minute of Ollama starting. On start the transcriber also summarizes the last
+24 hours of incidents that have none yet.
+
+To check that Ollama is on the 1070, run `nvidia-smi` while a summary is being written: `ollama.exe` should
+be listed on the GTX 1070 with about 5 GB of memory.
+
 ## Accuracy tips
 
 * Whisper invents words on noise. `junk_filter` drops a whole call of "Thank you." heard with low

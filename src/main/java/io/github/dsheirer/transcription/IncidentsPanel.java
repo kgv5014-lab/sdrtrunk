@@ -172,7 +172,8 @@ public class IncidentsPanel extends JPanel
         mTable.getColumnModel().getColumn(IncidentTableModel.TYPE).setPreferredWidth(70);
         mTable.getColumnModel().getColumn(IncidentTableModel.TYPE).setMaxWidth(90);
         mTable.getColumnModel().getColumn(IncidentTableModel.WHAT).setPreferredWidth(140);
-        mTable.getColumnModel().getColumn(IncidentTableModel.PLACE).setPreferredWidth(420);
+        mTable.getColumnModel().getColumn(IncidentTableModel.PLACE).setPreferredWidth(280);
+        mTable.getColumnModel().getColumn(IncidentTableModel.SUMMARY).setPreferredWidth(420);
         mTable.getColumnModel().getColumn(IncidentTableModel.CALLS).setPreferredWidth(50);
         mTable.getColumnModel().getColumn(IncidentTableModel.CALLS).setMaxWidth(70);
         mTable.getSelectionModel().addListSelectionListener(e -> {
@@ -346,6 +347,25 @@ public class IncidentsPanel extends JPanel
 
         sb.append(String.format("   (%.5f, %.5f)", incident.latitude(), incident.longitude()));
 
+        if(incident.summary() != null && !incident.summary().isBlank())
+        {
+            sb.append("\nSummary (AI): ").append(incident.summary());
+
+            List<String> tags = new ArrayList<>();
+
+            if(incident.summaryStatus() != null && !incident.summaryStatus().equals("unknown"))
+            {
+                tags.add(incident.summaryStatus());
+            }
+
+            tags.addAll(incident.summaryTags());
+
+            if(!tags.isEmpty())
+            {
+                sb.append("\nTags: ").append(String.join(", ", tags));
+            }
+        }
+
         for(TranscriptIncident.Page page : incident.pages())
         {
             sb.append("\nTone out ").append(formatClock(page.pageTime())).append(": ")
@@ -419,7 +439,8 @@ public class IncidentsPanel extends JPanel
         static final int WHAT = 2;
         static final int PLACE = 3;
         static final int CALLS = 4;
-        private static final String[] COLUMNS = {"Latest", "Type", "What", "Place", "Calls"};
+        static final int SUMMARY = 5;
+        private static final String[] COLUMNS = {"Latest", "Type", "What", "Place", "Calls", "Summary"};
 
         private List<TranscriptIncident> mIncidents = new ArrayList<>();
 
@@ -487,6 +508,7 @@ public class IncidentsPanel extends JPanel
                 case WHAT -> incident.nature() != null ? incident.nature() : "";
                 case PLACE -> incident.label() != null ? incident.label() : "";
                 case CALLS -> incident.calls().size();
+                case SUMMARY -> incident.summary() != null ? incident.summary() : "";
                 default -> "";
             };
         }

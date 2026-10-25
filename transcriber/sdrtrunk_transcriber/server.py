@@ -37,6 +37,7 @@ from .config import Config
 from .db import Database
 from .geocode import Geocoder
 from .incidents import MapWorker, highlights
+from .summaries import Summarizer, attach as attach_summary, incident_basis
 from .worker import TranscriptionWorker
 
 log = logging.getLogger(__name__)
@@ -99,17 +100,35 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         corrections = CorrectionBook(config.corrections_path)
         worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections)
         alerter = Alerter(config, db) if config.alerts.enabled else None
+        summarizer = Summarizer(config, db) if config.summaries.enabled else None
         map_worker = None
         if config.map.enabled:
             gazetteer = Gazetteer(config.geo_path, config.places_path)
             geocoder = Geocoder(db, config.map.area, contact=config.map.contact_email) \
                 if config.map.online_lookup else None
             map_worker = MapWorker(config, db, gazetteer, geocoder)
-            worker.on_done = map_worker.submit
-            if alerter:
-                map_worker.on_placed = lambda call_id, incident_id, call: alerter.incident_call(
-                    call_id, incident_id, call["call_time"], call["transcript"])
+
+            def placed(call_id, incident_id, call):
+                if alerter:
+                    alerter.incident_call(call_id, incident_id, call["call_time"], call["transcript"])
+                if summarizer:
+                    summarizer.incident_changed(incident_id)
+
+            map_worker.on_placed = placed
+            if summarizer:
+                # Calls moved between incidents by hand on the map.
+                map_worker.on_changed = lambda ids: [summarizer.incident_changed(i) for i in ids]
             map_worker.start()
+
+        def done(call_id):
+            if map_worker:
+                map_worker.submit(call_id)
+            if summarizer:
+                summarizer.call_done(call_id)
+
+        worker.on_done = done
+        if summarizer:
+            summarizer.start()
         worker.start()
         app.state.db = db
         app.state.worker = worker
@@ -117,6 +136,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.corrections = corrections
         app.state.map_worker = map_worker
         app.state.alerter = alerter
+        app.state.summarizer = summarizer
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
@@ -125,6 +145,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             map_worker.stop()
         if alerter:
             alerter.stop()
+        if summarizer:
+            summarizer.stop()
         db.close()
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
@@ -239,6 +261,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         for call in calls:
             call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
                                               call["talkgroup_group"])
+        if request.app.state.summarizer:
+            summaries = request.app.state.db.summaries("call", [call["id"] for call in calls])
+            for call in calls:
+                attach_summary(summaries, call)
         return calls
 
     @app.post("/api/calls/{call_id}/transcript")
@@ -321,6 +347,12 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             incident["type"] = "mva" if incident["nature"] == "MVA" else incident["category"] or "other"
             # Tone-outs just before the first call (pages carry no address, so this is by time only).
             incident["pages"] = db.pages(incident["first_time"] - 600, incident["first_time"] + 60, limit=10)
+        if request.app.state.summarizer:
+            summaries = db.summaries("incident", [incident["id"] for incident in incidents])
+            for incident in incidents:
+                calls = sorted({c["id"]: c for c in incident["calls"] if c["transcript"]}.values(),
+                               key=lambda c: (c["call_time"], c["id"]))
+                attach_summary(summaries, incident, incident_basis(calls))
         return incidents
 
     @app.delete("/api/incidents/{incident_id}")
@@ -439,6 +471,13 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "backend_ready": worker.ready.is_set(),
             "queue": worker.queue_size(),
             "calls": request.app.state.db.status_counts(),
+            "summaries": _summary_status(request.app.state.summarizer),
         }
+
+    def _summary_status(summarizer):
+        if summarizer is None:
+            return {"enabled": False}
+        return {"enabled": True, "model": config.summaries.model, "reachable": summarizer.reachable,
+                "queue": summarizer.queue_size(), "error": summarizer.last_error}
 
     return app

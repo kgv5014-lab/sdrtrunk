@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 from starlette.datastructures import UploadFile
 
+from . import audio
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -38,6 +39,7 @@ from .db import Database
 from .geocode import Geocoder
 from .incidents import MapWorker, highlights
 from .summaries import Summarizer, attach as attach_summary, incident_basis
+from .tones import ToneFinder
 from .worker import TranscriptionWorker
 
 log = logging.getLogger(__name__)
@@ -101,6 +103,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections)
         alerter = Alerter(config, db) if config.alerts.enabled else None
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
+        if config.tones.enabled:
+            worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
         map_worker = None
         if config.map.enabled:
             gazetteer = Gazetteer(config.geo_path, config.places_path)

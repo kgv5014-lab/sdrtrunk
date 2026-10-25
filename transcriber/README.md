@@ -321,6 +321,18 @@ summaries catch up within a minute of Ollama starting. On start the transcriber 
 To check that Ollama is on the 1070, run `nvidia-smi` while a summary is being written: `ollama.exe` should
 be listed on the GTX 1070 with about 5 GB of memory.
 
+### Tone-outs on P25 talkgroups
+
+SDRTrunk's Two-Tone Paging decoder only hears analog channels. When the tones go out on a P25 (digital)
+talkgroup, the transcriber finds them in the call recordings instead: tone A for 0.3 to 5 seconds, then
+a different tone B, or one tone of 6 seconds or more. They are logged with the other tone-outs and can
+send phone alerts (`stations` under `[alerts]`).
+
+Name them in `paging_tones.csv` next to `config.toml` (same format as SDRTrunk's list:
+`tone_a,tone_b,name`). Unnamed tone-outs show their tones, e.g. "349.0 Hz + 832.5 Hz"; copy those numbers
+into the file with the name the dispatcher calls right after the tones. Changes apply without a
+restart. Settings are under `[tones]`; `talkgroups` limits the search to dispatch talkgroups.
+
 ## Accuracy tips
 
 * Whisper invents words on noise. `junk_filter` drops a whole call of "Thank you." heard with low

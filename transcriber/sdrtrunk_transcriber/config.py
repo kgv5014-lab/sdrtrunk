@@ -125,6 +125,27 @@ class AlertsConfig:
 
 
 @dataclass
+class SummariesConfig:
+    # Short summaries and tags for incidents and long calls, from a local Ollama model (see the README).
+    enabled: bool = False
+    url: str = "http://127.0.0.1:11434"
+    model: str = "qwen2.5:7b"
+    # Calls with at least this many words also get their own one-line summary. 0 = incidents only.
+    call_min_words: int = 25
+    # Wait this long after a call joins an incident before summarizing it, so a burst is read together.
+    delay_s: float = 20.0
+    # Incident summaries are kept to about this many words.
+    incident_words: int = 40
+    # A long incident: the first 3 calls and the latest ones, this many in all, are read.
+    max_calls: int = 30
+    timeout_s: float = 180.0
+    # How long Ollama keeps the model loaded on the GPU after the last summary ("-1" = always).
+    keep_alive: str = "-1"
+    # On start, summarize incidents and calls from this far back that have none yet.
+    backlog_hours: int = 24
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
@@ -135,6 +156,7 @@ class Config:
     places: PlacesConfig = field(default_factory=PlacesConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    summaries: SummariesConfig = field(default_factory=SummariesConfig)
     base_dir: Path = Path(".")
 
     @property

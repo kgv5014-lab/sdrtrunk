@@ -20,6 +20,9 @@ for /f "tokens=2 delims=()" %%a in ('nvidia-smi -L ^| findstr /c:"%GPU_NAME% (UU
 if defined GPU_UUID (
   echo Using %GPU_NAME%: %GPU_UUID%
   set CUDA_VISIBLE_DEVICES=%GPU_UUID%
+  rem Ollama also finds cards through Vulkan, which ignores CUDA_VISIBLE_DEVICES and would put part of
+  rem the model on the 1070 Ti next to Whisper. CUDA alone is enough for the 1070.
+  set OLLAMA_VULKAN=0
 ) else (
   echo Could not find a "%GPU_NAME%" in nvidia-smi -L. Ollama will pick a GPU itself.
   set CUDA_VISIBLE_DEVICES=

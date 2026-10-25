@@ -72,6 +72,8 @@ STREET_JOIN_S = 15 * 60
 # A new dispatch joins an incident only at the same place (this close) and while it is still busy.
 SAME_PLACE_M = 100
 REDISPATCH_S = 20 * 60
+# The sample hint list vocabulary.example.txt used to have. Whisper read it back into many calls.
+OLD_SAMPLE_HINTS = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main Street"]
 # Tone-outs read out on Countywide end with the channel: "...Lower Saucon Communications, on TAC 2, 16:32".
 DISPATCH = re.compile(r"\brespond (to|for)\b|\bcommunications?\b.{0,25}\b(tac|tag|pac|ops?)\b|"
                       r"\b(second|2nd|third) (alarm|alert)", re.IGNORECASE)
@@ -271,7 +273,9 @@ class MapWorker:
         # Called with the ids of incidents whose calls the user changed by hand.
         self.on_changed = None
         # Whisper's prompt: on unclear audio it repeats these words back ("Dispatch, Engine 12, Main Street").
+        # The old sample hint list too, since calls already in the log were transcribed with it.
         self.vocabulary = load_vocabulary(config.vocabulary_path)
+        self.echo_lists = [self.vocabulary, OLD_SAMPLE_HINTS]
         # Channel -> (time, incident id or None) of the latest call sending an incident there, placed or not.
         self._claims: dict[str, tuple[int, int | None]] = {}
         # Hand edits from the map page and the worker thread take turns.
@@ -353,7 +357,7 @@ class MapWorker:
         if edit and edit["anchor_call_id"] is None:
             self.db.set_map_status(call_id, "removed")      # taken off the map by hand
             return
-        if not edit and made_up(call["transcript"], self.vocabulary):
+        if not edit and any(made_up(call["transcript"], terms) for terms in self.echo_lists):
             self.db.set_map_status(call_id, "noise")
             return
         context = " ".join(filter(None, (call["talkgroup_label"], call["talkgroup_group"])))

@@ -143,10 +143,8 @@ def test_a_channel_given_to_a_call_the_map_could_not_place_is_not_followed(tmp_p
 
 
 def test_invented_transcripts_stay_off_the_map(tmp_path, gaz):
-    (tmp_path / "vocabulary.txt").write_text("\n".join(VOCABULARY), encoding="utf-8")
-    config = Config()
-    config.base_dir = tmp_path
-    worker = MapWorker(config, Database(tmp_path / "calls.db"), gaz, None)
+    # No vocabulary.txt: calls transcribed with the old sample hint list still echo it.
+    worker = make_worker(tmp_path, gaz)
     call(worker, "Engine 41 respond North 3rd and Northampton for a structure fire", 0)
     noise = call(worker, "Dispatch, Engine 41, 1234 Northampton Street, Dispatch, Engine 12", 60)
     [incident] = worker.db.incidents()

@@ -258,8 +258,28 @@ What alerts:
   example `stations = ["Station 4", "Easton"]`. The same station again within two minutes is skipped.
 * Nothing older than `max_age_minutes`, so old calls mapped after a restart stay quiet.
 
+## Fixing transcripts
+
+Each call on the call log page has an **Edit** button. Type the right words and press Save. The words
+you replaced are learned (for example "never mind" -> "Nevin"), fixed in every later call, and given to
+Whisper as spelling hints. The page shows what it learned, with an Undo for each. Single everyday words
+("the", "yes"), added or removed words, and changed numbers are treated as one-off fixes and not learned.
+
+Everything learned is in `corrections.csv` (columns heard, correct, talkgroup, hint, count, source). You
+can edit it in Excel or Notepad, and changes apply without a restart. Add a talkgroup to a row to apply it
+only on talkgroups whose name contains that text. Set hint to "no" to keep a word out of Whisper's hints.
+
+To check whether changes help, run **compare-transcripts.bat**. It runs the 50 newest calls, plus every
+call you fixed by hand, through Whisper both the old way (no cleanup) and the new way. Then it opens a
+side-by-side report that scores both against your fixes. The transcriber can keep running while it works.
+
 ## Accuracy tips
 
+* Whisper invents words on noise. `junk_filter` drops a whole call of "Thank you." heard with low
+  confidence, cuts loops ("10-4, 10-4, 10-4...") to one copy, and removes counting runs and echoes of
+  the hint list.
+* Keep vocabulary.txt to your own names. Whisper repeats hint words back on unclear audio, and the old
+  sample terms ("Engine 12", "Main Street") are now ignored for that reason.
 * Whisper invents words on silence. The service drops calls shorter than `min_duration_s`, runs voice
   activity filtering, discards segments Whisper flags as non-speech, and treats each call on its own.
 * Each call is cleaned before Whisper hears it (`[audio]` in config.toml): only the voice band is kept,

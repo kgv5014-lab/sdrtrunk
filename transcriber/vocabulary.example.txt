@@ -1,9 +1,6 @@
 # Copy to vocabulary.txt. One term per line; lines starting with # are ignored.
-# Whisper uses these as hints for spelling, so list names it would otherwise get wrong.
-# Keep it short: Whisper only reads roughly the last 200 words.
-Dispatch
-Engine 12
-Medic 4
-Battalion 1
-10-4
-Main Street
+# Whisper uses these as hints for spelling, so list names it would otherwise get wrong, e.g.
+#   Medic 2081
+#   Nazareth
+# Keep it short: Whisper only reads roughly the last 200 words, and it can repeat hint words back on
+# unclear audio. Words you fix with the Edit button on the call log page are added as hints on their own.

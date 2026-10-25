@@ -20,6 +20,12 @@ min_duration_s = 1.0
 beam_size = 5
 # One term per line: unit names, street names, 10-codes. Helps Whisper spell local names.
 vocabulary_file = "vocabulary.txt"
+# Drop text Whisper made up: a whole call of "Thank you." heard with low confidence, the same words
+# over and over, counting runs ("11, 12, 13, 14..."), and echoes of the hint list.
+junk_filter = true
+# A call that is only a stock phrase like "Thank you." is dropped when Whisper's confidence (shown as
+# "low confidence" on the call log page below -0.8) is below this.
+stock_phrase_logprob = -0.7
 
 [audio]
 # Clean up each call before Whisper hears it: keep only the voice band (drops the low hum of
@@ -50,6 +56,12 @@ file = "codes.csv"
 # Dispatch reads the time as "1346". A four-digit time within this many minutes of the call is
 # written as 13:46. 0 turns this off.
 time_window_minutes = 3
+
+[corrections]
+# Fixes you make with the Edit button on the call log page. Replaced words are learned here as
+# heard -> correct and fixed in later calls; they are also given to Whisper as spelling hints. Edit or
+# delete rows in Excel or Notepad; changes apply without a restart. Set to "" to turn this off.
+file = "corrections.csv"
 
 [places]
 # Local streets, routes and landmarks (see places.example.csv). Build the full list for your area with

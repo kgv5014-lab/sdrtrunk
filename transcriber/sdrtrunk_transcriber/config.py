@@ -27,6 +27,11 @@ class TranscriptionConfig:
     # Segments Whisper itself thinks are probably not speech are dropped.
     no_speech_threshold: float = 0.6
     log_prob_threshold: float = -1.0
+    # Drop text Whisper made up: whole calls of "Thank you." heard with low confidence, words
+    # repeated over and over, counting runs, and echoes of the hint list.
+    junk_filter: bool = True
+    # A call that is only a stock phrase is dropped when Whisper's confidence is below this.
+    stock_phrase_logprob: float = -0.7
 
 
 @dataclass
@@ -64,6 +69,13 @@ class CodesConfig:
     file: str = "codes.csv"
     # A spoken four-digit time ("1346") within this many minutes of the call becomes "13:46". 0 = off.
     time_window_minutes: int = 3
+
+
+@dataclass
+class CorrectionsConfig:
+    # Fixes made with the Edit button on the call log page, learned as word replacements for later
+    # calls and given to Whisper as spelling hints. Hand edits apply without a restart. Empty = off.
+    file: str = "corrections.csv"
 
 
 @dataclass
@@ -132,6 +144,7 @@ class Config:
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     codes: CodesConfig = field(default_factory=CodesConfig)
+    corrections: CorrectionsConfig = field(default_factory=CorrectionsConfig)
     places: PlacesConfig = field(default_factory=PlacesConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
@@ -148,6 +161,10 @@ class Config:
     @property
     def codes_path(self) -> Path | None:
         return self._resolve(self.codes.file) if self.codes.file else None
+
+    @property
+    def corrections_path(self) -> Path | None:
+        return self._resolve(self.corrections.file) if self.corrections.file else None
 
     @property
     def places_path(self) -> Path | None:

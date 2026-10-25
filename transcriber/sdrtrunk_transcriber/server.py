@@ -265,6 +265,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         for call in calls:
             call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
                                               call["talkgroup_group"])
+        if request.app.state.map_worker:
+            # Which incident on the map each call is in, for the dashboard's "Show on map".
+            for call in calls:
+                call["incident_id"] = request.app.state.db.incident_of_call(call["id"])
         if request.app.state.summarizer:
             summaries = request.app.state.db.summaries("call", [call["id"] for call in calls])
             for call in calls:

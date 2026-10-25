@@ -141,6 +141,9 @@ let fitted = false;
 let popupOpen = false;
 map.on('popupopen', () => { popupOpen = true; });
 map.on('popupclose', () => { popupOpen = false; });
+map.on('resize', () => {
+  Object.values(markers).forEach(m => { const p = m.getPopup(); if (p) p.options.maxHeight = popupHeight(); });
+});
 
 function time(t) { return new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
 function clock(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
@@ -273,6 +276,8 @@ async function edit(url, method, body) {
   load();
 }
 
+function popupHeight() { return Math.max(160, map.getSize().y - 80); }
+
 function render(incidents) {
   lastIncidents = incidents;
   if (seenUpTo === null) {
@@ -301,7 +306,9 @@ function render(incidents) {
       radius: Math.min(16, 7 + 2 * Math.log2(incident.calls.length)), color, weight: 2,
       fillColor: color, fillOpacity: incident.hidden ? 0.15 : 0.55, className: neu ? 'pulse' : '',
     }).addTo(layer);
-    marker.bindPopup(() => popup(incident), { maxWidth: 380 });
+    // Never taller than the map, so the close button stays on screen; long incidents scroll inside.
+    marker.bindPopup(() => popup(incident), { maxWidth: 380, maxHeight: popupHeight(), autoPanPadding: [16, 16],
+                                               keepInView: true });
     marker.on('popupopen', () => setTimeout(() => markSeen(incident), 1500));
     marker.bindTooltip(incident.label || '');
     markers[incident.id] = marker;

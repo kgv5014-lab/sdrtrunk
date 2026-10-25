@@ -289,6 +289,36 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             raise HTTPException(404)
         return {"restored": incident_id}
 
+    # Fixing which incident a call is in, from the map. Remembered when the map is rebuilt.
+
+    def _edit(action, *args):
+        try:
+            return {"incidents": action(*args)}
+        except KeyError as e:
+            raise HTTPException(404, str(e.args[0]) if e.args else "not found")
+
+    @app.post("/api/calls/{call_id}/move")
+    async def move_call(request: Request, call_id: int):
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("incident_id"), int):
+            raise HTTPException(400, "send {\"incident_id\": <id>}")
+        return _edit(_map_worker(request).move_call, call_id, body["incident_id"])
+
+    @app.post("/api/calls/{call_id}/split")
+    def split_call(request: Request, call_id: int):
+        return _edit(_map_worker(request).split_call, call_id)
+
+    @app.delete("/api/calls/{call_id}/place")
+    def remove_call_from_map(request: Request, call_id: int):
+        return _edit(_map_worker(request).remove_call, call_id)
+
+    @app.post("/api/incidents/{incident_id}/merge")
+    async def merge_incident(request: Request, incident_id: int):
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("into"), int):
+            raise HTTPException(400, "send {\"into\": <incident id>}")
+        return _edit(_map_worker(request).merge, incident_id, body["into"])
+
     @app.post("/api/map/rebuild")
     def rebuild_map(request: Request):
         """Places every call again, e.g. after places.csv or places-geo.json changed."""

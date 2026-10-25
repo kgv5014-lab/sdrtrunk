@@ -92,6 +92,10 @@ class MapConfig:
     # Calls naming places this close together, this close in time, are one incident.
     incident_window_minutes: int = 45
     incident_radius_m: int = 500
+    # Calls on these kinds of channel join the incident last sent there ("switch to Tac 2"), for this long
+    # after its latest call. Ops channels carry many incidents at once, so they are not followed.
+    follow_channels: list = field(default_factory=lambda: ["Tac", "Fireground"])
+    channel_window_minutes: int = 60
     # Map background tiles.
     tiles_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 

@@ -314,7 +314,7 @@ Setting it up, once:
 2. Double-click **start-ollama.bat** in the transcriber folder. It finds the GTX 1070 (your
    `CUDA_VISIBLE_DEVICES` setting keeps that card hidden from everything else, so Whisper keeps the
    1070 Ti), starts Ollama on it in a minimized window, and the first time downloads the model
-   (`qwen2.5:7b`, about 5 GB). It also closes the Ollama tray app, which would otherwise use the wrong card.
+   (`qwen2.5:7b`, about 5 GB). It also turns off Ollama's Vulkan support, which would otherwise see the 1070 Ti too, and closes the Ollama tray app, which would otherwise use the wrong card.
 3. In `config.toml`, add the `[summaries]` section from `config.example.toml` and set `enabled = true`.
    Restart the transcriber. The log says "Summaries: using Ollama" after the first one.
 

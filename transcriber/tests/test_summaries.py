@@ -210,3 +210,31 @@ def test_tags_and_length_are_kept_in_check():
     assert clean_tags("injuries") == []
     assert clip_words("one two three", 2) == "one two three"
     assert clip_words(" ".join(["word"] * 80), 40).endswith("…")
+
+
+def test_a_model_still_downloading_is_tried_again(tmp_path, monkeypatch):
+    class Downloading(FakeOllama):
+        def post(self, url, json=None, timeout=None):
+            if not self.requests:
+                self.requests.append((url, json))
+                return FakeResponse({"error": "model 'qwen2.5:7b' not found"}, status_code=404)
+            return super().post(url, json, timeout)
+
+    fake = Downloading()
+    monkeypatch.setattr(summaries.requests, "Session", lambda: fake)
+    monkeypatch.setattr(summaries, "RETRY_S", 0.2)
+    config = make_config(tmp_path)
+    db = Database(tmp_path / "calls.db")
+    t = int(time.time())
+    call_id = db.insert_call({"call_time": t, "received_at": t, "talkgroup": "1", "audio_path": "x.mp3"})
+    db.update_call(call_id, status="done", transcript=LONG_CALL)
+    summarizer = Summarizer(config, db)
+    summarizer.start()
+    summarizer.call_done(call_id)
+    deadline = time.monotonic() + 5
+    while db.get_summary("call", call_id) is None and time.monotonic() < deadline:
+        time.sleep(0.05)
+    summarizer.stop()
+
+    assert db.get_summary("call", call_id)["summary"] == "A long call."
+    assert summarizer.reachable is True and summarizer.last_error is None

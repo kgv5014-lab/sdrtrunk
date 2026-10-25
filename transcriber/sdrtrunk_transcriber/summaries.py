@@ -68,8 +68,12 @@ CALL_PROMPT = (
     "Pick \"tags\" that the call clearly supports (none is fine)."
 )
 
-# How long to wait before trying again after Ollama could not be reached.
+# How long to wait before trying again after Ollama could not be reached or had no model yet.
 RETRY_S = 60
+
+
+class NotReady(Exception):
+    """Ollama can't summarize yet (not running, model still downloading); worth trying again later."""
 
 
 def basis_of(*parts) -> str:
@@ -127,7 +131,7 @@ class OllamaClient:
             "options": {"temperature": 0.2, "num_ctx": 4096},
         })
         if response.status_code == 404 and "not found" in response.text:
-            raise RuntimeError(f"Ollama has no model {self.model!r}; run: ollama pull {self.model}")
+            raise NotReady(f"Ollama has no model {self.model} yet (still downloading? start-ollama.bat gets it)")
         response.raise_for_status()
         answer = json.loads(response.json()["message"]["content"])
         if not isinstance(answer, dict):
@@ -151,6 +155,7 @@ class Summarizer:
         # Whether Ollama answered last time; only a change is logged, so a stopped Ollama doesn't fill the log.
         self.reachable = None
         self.last_error = None
+        self._not_ready = False
 
     # ---- what other parts of the service call
 
@@ -227,8 +232,14 @@ class Summarizer:
                 else:
                     self.summarize_call(ref_id)
                 self._set_reachable(True)
-            except (requests.ConnectionError, requests.Timeout) as e:
-                self._set_reachable(False, e)
+            except requests.ConnectionError:
+                self._set_reachable(False, f"Ollama is not reachable at {self.settings.url}; is start-ollama.bat running?")
+                self._schedule(kind, ref_id, RETRY_S)
+            except requests.Timeout:
+                self._set_reachable(False, f"Ollama took longer than {self.settings.timeout_s:.0f} s; is it on the GPU?")
+                self._schedule(kind, ref_id, RETRY_S)
+            except NotReady as e:
+                self._set_reachable(False, str(e))
                 self._schedule(kind, ref_id, RETRY_S)
             except Exception as e:
                 self.last_error = str(e)[:300]
@@ -237,16 +248,19 @@ class Summarizer:
                 with self._cond:
                     self._busy -= 1
 
-    def _set_reachable(self, ok: bool, error=None):
-        if ok and self.reachable is not True:
-            log.info("Summaries: using Ollama at %s with %s", self.settings.url, self.settings.model)
-        if not ok:
-            self.last_error = f"Ollama not reachable at {self.settings.url}"
-            if self.reachable is not False:
-                log.warning("Summaries: Ollama is not reachable at %s (%s); trying again every minute. "
-                            "Is start-ollama.bat running?", self.settings.url, type(error).__name__)
-        elif self.last_error and self.last_error.startswith("Ollama not reachable"):
-            self.last_error = None
+    def _set_reachable(self, ok: bool, problem: str | None = None):
+        if ok:
+            if self.reachable is not True:
+                log.info("Summaries: using Ollama at %s with %s", self.settings.url, self.settings.model)
+            if self._not_ready:
+                self.last_error = None
+            self._not_ready = False
+        else:
+            # Each new problem is logged once, not once per waiting incident.
+            if problem != self.last_error:
+                log.warning("Summaries: %s Trying again every minute.", problem)
+            self.last_error = problem
+            self._not_ready = True
         self.reachable = ok
 
     # ---- writing summaries

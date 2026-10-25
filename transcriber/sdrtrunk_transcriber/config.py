@@ -27,6 +27,11 @@ class TranscriptionConfig:
     # Segments Whisper itself thinks are probably not speech are dropped.
     no_speech_threshold: float = 0.6
     log_prob_threshold: float = -1.0
+    # Drop text Whisper made up: whole calls of "Thank you." heard with low confidence, words
+    # repeated over and over, counting runs, and echoes of the hint list.
+    junk_filter: bool = True
+    # A call that is only a stock phrase is dropped when Whisper's confidence is below this.
+    stock_phrase_logprob: float = -0.7
 
 
 @dataclass
@@ -78,6 +83,13 @@ class CodesConfig:
 
 
 @dataclass
+class CorrectionsConfig:
+    # Fixes made with the Edit button on the call log page, learned as word replacements for later
+    # calls and given to Whisper as spelling hints. Hand edits apply without a restart. Empty = off.
+    file: str = "corrections.csv"
+
+
+@dataclass
 class PlacesConfig:
     # Local streets, routes and landmarks; see places.example.csv and fetch-places.bat. Empty = off.
     file: str = "places.csv"
@@ -103,6 +115,10 @@ class MapConfig:
     # Calls naming places this close together, this close in time, are one incident.
     incident_window_minutes: int = 45
     incident_radius_m: int = 500
+    # Calls on these kinds of channel join the incident last sent there ("switch to Tac 2"), for this long
+    # after its latest call. Ops channels carry many incidents at once, so they are not followed.
+    follow_channels: list = field(default_factory=lambda: ["Tac", "Fireground"])
+    channel_window_minutes: int = 60
     # Map background tiles.
     tiles_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 
@@ -136,6 +152,27 @@ class AlertsConfig:
 
 
 @dataclass
+class SummariesConfig:
+    # Short summaries and tags for incidents and long calls, from a local Ollama model (see the README).
+    enabled: bool = False
+    url: str = "http://127.0.0.1:11434"
+    model: str = "qwen2.5:7b"
+    # Calls with at least this many words also get their own one-line summary. 0 = incidents only.
+    call_min_words: int = 25
+    # Wait this long after a call joins an incident before summarizing it, so a burst is read together.
+    delay_s: float = 20.0
+    # Incident summaries are kept to about this many words.
+    incident_words: int = 40
+    # A long incident: the first 3 calls and the latest ones, this many in all, are read.
+    max_calls: int = 30
+    timeout_s: float = 180.0
+    # How long Ollama keeps the model loaded on the GPU after the last summary ("-1" = always).
+    keep_alive: str = "-1"
+    # On start, summarize incidents and calls from this far back that have none yet.
+    backlog_hours: int = 24
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
@@ -144,9 +181,11 @@ class Config:
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
     codes: CodesConfig = field(default_factory=CodesConfig)
+    corrections: CorrectionsConfig = field(default_factory=CorrectionsConfig)
     places: PlacesConfig = field(default_factory=PlacesConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    summaries: SummariesConfig = field(default_factory=SummariesConfig)
     base_dir: Path = Path(".")
 
     @property
@@ -160,6 +199,10 @@ class Config:
     @property
     def codes_path(self) -> Path | None:
         return self._resolve(self.codes.file) if self.codes.file else None
+
+    @property
+    def corrections_path(self) -> Path | None:
+        return self._resolve(self.corrections.file) if self.corrections.file else None
 
     @property
     def tones_path(self) -> Path | None:

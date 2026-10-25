@@ -11,13 +11,18 @@ from . import audio
 from .backends import Backend
 from .codes import CodeBook
 from .config import Config
+from .corrections import CorrectionBook
 from .db import Database
+from .junk import remove_junk
 from .places import PlaceBook
 
 log = logging.getLogger(__name__)
 
 
 PROMPT_LIMIT = 800
+# The sample terms that vocabulary.example.txt used to ship with. Left in place, Whisper echoes them
+# back on unclear audio ("10-4, Main Street, Battalion 1"), so they are ignored.
+SAMPLE_VOCABULARY = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main Street"]
 
 
 def load_vocabulary(path: Path) -> list[str]:
@@ -29,23 +34,30 @@ def load_vocabulary(path: Path) -> list[str]:
         line = line.strip()
         if line and not line.startswith("#"):
             terms.append(line)
+    if terms == SAMPLE_VOCABULARY:
+        log.warning("%s still holds only the sample terms; ignoring them. Put your own unit and street "
+                    "names there, or leave it empty.", path)
+        return []
+    return terms
+
+
+def prompt_terms(*term_lists: list[str]) -> list[str]:
+    """The hint terms that fit in a Whisper prompt. Whisper only reads the last ~224 tokens of a
+    prompt, so when there are too many the earliest terms are dropped."""
+    terms = [t for terms in term_lists for t in terms]
+    while terms and len(", ".join(terms)) > PROMPT_LIMIT:
+        terms.pop(0)
     return terms
 
 
 def build_prompt(*term_lists: list[str]) -> str:
-    """Joins hint terms into a Whisper prompt. Whisper only reads the last ~224 tokens of a prompt,
-    so when it is too long the earliest terms are dropped."""
-    terms = [t for terms in term_lists for t in terms]
-    prompt = ", ".join(terms)
-    while len(prompt) > PROMPT_LIMIT and terms:
-        terms.pop(0)
-        prompt = ", ".join(terms)
-    return prompt
+    """Joins hint terms into a Whisper prompt (see prompt_terms)."""
+    return ", ".join(prompt_terms(*term_lists))
 
 
 class TranscriptionWorker:
     def __init__(self, config: Config, db: Database, backend_factory, codebook: CodeBook,
-                 placebook: PlaceBook | None = None):
+                 placebook: PlaceBook | None = None, corrections: CorrectionBook | None = None):
         self.config = config
         self.db = db
         self._backend_factory = backend_factory
@@ -55,16 +67,21 @@ class TranscriptionWorker:
         self.ready = threading.Event()
         self.codebook = codebook
         self.placebook = placebook or PlaceBook(None)
+        self.corrections = corrections or CorrectionBook(None)
         self.vocabulary = load_vocabulary(config.vocabulary_path)
         # Called with the call id after each transcript is saved (the incident map listens here).
         self.on_done = None
         # Called with (call, samples) with the audio as uploaded, before cleaning (the tone finder).
         self.on_audio = None
 
+    def prompt_terms(self, *context: str | None) -> list[str]:
+        # Places first (dropped first when it's too long), then codes, then words fixed on the call log
+        # page, then the user's own vocabulary, which Whisper weighs most as it comes last.
+        return prompt_terms(self.placebook.prompt_terms(*context), self.codebook.prompt_terms(),
+                            self.corrections.prompt_terms(), self.vocabulary)
+
     def prompt(self, *context: str | None) -> str:
-        # Places first (dropped first when it's too long), then codes, then the user's own vocabulary,
-        # which Whisper weighs most as it comes last.
-        return build_prompt(self.placebook.prompt_terms(*context), self.codebook.prompt_terms(), self.vocabulary)
+        return ", ".join(self.prompt_terms(*context))
 
     def start(self):
         for call_id in self.db.pending_ids():
@@ -140,11 +157,18 @@ class TranscriptionWorker:
 
         started = time.perf_counter()
         context = (call["talkgroup_label"], call["talkgroup_group"])
-        result = self._backend.transcribe(samples, self.prompt(*context))
+        terms = self.prompt_terms(*context)
+        result = self._backend.transcribe(samples, ", ".join(terms))
         elapsed_ms = int((time.perf_counter() - started) * 1000)
+        transcript, junk = result.text, []
+        if self.config.transcription.junk_filter:
+            transcript, junk = remove_junk(transcript, result.confidence, terms,
+                                           self.config.transcription.stock_phrase_logprob)
         # Places first, so "route ten" becomes Route 10 before the codes see "ten".
-        transcript = self.placebook.normalize(result.text, *context)
+        transcript = self.placebook.normalize(transcript, *context)
         transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))
+        # Ken's own fixes last: they were learned from the finished transcript.
+        transcript = self.corrections.normalize(transcript, call["talkgroup_label"])
 
         self.db.update_call(
             call_id,
@@ -158,7 +182,8 @@ class TranscriptionWorker:
             transcribe_ms=elapsed_ms,
             error=None,
         )
+        notes = ([f"{tone_s:.1f}s of tones cut"] if tone_s else []) + [f"{name} removed" for name in junk]
         log.info("Call %d TG %s (%.1fs%s) in %d ms: %s", call_id, call["talkgroup"], duration,
-                 f", {tone_s:.1f}s of tones cut" if tone_s else "", elapsed_ms, transcript or "(no speech)")
+                 "".join(", " + note for note in notes), elapsed_ms, transcript or "(no speech)")
         if self.on_done:
             self.on_done(call_id)

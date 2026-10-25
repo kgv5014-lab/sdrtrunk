@@ -36,11 +36,27 @@ import java.util.List;
  * @param type what the map colors and filters by: fire, ems, police, mva or other
  * @param calls the calls in this incident, oldest first
  * @param pages tone-outs just before the first call
+ * @param summary short summary written by the service's local AI model (Ollama), null when there is none
+ * @param summaryTags tags picked by the AI model, e.g. "injuries", "road blocked"
+ * @param summaryStatus latest status the AI model read from the calls: active, under control, cleared, canceled
+ *                      or unknown, may be null
  */
 public record TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
                                  String label, String category, String nature, String type,
-                                 List<Call> calls, List<Page> pages)
+                                 List<Call> calls, List<Page> pages, String summary, List<String> summaryTags,
+                                 String summaryStatus)
 {
+    /**
+     * An incident without an AI summary.
+     */
+    public TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
+                              String label, String category, String nature, String type,
+                              List<Call> calls, List<Page> pages)
+    {
+        this(id, firstTime, lastTime, latitude, longitude, label, category, nature, type, calls, pages, null,
+            List.of(), null);
+    }
+
     /**
      * One call in an incident.
      *

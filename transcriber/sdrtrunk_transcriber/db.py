@@ -62,7 +62,9 @@ CREATE TABLE IF NOT EXISTS incidents (
     label TEXT,                          -- "1234 Northampton St, Easton"
     category TEXT,                       -- fire, ems, police or NULL
     nature TEXT,                         -- "Structure fire", from words in the calls
-    hidden INTEGER NOT NULL DEFAULT 0    -- removed from the map by the user
+    hidden INTEGER NOT NULL DEFAULT 0,   -- removed from the map by the user
+    channel TEXT,                        -- the channel it was moved to, "Tac 2"
+    channel_time INTEGER                 -- when that was heard
 );
 CREATE INDEX IF NOT EXISTS incidents_time ON incidents(last_time);
 
@@ -80,6 +82,16 @@ CREATE TABLE IF NOT EXISTS call_places (
 CREATE INDEX IF NOT EXISTS call_places_call ON call_places(call_id);
 CREATE INDEX IF NOT EXISTS call_places_incident ON call_places(incident_id);
 
+-- Calls the user moved by hand on the map. Kept when the map is rebuilt, so their fixes stay.
+CREATE TABLE IF NOT EXISTS map_edits (
+    call_id INTEGER PRIMARY KEY,
+    anchor_call_id INTEGER,              -- goes with this call (the group's first); itself: starts its own; NULL: off the map
+    lat REAL,                            -- where the group was, for calls that name no place
+    lon REAL,
+    label TEXT,
+    edited_at INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS alerts (
     id TEXT PRIMARY KEY,                 -- random, as the ntfy phone app expects
     time INTEGER NOT NULL,               -- unix seconds, when it was sent
@@ -95,6 +107,19 @@ CREATE TABLE IF NOT EXISTS alerts (
     page_label TEXT
 );
 CREATE INDEX IF NOT EXISTS alerts_time ON alerts(time);
+
+CREATE TABLE IF NOT EXISTS summaries (
+    kind TEXT NOT NULL,                  -- incident or call
+    ref_id INTEGER NOT NULL,             -- the incident or call id
+    basis TEXT NOT NULL,                 -- fingerprint of the calls it was made from; changes mean redo
+    summary TEXT,
+    tags TEXT,                           -- comma separated, from summaries.TAGS
+    status TEXT,                         -- incidents: active, under control, cleared, canceled, unknown
+    model TEXT,
+    made_at INTEGER NOT NULL,
+    ms INTEGER,                          -- how long the model took
+    PRIMARY KEY (kind, ref_id)
+);
 
 CREATE TABLE IF NOT EXISTS geocode_cache (
     query TEXT PRIMARY KEY,
@@ -128,7 +153,8 @@ END;
 
 # Bumped when a change to the incident map means existing incidents should be rebuilt.
 # 2: EMS type, ALS/BLS, ten-codes no longer read as house numbers.
-MAP_VERSION = 2
+# 3: incidents followed onto Tac channels, calls joined by channel and cross street.
+MAP_VERSION = 3
 
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",
@@ -169,9 +195,16 @@ class Database:
         columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(calls)")}
         if "transcript_raw" not in columns:
             self._conn.execute("ALTER TABLE calls ADD COLUMN transcript_raw TEXT")
+        if "corrected_at" not in columns:
+            # When the transcript was fixed by hand on the call log page (unix seconds), else NULL.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN corrected_at INTEGER")
         if "map_status" not in columns:
             # NULL: not looked at yet; none: no place heard; placed; unplaced: heard but not found.
             self._conn.execute("ALTER TABLE calls ADD COLUMN map_status TEXT")
+        incident_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incidents)")}
+        if "channel" not in incident_columns:
+            self._conn.execute("ALTER TABLE incidents ADD COLUMN channel TEXT")
+            self._conn.execute("ALTER TABLE incidents ADD COLUMN channel_time INTEGER")
         # Crashes were called "Vehicle crash" before they became MVA.
         self._conn.execute("UPDATE incidents SET nature = 'MVA' WHERE nature = 'Vehicle crash'")
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
@@ -179,6 +212,7 @@ class Database:
             # How calls are placed and sorted changed: place every call again (lookups stay cached).
             self._conn.execute("DELETE FROM call_places")
             self._conn.execute("DELETE FROM incidents")
+            self._conn.execute("DELETE FROM summaries WHERE kind = 'incident'")
             self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
             self._conn.execute(f"PRAGMA user_version = {MAP_VERSION}")
 
@@ -313,7 +347,7 @@ class Database:
         return [dict(row) for row in rows]
 
     def create_incident(self, incident: dict) -> int:
-        names = ("first_time", "last_time", "lat", "lon", "label", "category", "nature")
+        names = ("first_time", "last_time", "lat", "lon", "label", "category", "nature", "channel", "channel_time")
         with self._lock:
             cur = self._conn.execute(
                 f"INSERT INTO incidents ({', '.join(names)}) VALUES ({', '.join('?' for _ in names)})",
@@ -366,10 +400,61 @@ class Database:
         """Transcript, talker alias, talkgroup and time of each call in an incident, oldest first."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT c.call_time, c.transcript, c.talker_alias, c.talkgroup_label, c.talkgroup_group "
+                "SELECT c.id, c.call_time, c.transcript, c.talker_alias, c.talkgroup, c.talkgroup_label, "
+                "c.talkgroup_group, p.precision, p.lat, p.lon, p.label "
                 "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
                 "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
         return [dict(row) for row in rows]
+
+    def incident_of_call(self, call_id: int) -> int | None:
+        with self._lock:
+            row = self._conn.execute("SELECT incident_id FROM call_places WHERE call_id = ? AND incident_id IS NOT NULL "
+                                     "ORDER BY id LIMIT 1", (call_id,)).fetchone()
+        return row["incident_id"] if row else None
+
+    def last_call_on(self, talkgroup: str, before: int, call_id: int) -> dict | None:
+        """The call on a talkgroup just before this one, with the incident it is in, if any."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT c.id, c.call_time, (SELECT p.incident_id FROM call_places p WHERE p.call_id = c.id "
+                "AND p.incident_id IS NOT NULL LIMIT 1) AS incident_id FROM calls c "
+                "WHERE c.talkgroup = ? AND c.id != ? AND c.call_time <= ? AND c.status = 'done' "
+                "ORDER BY c.call_time DESC, c.id DESC LIMIT 1", (talkgroup, call_id, before)).fetchone()
+        return dict(row) if row else None
+
+    def move_call_places(self, call_id: int, incident_id: int | None, place: dict | None = None):
+        """Puts a call in another incident (None: off the map). Adds place for a call that had none."""
+        with self._lock:
+            if incident_id is None:
+                self._conn.execute("DELETE FROM call_places WHERE call_id = ?", (call_id,))
+            else:
+                cur = self._conn.execute("UPDATE call_places SET incident_id = ? WHERE call_id = ?",
+                                         (incident_id, call_id))
+                if cur.rowcount == 0 and place is not None:
+                    names = ("call_id", "incident_id", "kind", "heard", "label", "lat", "lon", "precision")
+                    values = {**place, "call_id": call_id, "incident_id": incident_id}
+                    self._conn.execute(f"INSERT INTO call_places ({', '.join(names)}) VALUES "
+                                       f"({', '.join('?' for _ in names)})", [values.get(n) for n in names])
+            self._conn.commit()
+
+    def delete_incident(self, incident_id: int):
+        with self._lock:
+            self._conn.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
+            self._conn.commit()
+
+    def map_edit(self, call_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM map_edits WHERE call_id = ?", (call_id,)).fetchone()
+        return dict(row) if row else None
+
+    def set_map_edits(self, call_ids: list[int], anchor_call_id: int | None, lat: float | None = None,
+                      lon: float | None = None, label: str | None = None):
+        with self._lock:
+            self._conn.executemany(
+                "INSERT OR REPLACE INTO map_edits (call_id, anchor_call_id, lat, lon, label, edited_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [(c, anchor_call_id, lat, lon, label, int(time.time())) for c in call_ids])
+            self._conn.commit()
 
     def incident_precisions(self, incident_id: int) -> list[str]:
         with self._lock:
@@ -382,6 +467,8 @@ class Database:
         with self._lock:
             self._conn.execute("DELETE FROM call_places")
             self._conn.execute("DELETE FROM incidents")
+            # Incident ids are handed out again; their summaries are written afresh.
+            self._conn.execute("DELETE FROM summaries WHERE kind = 'incident'")
             self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
             self._conn.commit()
 
@@ -403,6 +490,68 @@ class Database:
                 (query, result.get("lat"), result.get("lon"), result.get("kind"), result.get("display"),
                  int(time.time())))
             self._conn.commit()
+
+    # ---- summaries
+
+    SUMMARY_FIELDS = ("kind", "ref_id", "basis", "summary", "tags", "status", "model", "made_at", "ms")
+
+    def store_summary(self, summary: dict):
+        with self._lock:
+            self._conn.execute(
+                f"INSERT OR REPLACE INTO summaries ({', '.join(self.SUMMARY_FIELDS)}) "
+                f"VALUES ({', '.join('?' for _ in self.SUMMARY_FIELDS)})",
+                [summary.get(n) for n in self.SUMMARY_FIELDS])
+            self._conn.commit()
+
+    def get_summary(self, kind: str, ref_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM summaries WHERE kind = ? AND ref_id = ?",
+                                     (kind, ref_id)).fetchone()
+        return dict(row) if row else None
+
+    def summaries(self, kind: str, ref_ids: list[int]) -> dict[int, dict]:
+        """Summaries of these incidents or calls, by id."""
+        found = {}
+        ids = list(ref_ids)
+        with self._lock:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                rows = self._conn.execute(
+                    f"SELECT * FROM summaries WHERE kind = ? AND ref_id IN ({', '.join('?' for _ in chunk)})",
+                    [kind, *chunk]).fetchall()
+                found.update({row["ref_id"]: dict(row) for row in rows})
+        return found
+
+    def delete_summary(self, kind: str, ref_id: int):
+        with self._lock:
+            self._conn.execute("DELETE FROM summaries WHERE kind = ? AND ref_id = ?", (kind, ref_id))
+            self._conn.commit()
+
+    def incident_calls_for_summary(self, incident_id: int) -> list[dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT c.id, c.call_time, c.transcript, c.talker_alias, c.talkgroup, c.talkgroup_label "
+                "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
+                "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def incidents_needing_summary(self, since: int) -> list[int]:
+        """Recent incidents with no summary yet, or one older than their latest call."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT i.id FROM incidents i LEFT JOIN summaries s ON s.kind = 'incident' AND s.ref_id = i.id "
+                "WHERE i.last_time >= ? AND (s.ref_id IS NULL OR s.made_at < i.last_time) "
+                "ORDER BY i.last_time", (since,)).fetchall()
+        return [row["id"] for row in rows]
+
+    def calls_needing_summary(self, since: int, min_words: int) -> list[int]:
+        """Recent transcribed calls long enough for their own summary that don't have one."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT c.id, c.transcript FROM calls c LEFT JOIN summaries s ON s.kind = 'call' AND s.ref_id = c.id "
+                "WHERE c.status = 'done' AND c.call_time >= ? AND s.ref_id IS NULL ORDER BY c.id",
+                (since,)).fetchall()
+        return [row["id"] for row in rows if len((row["transcript"] or "").split()) >= min_words]
 
     # ---- phone alerts
 

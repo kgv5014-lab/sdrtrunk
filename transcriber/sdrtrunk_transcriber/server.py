@@ -31,12 +31,14 @@ from . import audio
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
+from .corrections import CorrectionBook
 from .places import PlaceBook
 from .addresses import Gazetteer
 from .config import Config
 from .db import Database
 from .geocode import Geocoder
 from .incidents import MapWorker, highlights
+from .summaries import Summarizer, attach as attach_summary, incident_basis
 from .tones import ToneFinder
 from .worker import TranscriptionWorker
 
@@ -97,8 +99,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         db = Database(data_path / "calls.db")
         codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
-        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook)
+        corrections = CorrectionBook(config.corrections_path)
+        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections)
         alerter = Alerter(config, db) if config.alerts.enabled else None
+        summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:
             worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
         map_worker = None
@@ -107,17 +111,36 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             geocoder = Geocoder(db, config.map.area, contact=config.map.contact_email) \
                 if config.map.online_lookup else None
             map_worker = MapWorker(config, db, gazetteer, geocoder)
-            worker.on_done = map_worker.submit
-            if alerter:
-                map_worker.on_placed = lambda call_id, incident_id, call: alerter.incident_call(
-                    call_id, incident_id, call["call_time"], call["transcript"])
+
+            def placed(call_id, incident_id, call):
+                if alerter:
+                    alerter.incident_call(call_id, incident_id, call["call_time"], call["transcript"])
+                if summarizer:
+                    summarizer.incident_changed(incident_id)
+
+            map_worker.on_placed = placed
+            if summarizer:
+                # Calls moved between incidents by hand on the map.
+                map_worker.on_changed = lambda ids: [summarizer.incident_changed(i) for i in ids]
             map_worker.start()
+
+        def done(call_id):
+            if map_worker:
+                map_worker.submit(call_id)
+            if summarizer:
+                summarizer.call_done(call_id)
+
+        worker.on_done = done
+        if summarizer:
+            summarizer.start()
         worker.start()
         app.state.db = db
         app.state.worker = worker
         app.state.codebook = codebook
+        app.state.corrections = corrections
         app.state.map_worker = map_worker
         app.state.alerter = alerter
+        app.state.summarizer = summarizer
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
@@ -126,6 +149,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             map_worker.stop()
         if alerter:
             alerter.stop()
+        if summarizer:
+            summarizer.stop()
         db.close()
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
@@ -240,7 +265,56 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         for call in calls:
             call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
                                               call["talkgroup_group"])
+        if request.app.state.summarizer:
+            summaries = request.app.state.db.summaries("call", [call["id"] for call in calls])
+            for call in calls:
+                attach_summary(summaries, call)
         return calls
+
+    @app.post("/api/calls/{call_id}/transcript")
+    async def correct_transcript(request: Request, call_id: int):
+        """Saves Ken's fix of a transcript and learns the replaced words for later calls."""
+        db = request.app.state.db
+        call = db.get_call(call_id)
+        if call is None:
+            raise HTTPException(404)
+        if call["status"] not in ("done", "skipped", "failed"):
+            raise HTTPException(409, "This call is still being transcribed")
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Expected JSON")
+        text = body.get("text") if isinstance(body, dict) else None
+        if not isinstance(text, str):
+            raise HTTPException(400, "Expected {\"text\": ...}")
+        text = re.sub(r"\s+", " ", text).strip()[:4000]
+        original = call["transcript"] or ""
+        learned = request.app.state.corrections.learn(original, text) if body.get("learn", True) else []
+        db.update_call(call_id, transcript=text, corrected_at=int(time.time()), status="done", error=None)
+        # A fixed street name may put a call on the map that wasn't placed before.
+        map_worker = request.app.state.map_worker
+        if map_worker and call["map_status"] in ("none", "follow-up"):
+            db.set_map_status(call_id, None)
+            map_worker.submit(call_id)
+        return {"id": call_id, "transcript": text, "learned": learned}
+
+    @app.get("/api/corrections")
+    def list_corrections(request: Request):
+        return [c.row() for c in request.app.state.corrections.items()]
+
+    @app.post("/api/corrections/forget")
+    async def forget_correction(request: Request):
+        """Removes a learned correction (the page's Undo)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Expected JSON")
+        heard, correct = (body.get("heard"), body.get("correct")) if isinstance(body, dict) else (None, None)
+        if not isinstance(heard, str) or not isinstance(correct, str):
+            raise HTTPException(400, "Expected {\"heard\": ..., \"correct\": ...}")
+        if not request.app.state.corrections.forget(heard, correct):
+            raise HTTPException(404)
+        return {"forgot": {"heard": heard, "correct": correct}}
 
     @app.get("/api/calls/{call_id}/audio")
     def call_audio(request: Request, call_id: int):
@@ -277,6 +351,12 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             incident["type"] = "mva" if incident["nature"] == "MVA" else incident["category"] or "other"
             # Tone-outs just before the first call (pages carry no address, so this is by time only).
             incident["pages"] = db.pages(incident["first_time"] - 600, incident["first_time"] + 60, limit=10)
+        if request.app.state.summarizer:
+            summaries = db.summaries("incident", [incident["id"] for incident in incidents])
+            for incident in incidents:
+                calls = sorted({c["id"]: c for c in incident["calls"] if c["transcript"]}.values(),
+                               key=lambda c: (c["call_time"], c["id"]))
+                attach_summary(summaries, incident, incident_basis(calls))
         return incidents
 
     @app.delete("/api/incidents/{incident_id}")
@@ -292,6 +372,36 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if not request.app.state.db.update_incident(incident_id, hidden=0):
             raise HTTPException(404)
         return {"restored": incident_id}
+
+    # Fixing which incident a call is in, from the map. Remembered when the map is rebuilt.
+
+    def _edit(action, *args):
+        try:
+            return {"incidents": action(*args)}
+        except KeyError as e:
+            raise HTTPException(404, str(e.args[0]) if e.args else "not found")
+
+    @app.post("/api/calls/{call_id}/move")
+    async def move_call(request: Request, call_id: int):
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("incident_id"), int):
+            raise HTTPException(400, "send {\"incident_id\": <id>}")
+        return _edit(_map_worker(request).move_call, call_id, body["incident_id"])
+
+    @app.post("/api/calls/{call_id}/split")
+    def split_call(request: Request, call_id: int):
+        return _edit(_map_worker(request).split_call, call_id)
+
+    @app.delete("/api/calls/{call_id}/place")
+    def remove_call_from_map(request: Request, call_id: int):
+        return _edit(_map_worker(request).remove_call, call_id)
+
+    @app.post("/api/incidents/{incident_id}/merge")
+    async def merge_incident(request: Request, incident_id: int):
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("into"), int):
+            raise HTTPException(400, "send {\"into\": <incident id>}")
+        return _edit(_map_worker(request).merge, incident_id, body["into"])
 
     @app.post("/api/map/rebuild")
     def rebuild_map(request: Request):
@@ -365,6 +475,13 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "backend_ready": worker.ready.is_set(),
             "queue": worker.queue_size(),
             "calls": request.app.state.db.status_counts(),
+            "summaries": _summary_status(request.app.state.summarizer),
         }
+
+    def _summary_status(summarizer):
+        if summarizer is None:
+            return {"enabled": False}
+        return {"enabled": True, "model": config.summaries.model, "reachable": summarizer.reachable,
+                "queue": summarizer.queue_size(), "error": summarizer.last_error}
 
     return app

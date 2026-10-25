@@ -28,11 +28,19 @@
   .codes { display: flex; flex-wrap: wrap; gap: 4px 6px; margin-top: 6px; }
   .tag { font-size: 12px; border: 1px solid var(--line); border-radius: 10px; padding: 1px 8px; color: var(--muted); }
   .tag b { color: var(--accent); font-weight: 600; margin-right: 4px; }
+  .summary { margin-top: 6px; color: var(--muted); }
+  .summary .ai { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; margin-right: 5px; vertical-align: 1px; }
   audio { height: 28px; max-width: 100%; }
   button { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
   .page { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
   .page .title { font-size: 15px; font-weight: 600; }
   .page .title .unknown { color: var(--muted); font-weight: 400; }
+  .edit { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+  .fixed { color: var(--accent); }
+  textarea { width: 100%; margin-top: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; font: 15px/1.45 system-ui, sans-serif; resize: vertical; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+  .note { color: var(--muted); font-size: 12px; }
+  .note a { color: var(--accent); cursor: pointer; margin-left: 4px; }
   #more { display: block; margin: 16px auto; }
   #more[hidden] { display: none; }
 </style>
@@ -77,9 +85,15 @@ function render(call) {
   if (call.frequency) meta.append(el('span', '', (call.frequency / 1e6).toFixed(4) + ' MHz'));
   if (call.duration_s) meta.append(el('span', '', call.duration_s.toFixed(1) + ' s'));
   if (call.confidence !== null && call.confidence < -0.8) meta.append(el('span', 'low', 'low confidence'));
+  if (call.corrected_at) meta.append(el('span', 'fixed', 'fixed by hand'));
   const player = el('audio'); player.controls = true; player.preload = 'none';
   player.src = 'api/calls/' + call.id + '/audio';
   meta.append(player);
+  if (['done', 'skipped', 'failed'].includes(call.status)) {
+    const edit = el('button', 'edit', 'Edit');
+    edit.addEventListener('click', () => startEdit(card, call));
+    meta.append(edit);
+  }
   card.append(meta);
 
   let text, cls = 'text';
@@ -88,12 +102,75 @@ function render(call) {
   else if (call.status === 'failed') { text = 'transcription failed: ' + (call.error || ''); cls += ' failed'; }
   else { text = call.status + '...'; cls += ' pending'; }
   card.append(el('div', cls, text));
+  if (call.summary) {
+    const sum = el('div', 'summary');
+    sum.append(el('span', 'ai', 'AI'), call.summary + (call.summary_tags && call.summary_tags.length ? ' · ' + call.summary_tags.join(', ') : ''));
+    card.append(sum);
+  }
   if (call.codes && call.codes.length) {
     const tags = el('div', 'codes');
     call.codes.forEach(c => { const t = el('span', 'tag'); t.append(el('b', '', c.code), c.meaning); tags.append(t); });
     card.append(tags);
   }
   return card;
+}
+
+// Editing a transcript: the fix is saved, and replaced words are learned for later calls.
+let editing = 0;
+
+function startEdit(card, call) {
+  if (card.querySelector('textarea')) return;
+  editing++;
+  const shown = card.querySelector('.text');
+  const box = el('textarea');
+  box.value = call.status === 'done' ? (call.transcript || '') : '';
+  box.rows = Math.max(2, Math.ceil(box.value.length / 80));
+  const actions = el('div', 'actions');
+  const save = el('button', '', 'Save');
+  const cancel = el('button', '', 'Cancel');
+  actions.append(save, cancel, el('span', 'note', 'Words you replace are fixed in later calls too.'));
+  shown.replaceWith(box);
+  box.after(actions);
+  box.focus();
+  const done = () => { editing = Math.max(0, editing - 1); };
+  cancel.addEventListener('click', () => { box.replaceWith(shown); actions.remove(); done(); });
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const res = await fetch('api/calls/' + call.id + '/transcript', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: box.value }) });
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      const result = await res.json();
+      call.transcript = result.transcript; call.status = 'done'; call.corrected_at = Date.now() / 1000;
+      const fresh = render(call);
+      card.replaceWith(fresh);
+      if (result.learned.length) showLearned(fresh, result.learned);
+      else done();
+    } catch (e) {
+      save.disabled = false;
+      actions.querySelector('.note').textContent = 'Not saved: ' + e.message;
+    }
+  });
+}
+
+// Lists what was learned, with Undo for each, and holds the list still for a few seconds.
+function showLearned(card, learned) {
+  const note = el('div', 'note');
+  note.append('Learned: ');
+  learned.forEach((c, i) => {
+    if (i) note.append(', ');
+    note.append(c.heard + ' \u2192 ' + c.correct);
+    const undo = el('a', '', 'Undo');
+    undo.addEventListener('click', async () => {
+      const res = await fetch('api/corrections/forget', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ heard: c.heard, correct: c.correct }) });
+      undo.replaceWith(res.ok ? ' (undone)' : ' (could not undo)');
+    });
+    note.append(undo);
+  });
+  card.append(note);
+  setTimeout(() => { editing = Math.max(0, editing - 1); }, 15000);
 }
 
 function hz(value) { return value.toFixed(1) + ' Hz'; }
@@ -164,7 +241,7 @@ function playing() { return [...document.querySelectorAll('audio')].some(a => !a
 
 async function tick() {
   await refreshStatus();
-  if (!playing() && window.scrollY < 200) await load(false);
+  if (!playing() && !editing && window.scrollY < 200) await load(false);
 }
 
 ['q', 'talkgroup', 'source'].forEach(id => $(id).addEventListener('input', () => {

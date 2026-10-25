@@ -75,10 +75,13 @@ REDISPATCH_S = 20 * 60
 # The sample hint list vocabulary.example.txt used to have. Whisper read it back into many calls.
 OLD_SAMPLE_HINTS = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main Street"]
 # Tone-outs read out on Countywide end with the channel: "...Lower Saucon Communications, on TAC 2, 16:32".
-DISPATCH = re.compile(r"\brespond (to|for)\b|\bcommunications?\b.{0,25}\b(tac|tag|pac|ops?)\b|"
+DISPATCH = re.compile(r"\brespond (to|for)\b|\byou('re| are) (responding|en route|going)\b|\bcommunications?\b.{0,25}\b(tac|tag|pac|ops?)\b|"
                       r"\b(second|2nd|third) (alarm|alert)", re.IGNORECASE)
-# A call this soon after the one before it on the same talkgroup is an answer to it.
-REPLY_S = 20
+# A unit, or every unit on a Tac channel, saying it is done: later calls naming it are about something else.
+CLEARED = re.compile(r"\b(available|in service|in quarters|clear(ed)?|10-8|close (it|this) out|"
+                     r"back in (service|quarters)|returning)\b", re.IGNORECASE)
+ALL_CLEAR = re.compile(r"\ball (the |of the )?(units|apparatus)\b.{0,40}\b(available|clear|cancel)|\bcommand (is )?"
+                       r"terminated|\bclose (it|this) out\b|\bterminating command", re.IGNORECASE)
 
 
 UNIT = re.compile(r"\b(engine|medic|ems|e-m-s|a?ms|pms|mb\.?|ladder|truck|tanker|rescue|squad|ambulance|chief|"
@@ -137,11 +140,13 @@ def classify(calls: list[dict]) -> tuple[str | None, str | None]:
     """(category, nature) of an incident from all its calls, oldest first. Words in the calls beat
     the talkgroup name: a fire nature makes it fire, then anything medical (a medical nature, ALS/BLS,
     an EMS unit) makes it EMS, then a police nature makes it police, then the talkgroups decide."""
-    natures, categories, levels, ems_units, talkgroups = [], set(), [], False, []
+    natures, dispatched, categories, levels, ems_units, talkgroups = [], [], set(), [], False, []
     for call in calls:
         nature, category = nature_of(call.get("transcript"))
         if nature:
             natures.append(nature)
+            if is_dispatch(call.get("transcript")):
+                dispatched.append((nature, category))
         if category:
             categories.add(category)
         level = life_support(call.get("transcript"))
@@ -152,6 +157,10 @@ def classify(calls: list[dict]) -> tuple[str | None, str | None]:
         if agency:
             talkgroups.append("fire" if agency == "fire-ems" else agency)
 
+    if dispatched:
+        # What the dispatcher sent units for beats words in later calls.
+        natures = [n for n, _ in dispatched]
+        categories = {c for _, c in dispatched if c} or categories
     if "fire" in categories:
         category = "fire"
     elif "ems" in categories or levels or ems_units:
@@ -182,19 +191,26 @@ def nature_of(text: str | None) -> tuple[str | None, str | None]:
 
 
 def made_up(text: str | None, vocabulary=()) -> bool:
-    """A transcript Whisper probably invented: two of its prompt words in a row as the prompt has them
-    ("Dispatch, Engine 12"), or the same few words over and over ("Battalion 2, Battalion 2, ...")."""
+    """A transcript Whisper probably invented: mostly its prompt words read back ("Dispatch, Engine 12,
+    10-8"), one of them over and over ("Main Street, Main Street, Main Street"), or the same few words
+    over and over ("Battalion 2, Battalion 2, ...")."""
     if not text:
         return False
     low = text.lower()
     terms = [t.lower() for t in vocabulary if t.strip()]
-    for a, b in zip(terms, terms[1:]):
-        if re.search(rf"(?<!\w){re.escape(a)}\W{{1,3}}{re.escape(b)}(?!\w)", low):
+    pattern = "|".join(re.escape(t) for t in sorted(terms, key=len, reverse=True))
+    if pattern:
+        echoed = len(re.findall(rf"(?<!\w)(?:{pattern})(?!\w)", low))
+        rest = [w for w in re.findall(r"[a-z']+", re.sub(rf"(?<!\w)(?:{pattern})(?!\w)", " ", low))]
+        if echoed >= 3 and len(rest) < 2 * echoed:
             return True
-    phrases = [p.strip() for p in re.split(r"[,.;!?]", low) if p.strip()]
+        for a, b in zip(terms, terms[1:]):
+            if re.search(rf"(?<!\w){re.escape(a)}\W{{1,3}}{re.escape(b)}(?!\w)", low) and len(rest) < 6:
+                return True
+    phrases = [re.sub(r"\d+", "#", p).strip() for p in re.split(r"[,.;!?]", low) if p.strip()]
     if len(phrases) >= 4:
         top = max(set(phrases), key=phrases.count)
-        if phrases.count(top) >= 3 and phrases.count(top) * 2 >= len(phrases):
+        if phrases.count(top) >= 3 and phrases.count(top) * 5 >= len(phrases) * 2:
             return True
     return False
 
@@ -278,6 +294,8 @@ class MapWorker:
         self.echo_lists = [self.vocabulary, OLD_SAMPLE_HINTS]
         # Channel -> (time, incident id or None) of the latest call sending an incident there, placed or not.
         self._claims: dict[str, tuple[int, int | None]] = {}
+        # Unit -> (when it last said it was available or was sent to a call, the incident it was sent to).
+        self._released: dict[str, tuple[int, int | None]] = {}
         # Hand edits from the map page and the worker thread take turns.
         self.lock = threading.RLock()
 
@@ -346,7 +364,13 @@ class MapWorker:
         try:
             self._process(call)
         finally:
-            if is_dispatch(call["transcript"]):
+            text = call["transcript"] or ""
+            if is_dispatch(text) or CLEARED.search(text):
+                # Sent to a new call, or done: units named here are free of their earlier incidents.
+                keep = self.db.incident_of_call(call_id) if is_dispatch(text) else None
+                for unit in units_in(text) | units_in(call["talker_alias"]):
+                    self._released[unit] = (call["call_time"], keep)
+            if is_dispatch(text):
                 incident_id = self.db.incident_of_call(call_id)
                 for channel in channels_in(call["transcript"]):
                     self._claims[channel] = (call["call_time"], incident_id)
@@ -392,13 +416,11 @@ class MapWorker:
 
     def join_without_place(self, call: dict) -> bool:
         """Joins a call that names no place to an incident: by a unit it names, then by the Tac
-        channel it is on, then by a street of an incident it names, then as a quick reply on the same
-        talkgroup. A new dispatch is a new call, even when its place can't be found, so it joins none.
+        channel it is on, then by a street of an incident it names. A new dispatch is a new call, even when its place can't be found, so it joins none.
         Returns True when it joined one."""
         if is_dispatch(call["transcript"]):
             return False
-        return (self.follow_up(call) or self.follow_channel(call) or self.follow_street(call)
-                or self.follow_reply(call))
+        return self.follow_up(call) or self.follow_channel(call) or self.follow_street(call)
 
     def follow_up(self, call: dict) -> bool:
         """Joins a call that names no place ("Engine 2011 on scene") to the recent incident a unit
@@ -411,10 +433,12 @@ class MapWorker:
         for incident in self.db.nearby_incidents(t - window, t + 60):   # most recent first
             if incident["id"] == call.get("incident_id"):
                 continue
-            known = set()
+            seen: dict[str, int] = {}     # unit -> its latest call in this incident
             for other in self.db.incident_calls_brief(incident["id"]):
-                known |= units_in(other["transcript"]) | units_in(other["talker_alias"])
-            shared = units & known
+                for unit in units_in(other["transcript"]) | units_in(other["talker_alias"]):
+                    seen[unit] = other["call_time"]
+            # A unit that went available, or was sent elsewhere, since is no longer at this incident.
+            shared = {u for u in units & seen.keys() if not self._moved_on(u, seen[u], incident["id"])}
             if not shared:
                 continue
             # Name the unit the call said out loud rather than its radio's alias.
@@ -423,6 +447,11 @@ class MapWorker:
             self._join(call, incident, "follow-up", unit, unit.title())
             return True
         return False
+
+    def _moved_on(self, unit: str, last_seen: int, incident_id: int) -> bool:
+        """Whether a unit was sent to another call, or went available, since its latest call here."""
+        released = self._released.get(unit)
+        return bool(released and released[0] >= last_seen and released[1] != incident_id)
 
     def follow_channel(self, call: dict) -> bool:
         """Joins a call on a Tac channel to the incident that was last moved to that channel."""
@@ -440,6 +469,8 @@ class MapWorker:
         if claim and claim[0] > (incident["channel_time"] or 0) and claim[1] != incident["id"]:
             return False    # since then a call the map couldn't place was sent to that channel
         self._join(call, incident, "channel", channel.lower(), channel)
+        if ALL_CLEAR.search(call["transcript"] or ""):
+            self._claims[channel] = (t, None)     # everyone is done: later calls here are something else
         return True
 
     def follow_street(self, call: dict) -> bool:
@@ -456,20 +487,6 @@ class MapWorker:
             return False
         street = next(st for st in street_words(matches[0]["label"]) if f" {st} " in text)
         self._join(call, matches[0], "same-street", street, matches[0]["label"])
-        return True
-
-    def follow_reply(self, call: dict) -> bool:
-        """Joins a quick answer ("copy, en route") to the incident of the call just before it on the
-        same talkgroup."""
-        if not call["talkgroup"]:
-            return False
-        before = self.db.last_call_on(call["talkgroup"], call["call_time"], call["id"])
-        if not before or before["incident_id"] is None or call["call_time"] - before["call_time"] > REPLY_S:
-            return False
-        incident = self.db.get_incident(before["incident_id"])
-        if incident is None:
-            return False
-        self._join(call, incident, "reply", None, "Reply")
         return True
 
     def _followed(self, channel: str) -> bool:

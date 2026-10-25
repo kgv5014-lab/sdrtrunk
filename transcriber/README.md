@@ -190,10 +190,13 @@ What happens to each transcribed call:
    incident for up to an hour after its latest call, even with no place in them. Whisper's "Tag 2",
    "Pac-1" and "TAC 3-634" count. The latest incident sent to a channel gets its calls. Ops channels are
    shown but not followed, since they carry many incidents at once (`follow_channels` under `[map]`).
+   When every unit is done ("all the units are available") the channel is free again.
 6. **Other calls with no place** join an incident when they name its street within 15 minutes ("staging
-   on Northampton Street"), or answer the call just before them on the same talkgroup within 20 seconds.
-   A new dispatch never joins by these rules. A new dispatch more than 100 m away, or to the same place
-   more than 20 minutes after the last call, starts a new incident.
+   on Northampton Street"). A unit that went available, or was sent to another call ("1786, you are
+   responding..."), stops following its earlier incident. A new dispatch never joins by these rules; one
+   more than 100 m away, or to the same place more than 20 minutes after the last call, starts a new
+   incident. The call type comes from the dispatch first, so a later call mentioning a crash doesn't turn
+   a fire alarm into an MVA.
 7. **Made-up transcripts are skipped.** On unclear audio Whisper often reads its hint words back
    ("Dispatch, Engine 12, Main Street") or repeats a phrase over and over. Those calls stay off the map.
 

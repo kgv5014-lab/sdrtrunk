@@ -79,6 +79,11 @@ VOCABULARY = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main S
     ("4, Battalion 2, Battalion 2, Battalion 2, Battalion 2, Battalion 2", True),
     ("10-4, 10-4, 10-4, 10-4, 10-4", True),
     ("Engine 12 on location, working fire.", False),
+    ("Dispatch, Engine 1234 Hay Street, 84-year-old female fall victim on the cement, head injury, coughing "
+     "up blood in her nosebleed.", False),                                   # a real call starting with the echo
+    ("1234 Main Street, 1234 Main Street, 1234 Main Street,", True),
+    ("Highway Nation, 12 Main Street, Mission Trail, W-7, 34 Main Street, 18-5, the easton, 56 Main Street, "
+     "78 Main Street, 90 Main Street, 1931,", True),
     ("1783 County, you can show me clear, this unit only", False),
 ])
 def test_made_up(text, invented):
@@ -160,13 +165,42 @@ def test_a_call_naming_the_incidents_street_joins_it(tmp_path, gaz):
     assert [c["precision"] for c in incident["calls"]] == ["intersection", "same-street"]
 
 
-def test_a_quick_reply_joins_the_call_it_answers(tmp_path, gaz):
+def test_a_unit_sent_elsewhere_no_longer_follows_its_first_incident(tmp_path, gaz):
     worker = make_worker(tmp_path, gaz)
-    call(worker, "Medic 49 respond Main and Center in Nazareth for a fall", 0, "Norco Ops 2")
-    call(worker, "Copy, en route", 8, "Norco Ops 2")
-    call(worker, "Copy", 300, "Norco Ops 2")      # minutes later: not an answer to it
+    call(worker, "1786 respond to North 3rd and Northampton for a fall", 0)
+    call(worker, "1786 on scene", 120)
+    # Sent to a crash somewhere the map can't place: its later calls are about the crash.
+    call(worker, "1786, you are responding at 15:39, 4.733 North, PSP is out there with an MVA", 600)
+    call(worker, "1786, we're on location here", 900)
     [incident] = worker.db.incidents()
-    assert [c["precision"] for c in incident["calls"]] == ["intersection", "reply"]
+    assert len(incident["calls"]) == 2
+
+
+def test_a_unit_that_went_available_is_done_with_the_incident(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    call(worker, "Medic 49 respond to North 3rd and Northampton for a fall", 0)
+    call(worker, "Medic 49 you can show me clear, available", 600)
+    call(worker, "Medic 49 for your status", 900)
+    [incident] = worker.db.incidents()
+    assert len(incident["calls"]) == 2
+
+
+def test_when_every_unit_is_available_the_tac_channel_is_free(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    call(worker, "Special assignment, North 3rd and Northampton, Easton Communications are on TAC 1, 15:30", 0)
+    call(worker, "On location, front entrance", 60, "Norco Tac 1")
+    call(worker, "My bad, all the units for freedom are available 9-16-0-1", 1800, "Norco Tac 1")
+    call(worker, "It's going to be the on-ramp for westbound, two vehicles", 2600, "Norco Tac 1")
+    [incident] = worker.db.incidents()
+    assert len(incident["calls"]) == 3
+
+
+def test_the_dispatched_call_type_beats_words_in_later_calls(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    call(worker, "County 516 for a fire alarm, North 3rd and Northampton, Easton Communications, TAC 2, 19:01", 0)
+    call(worker, "Units on Tac 2, the crash on the highway is cleared", 600, "Norco Tac 2")
+    [incident] = worker.db.incidents()
+    assert incident["nature"] == "Fire alarm" and len(incident["calls"]) == 2
 
 
 def test_a_new_dispatch_nearby_is_a_new_incident(tmp_path, gaz):

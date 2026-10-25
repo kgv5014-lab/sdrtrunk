@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Incident map</title>
+<title>Incident dashboard</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
@@ -24,12 +24,29 @@
   label { color: var(--muted); font-size: 13px; }
   #status { color: var(--muted); font-size: 12px; margin-left: auto; }
   .body { flex: 1; display: flex; min-height: 0; }
-  #list { width: 340px; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px; }
+  #list { width: 320px; overflow-y: auto; border-right: 1px solid var(--line); padding: 8px; }
   #map { flex: 1; min-height: 300px; }
-  @media (max-width: 760px) {
-    .body { flex-direction: column-reverse; }
-    #list { width: auto; max-height: 40vh; border-right: 0; border-top: 1px solid var(--line); }
+  #feed { width: 380px; overflow-y: auto; border-left: 1px solid var(--line); padding: 8px; }
+  #feed h2, #list h2 { font-size: 13px; color: var(--muted); margin: 2px 2px 8px; font-weight: 600; }
+  .tabs { display: none; }
+  /* Narrow screens: one part at a time, picked with tabs. */
+  @media (max-width: 1100px) {
+    .tabs { display: flex; border-bottom: 1px solid var(--line); }
+    .tabs button { flex: 1; border: 0; border-radius: 0; padding: 8px; color: var(--muted); background: var(--bg); }
+    .tabs button.on { color: var(--accent); box-shadow: 0 -2px 0 var(--accent) inset; }
+    #list, #feed { width: auto; flex: 1; border: 0; }
+    .body > :not(.shown) { display: none; }
   }
+  .feed-call { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; margin: 0 0 7px; }
+  .feed-call.in-incident { border-left: 4px solid var(--accent); }
+  .feed-call .text { margin-top: 3px; white-space: pre-wrap; }
+  .feed-call .text.none { color: var(--muted); font-style: italic; }
+  .feed-call audio { width: 100%; height: 28px; margin-top: 4px; }
+  .feed-page { border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 6px 9px; margin: 0 0 7px; color: var(--warn); font-weight: 600; background: var(--card); }
+  .row { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; margin-top: 4px; }
+  .row button { font-size: 12px; padding: 2px 8px; }
+  textarea.fix-text { width: 100%; margin-top: 4px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; padding: 5px 7px; font: inherit; resize: vertical; }
+  .fixed { color: var(--accent); }
   .item { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--other); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; cursor: pointer; }
   .item.hidden-item { opacity: 0.55; }
   .item .where { font-weight: 600; }
@@ -86,9 +103,13 @@
   <button id="seen" hidden>Mark all seen</button>
   <span id="status"></span>
 </header>
+<div class="tabs" id="tabs">
+  <button data-pane="list">Incidents</button><button data-pane="map">Map</button><button data-pane="feed">Live calls</button>
+</div>
 <div class="body">
-  <div id="list"></div>
+  <div id="list"><h2>Incidents</h2></div>
   <div id="map"></div>
+  <div id="feed"><h2>Live calls</h2><div id="feed-items"></div></div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -141,6 +162,9 @@ let fitted = false;
 let popupOpen = false;
 map.on('popupopen', () => { popupOpen = true; });
 map.on('popupclose', () => { popupOpen = false; });
+map.on('resize', () => {
+  Object.values(markers).forEach(m => { const p = m.getPopup(); if (p) p.options.maxHeight = popupHeight(); });
+});
 
 function time(t) { return new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }); }
 function clock(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
@@ -197,7 +221,8 @@ function popup(incident) {
     const call = el('div', 'call');
     call.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
       (c.talker_alias ? ' · ' + c.talker_alias : '') + ' · ' + (PRECISION[c.precision] || c.precision)));
-    call.append(highlighted(c.transcript, c.highlights));
+    const text = highlighted(c.transcript, c.highlights);
+    call.append(text);
     if (c.codes && c.codes.length) {
       const tags = el('div', 'tags');
       c.codes.forEach(code => tags.append(el('span', 'tag', code.code + ' ' + code.meaning)));
@@ -205,7 +230,12 @@ function popup(incident) {
     }
     const audio = el('audio'); audio.controls = true; audio.preload = 'none'; audio.src = 'api/calls/' + c.id + '/audio';
     call.append(audio);
-    call.append(fixCall(incident, c));
+    const fix = fixCall(incident, c);
+    const edit = el('button', '', 'Edit');
+    edit.title = 'Fix the words; replaced words are fixed in later calls too';
+    edit.onclick = () => editTranscript(call, text, c, () => { needsReload = true; });
+    fix.prepend(edit);
+    call.append(fix);
     box.append(call);
   });
   const actions = el('div', 'actions');
@@ -273,6 +303,8 @@ async function edit(url, method, body) {
   load();
 }
 
+function popupHeight() { return Math.max(160, map.getSize().y - 80); }
+
 function render(incidents) {
   lastIncidents = incidents;
   if (seenUpTo === null) {
@@ -301,7 +333,9 @@ function render(incidents) {
       radius: Math.min(16, 7 + 2 * Math.log2(incident.calls.length)), color, weight: 2,
       fillColor: color, fillOpacity: incident.hidden ? 0.15 : 0.55, className: neu ? 'pulse' : '',
     }).addTo(layer);
-    marker.bindPopup(() => popup(incident), { maxWidth: 380 });
+    // Never taller than the map, so the close button stays on screen; long incidents scroll inside.
+    marker.bindPopup(() => popup(incident), { maxWidth: 380, maxHeight: popupHeight(), autoPanPadding: [16, 16],
+                                               keepInView: true });
     marker.on('popupopen', () => setTimeout(() => markSeen(incident), 1500));
     marker.bindTooltip(incident.label || '');
     markers[incident.id] = marker;
@@ -322,7 +356,7 @@ function render(incidents) {
     item.append(meta);
     if (incident.summary) item.append(summary(incident, false));
     items[incident.id] = item;
-    item.onclick = () => { map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); markers[incident.id].openPopup(); };
+    item.onclick = () => { pick('map'); map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); markers[incident.id].openPopup(); };
     list.append(item);
   });
   if (!fitted && bounds.length) { map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 }); fitted = true; }
@@ -385,6 +419,129 @@ async function status() {
 
 function playing() { return [...document.querySelectorAll('audio')].some(a => !a.paused); }
 
+// ---- editing a transcript, the same as on the call log page
+
+let editing = 0;
+let needsReload = false;
+function editTranscript(card, shown, call, saved) {
+  if (card.querySelector('textarea')) return;
+  editing++;
+  const box = el('textarea', 'fix-text');
+  box.value = call.transcript || '';
+  box.rows = Math.max(2, Math.ceil(box.value.length / 50));
+  const row = el('div', 'row');
+  const save = el('button', '', 'Save'), cancel = el('button', '', 'Cancel');
+  const note = el('span', 'muted', 'Words you replace are fixed in later calls too.');
+  row.append(save, cancel, note);
+  shown.replaceWith(box);
+  box.after(row);
+  box.focus();
+  const done = () => { editing = Math.max(0, editing - 1); };
+  cancel.onclick = () => { box.replaceWith(shown); row.remove(); done(); };
+  save.onclick = async () => {
+    save.disabled = true;
+    try {
+      const r = await fetch('api/calls/' + call.id + '/transcript', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: box.value }) });
+      if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+      const result = await r.json();
+      call.transcript = result.transcript;
+      const fresh = el('div', 'text', result.transcript || 'no speech found');
+      box.replaceWith(fresh);
+      row.replaceChildren(el('span', 'fixed', 'Saved.'));
+      result.learned.forEach((c, i) => {
+        row.append(i ? ', ' : ' Learned: ', c.heard + ' \u2192 ' + c.correct + ' ');
+        const undo = el('button', '', 'Undo');
+        undo.onclick = async () => {
+          const u = await fetch('api/corrections/forget', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                           body: JSON.stringify({ heard: c.heard, correct: c.correct }) });
+          undo.replaceWith(u.ok ? '(undone)' : '(could not undo)');
+        };
+        row.append(undo);
+      });
+      if (saved) saved(result);
+      setTimeout(done, result.learned.length ? 15000 : 0);
+    } catch (e) {
+      save.disabled = false;
+      note.textContent = 'Not saved: ' + e.message;
+    }
+  };
+}
+
+// ---- live calls: the newest transcripts and tone-outs, as they come in
+
+function feedCall(c) {
+  const card = el('div', 'feed-call' + (c.incident_id ? ' in-incident' : ''));
+  card.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
+    (c.duration_s ? ' · ' + c.duration_s.toFixed(0) + ' s' : '') + (c.corrected_at ? ' · fixed by hand' : '')));
+  let text;
+  if (c.status === 'done') text = el('div', 'text' + (c.transcript ? '' : ' none'), c.transcript || 'no speech found');
+  else if (['queued', 'processing'].includes(c.status)) text = el('div', 'text none', 'transcribing…');
+  else text = el('div', 'text none', 'not transcribed' + (c.error ? ' (' + c.error + ')' : ''));
+  card.append(text);
+  if (c.summary) { const sum = el('div', 'summary'); sum.append(el('span', 'ai', 'AI'), c.summary); card.append(sum); }
+  const row = el('div', 'row');
+  const play = el('button', '', 'Play');
+  play.onclick = () => {
+    let audio = card.querySelector('audio');
+    if (!audio) { audio = el('audio'); audio.controls = true; audio.src = 'api/calls/' + c.id + '/audio'; card.append(audio); }
+    audio.play();
+  };
+  row.append(play);
+  if (['done', 'skipped', 'failed'].includes(c.status)) {
+    const edit = el('button', '', 'Edit');
+    edit.onclick = () => editTranscript(card, card.querySelector('.text'), c, () => { needsReload = true; });
+    row.append(edit);
+  }
+  if (c.incident_id) {
+    const show = el('button', '', 'Show on map');
+    show.onclick = () => showIncident(c.incident_id);
+    row.append(show);
+  }
+  card.append(row);
+  return card;
+}
+
+function feedPage(p) {
+  const tones = p.tone_b ? p.tone_a.toFixed(1) + ' + ' + p.tone_b.toFixed(1) + ' Hz' : p.tone_a.toFixed(1) + ' Hz long tone';
+  return el('div', 'feed-page', clock(p.page_time) + ' Tone out: ' + (p.label || 'not on the station list') + ' (' + tones + ')');
+}
+
+async function loadFeed() {
+  const pane = $('feed');
+  // Leave it alone while a clip plays, a fix is being typed, or the list is scrolled down.
+  if (editing || playing() || pane.scrollTop > 120) return;
+  try {
+    const calls = await (await fetch('api/calls?limit=50')).json();
+    const since = calls.length ? calls[calls.length - 1].call_time : Math.floor(Date.now() / 1000) - 3600;
+    const pages = await (await fetch('api/pages?' + new URLSearchParams({ since, limit: 50 }))).json();
+    const items = calls.map(c => ({ t: c.call_time, node: () => feedCall(c) }))
+      .concat(pages.map(p => ({ t: p.page_time, node: () => feedPage(p) })))
+      .sort((a, b) => b.t - a.t);
+    $('feed-items').replaceChildren(...items.map(i => i.node()));
+  } catch (e) { /* shown in the status line */ }
+}
+
+function showIncident(id) {
+  const marker = markers[id];
+  const incident = lastIncidents.find(i => i.id === id);
+  if (!marker || !incident) { $('status').textContent = 'That incident is outside the time range or types shown'; return; }
+  pick('map');
+  map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15));
+  marker.openPopup();
+}
+
+// Tabs on narrow screens.
+function pick(pane) {
+  document.querySelectorAll('.body > div').forEach(d => d.classList.toggle('shown', d.id === pane));
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.pane === pane));
+  store('map.pane', pane);
+  if (pane === 'map') setTimeout(() => map.invalidateSize(), 0);
+}
+document.querySelectorAll('#tabs button').forEach(b => b.onclick = () => pick(b.dataset.pane));
+pick(stored('map.pane', 'map'));
+map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } });
+
 (async () => {
   const s = await status();
   const area = (s && s.area) || [40.50, -75.62, 40.78, -75.17];
@@ -393,7 +550,9 @@ function playing() { return [...document.querySelectorAll('audio')].some(a => !a
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
   await load();
-  setInterval(async () => { await status(); if (!popupOpen && !playing()) await load(); }, 10000);
+  loadFeed();
+  setInterval(loadFeed, 5000);
+  setInterval(async () => { await status(); if (!popupOpen && !playing() && !editing) await load(); }, 10000);
 })();
 $('range').value = stored('map.range', '86400');
 if (!$('range').value) $('range').value = '86400';

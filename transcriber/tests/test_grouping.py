@@ -291,3 +291,5 @@ def test_fixes_from_the_map_page(tmp_path):
         assert client.post(f"/api/calls/{b}/move", json={"incident_id": 999}).status_code == 404
         assert client.post(f"/api/calls/{b}/move", json={}).status_code == 400
         assert worker.db.get_incident(fall) is None
+        listed = {c["id"]: c["incident_id"] for c in client.get("/api/calls").json()}
+        assert listed[a] == fire and listed[b] is None

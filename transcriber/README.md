@@ -159,6 +159,11 @@ calls, then a tone-out just before.
 
 * **Time and type filters**: last hour, 6 hours, today, 24 hours, this week (since Sunday) or 30 days, and
   tick boxes for Fire, EMS, Police, MVA and Other. Both are remembered by the browser.
+* **Dashboard layout**: incidents on the left, the map in the middle, and **Live calls** on the right. Live
+  calls shows the newest transcripts and tone-outs as they come in, with Play, **Edit** (the same as on the
+  call log: replaced words are fixed in later calls too) and **Show on map** for calls in an incident. Calls
+  in map popups have Edit too. On a phone or narrow window the three parts are tabs.
+* Popups never get taller than the map; long incidents scroll inside, so the close button stays in view.
 * **New incidents** pulse and have a NEW badge; the browser tab shows how many, e.g. "(2) Incident map".
   Opening one, or **Mark all seen**, clears it.
 * SDRTrunk's **Transcripts** tab has the same list under **Incidents**, with the same filters and an

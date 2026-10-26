@@ -276,7 +276,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         # Labels are worked out on every read, so edits to codes.csv apply to old calls too.
         for call in calls:
             call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
-                                              call["talkgroup_group"])
+                                              call["talkgroup_group"], call_time=call.get("call_time"))
         if request.app.state.map_worker:
             # Which incident on the map each call is in, for the dashboard's "Show on map".
             for call in calls:
@@ -361,7 +361,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         for incident in incidents:
             for call in incident["calls"]:
                 call["codes"] = codebook.annotate(call["transcript"], call["talkgroup_label"],
-                                                  call["talkgroup_group"])
+                                                  call["talkgroup_group"], call_time=call.get("call_time"))
                 call["highlights"] = highlights(call["transcript"])
             # What the map colors and filters by: MVA first, since crashes go to every agency.
             incident["type"] = "mva" if incident["nature"] == "MVA" else incident["category"] or "other"

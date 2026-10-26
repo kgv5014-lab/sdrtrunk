@@ -81,7 +81,8 @@ class WhisperCppConfig:
 class CodesConfig:
     # Local radio codes and call-sign numbering; see codes.example.csv. Empty = off.
     file: str = "codes.csv"
-    # A spoken four-digit time ("1346") within this many minutes of the call becomes "13:46". 0 = off.
+    # A spoken time ("1346", or "14-16" at the end of a dispatch) within this many minutes of the call
+    # becomes "13:46". 0 = off.
     time_window_minutes: int = 3
 
 

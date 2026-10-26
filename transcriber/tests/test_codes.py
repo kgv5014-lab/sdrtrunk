@@ -121,7 +121,7 @@ AT_1346 = datetime(2026, 10, 22, 13, 46, 20)
     ("time out 13 46", "time out 13:46"),
     ("on scene 1344", "on scene 13:44"),          # within 3 minutes
     ("13:46 already written", "13:46 already written"),
-    ("dispatched at 1330", "dispatched at 1330"),  # too far from the call time
+    ("dispatched at 1330 today", "dispatched at 1330 today"),  # too far from the call time
     ("Engine 1346 responding", "Engine 1346 responding"),
     ("1346 Main Street", "1346 Main Street"),
     ("ten twenty three", "10-23"),
@@ -147,3 +147,65 @@ def test_times_are_labelled_in_twelve_hour_form(book):
     labels = book.annotate("Received at 13:46, 2081 en route")
     assert labels[0] == {"code": "13:46", "meaning": "1:46 PM", "kind": "time"}
     assert labels[1]["code"] == "2081"
+
+
+@pytest.mark.parametrize("heard,hour,minute,written", [
+    ("Color Town Communications, Ops 2, 1330.", 13, 31, "Color Town Communications, Ops 2, 13:30."),
+    ("Northampton City, 14-16.", 14, 16, "Northampton City, 14:16."),
+    ("Bethlehem City Communications, EMS, Dispatch 1, 14, 11.", 14, 11,
+     "Bethlehem City Communications, EMS, Dispatch 1, 14:11."),
+    ("Communications, Ops 2, 13.04 hours.", 13, 5, "Communications, Ops 2, 13:04 hours."),
+    ("I found Town 2 Communications, Ops 113-30.", 13, 33, "I found Town 2 Communications, Ops 1, 13:30."),
+    ("Kirkland Village, 2000, 14-16.", 14, 16, "Kirkland Village, 2000, 14:16."),
+    ("Easton Communications, Ops 2, 10-28.", 10, 28, "Easton Communications, Ops 2, 10:28."),
+    # Left alone: a 10-code said by a unit, too long before the call, or an address
+    ("Engine 11 is 10-23.", 10, 24, "Engine 11 is 10-23."),
+    ("Communications, Ops 2, 1330.", 13, 38, "Communications, Ops 2, 1330."),
+    ("respond to 2500.", 14, 0, "respond to 2500."),
+])
+def test_the_time_at_the_end_of_a_dispatch(book, heard, hour, minute, written):
+    assert book.normalize(heard, datetime(2026, 10, 26, hour, minute, 30)) == written
+
+
+def test_old_dispatch_times_are_labelled_from_the_call_time(book):
+    call_time = datetime(2026, 10, 26, 14, 17).timestamp()
+    labels = book.annotate("Hanover Township, Communications Office, 14-16.", "Countywide", call_time=call_time)
+    assert labels == [{"code": "14:16", "kind": "time", "meaning": "2:16 PM"}]
+
+
+@pytest.fixture
+def county(tmp_path):
+    path = tmp_path / "codes.csv"
+    path.write_text(
+        "type,code,meaning,applies_to,prompt\n"
+        "unit-suffix,81-89,Ambulance,ems,\n"
+        "unit-suffix,21-29,Ladder,fire,\n"
+        "station,15,Hanover Twp Fire/EMS,fire-ems,\n"
+        "station,24,Wilson Fire,fire-ems,\n"
+        "station,27,Palmer Twp Fire,fire-ems,\n"
+        "police-esn,27,Palmer Twp PD,police,\n"
+        "call-type,ALS,Advanced life support call,fire-ems,\n"
+        "acronym,ALS,Advanced Life Support,all,\n"
+        "acronym,EMS,Emergency Medical Services,all,\n"
+        "acronym,MVA,Motor vehicle accident,all,\n", encoding="utf-8")
+    return CodeBook(path)
+
+
+def test_stations_dashed_call_signs_and_call_types(county):
+    labels = county.annotate("EMS 15, 15-82, ALS, Fire 27, 24-21, 27 Command, 10-10", "Countywide")
+    assert [(l["code"], l["meaning"]) for l in labels] == [
+        ("EMS 15", "Hanover Twp Fire/EMS"),
+        ("15-82", "Hanover Twp Fire/EMS, Ambulance"),
+        ("ALS", "Advanced life support call"),
+        ("Fire 27", "Palmer Twp Fire"),
+        ("24-21", "Wilson Fire, Ladder"),
+        ("27 Command", "Palmer Twp Fire"),
+    ]
+
+
+def test_police_channels_read_numbers_as_police_cars(county):
+    labels = county.annotate("2741, MVA at 2700 Nazareth Road, on 278.", "Co PD E1 Patch")
+    assert [(l["code"], l["meaning"]) for l in labels] == [
+        ("2741", "Palmer Twp PD, car 41"), ("MVA", "Motor vehicle accident")]
+    # The same number on a fire channel is a fire call sign
+    assert county.annotate("2781", "Countywide")[0]["meaning"] == "Palmer Twp Fire, Ambulance"

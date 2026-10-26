@@ -92,8 +92,8 @@ apply without a restart, and labels update on calls already in the log.
 
 | Column | What it does |
 | --- | --- |
-| `type` | `ten-code`, `signal`, `station` (two-digit station number) or `unit-suffix` (last two digits, e.g. `81-89`) |
-| `code` | `10-23`, `Signal 33`, `20`, `81-89` |
+| `type` | `ten-code`, `signal`, `station` (two-digit station number), `unit-suffix` (last two digits, e.g. `81-89`), `police-esn` (two-digit police department number), `call-type` or `acronym` |
+| `code` | `10-23`, `Signal 33`, `20`, `81-89`, `ALS` (call types and acronyms match as written, capitals included) |
 | `meaning` | Shown as a label under the transcript |
 | `applies_to` | `all`, `police`, `fire`, `ems`, `fire-ems`. When a code means different things to different agencies, the talkgroup name picks the row |
 | `prompt` | `yes` adds the code to Whisper's hint list. Keep this to the 20 or so codes you hear most |
@@ -106,9 +106,12 @@ What happens to each call:
    call signs.
 3. A four-digit 24-hour time within `time_window_minutes` (default 3) of the call, like "1346" said at
    1:46 PM, becomes `13:46`. Numbers after unit words ("Engine 1346") or before street words
-   ("1346 Main St") are left alone.
-4. The call log page shows labels such as `10-23 Arrived on scene`, `2081 Easton Fire/EMS, Ambulance` and
-   `13:46 1:46 PM`. Whisper's original text is kept in the log as `transcript_raw`.
+   ("1346 Main St") are left alone. Whisper writes the time dispatch reads at the end of a call many
+   ways ("14-16", "14, 11", "13.43 hours", "Ops 113-30"); these become `14:16` and so on too.
+4. The call log page shows labels such as `10-23 Arrived on scene`, `2081 Easton Fire/EMS, Ambulance`,
+   `EMS 15 Hanover Twp Fire/EMS`, `ALS Advanced life support call` and `13:46 1:46 PM`. Call signs
+   written with a dash (`15-82`) count too. On police talkgroups, three- and four-digit numbers are read
+   as police cars instead (`2741 Palmer Twp PD, car 41`). Whisper's original text is kept in the log as `transcript_raw`.
 
 ## Local streets and landmarks
 

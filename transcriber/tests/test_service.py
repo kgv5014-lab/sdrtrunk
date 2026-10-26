@@ -494,3 +494,29 @@ def test_gpu_picked_by_name_overrides_device_index(tmp_path, monkeypatch):
     assert load_config(path).faster_whisper.device_index == 1
     monkeypatch.setenv("WHISPER_DEVICE_INDEX", "0")
     assert load_config(path).faster_whisper.device_index == 0
+
+
+def test_fire_and_ems_calls_are_transcribed_before_police_when_calls_pile_up(make_client):
+    import threading
+
+    gate = threading.Event()
+    client, _ = make_client()
+    labels = ["Co PD S1 Patch", "Co PD N1 Patch", "Norco Ops 1", "Co PD E1 Patch", "Countywide"]
+    with client:
+        worker = client.app.state.worker
+        order = []
+
+        def process(call_id):
+            gate.wait(10)
+            order.append(worker.db.get_call(call_id)["talkgroup_label"])
+
+        worker._process = process
+        for i, label in enumerate(labels):
+            post(client, sdrtrunk_body(dict(CALL, talkgroupLabel=label, talkgroupGroup="", talkgroup=str(1000 + i)), make_mp3(1.5)))
+        gate.set()
+        assert worker.wait_idle()
+
+    # The first call was already being worked on; then Countywide, Ops, and the police calls oldest first
+    assert order == ["Co PD S1 Patch", "Countywide", "Norco Ops 1", "Co PD N1 Patch", "Co PD E1 Patch"]
+    assert worker.rank({"talkgroup_label": "Nancy FD"}) == 2
+    assert worker.rank({"talkgroup_label": "Co PD S1 Patch"}) == len(worker.config.transcription.first_talkgroups)

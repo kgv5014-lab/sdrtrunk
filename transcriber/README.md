@@ -244,6 +244,21 @@ alert_landing = true
 
 The service reads the receiver, so the map works the same from your phone over Tailscale.
 
+### PennDOT traffic and cameras
+
+The map can show PennDOT's crashes, road closures and roadwork from the public 511PA website (no sign-up),
+and the traffic cameras in the map area. Click a camera for its picture, refreshed every 10 seconds, and
+"Live video" for the stream. A radio incident near a PennDOT crash or closure shows it ("🚦 PennDOT:
+Multi vehicle crash · US 22"), and incident popups list the closest cameras. The three layers are turned
+on and off in the box at the top right of the map. In `config.toml`:
+
+```toml
+[traffic]
+enabled = true
+```
+
+Cameras are only shown live: PennDOT doesn't allow recording them, so nothing is saved. Data is © PennDOT.
+
 ## Fire and EMS tone-outs
 
 SDRTrunk's Two-Tone Paging decoder (turn it on under a channel's Additional Decoders) sends each tone-out

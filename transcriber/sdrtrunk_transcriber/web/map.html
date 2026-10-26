@@ -81,6 +81,15 @@
   .heli.medical { filter: drop-shadow(0 0 3px #d33c2f); }
   .heli-label { font-size: 11px; font-weight: 600; padding: 0 4px; }
   .heli-note { color: var(--fire); font-weight: 600; }
+  .road { font-size: 17px; line-height: 20px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
+  .road.major { font-size: 21px; }
+  .cam { font-size: 14px; line-height: 18px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
+  .road-note { color: var(--mva); font-weight: 600; font-size: 13px; }
+  .pop .credit { font-size: 11px; color: #777; margin-top: 6px; }
+  .pop .camera img, .pop .camera video { width: 100%; max-width: 360px; aspect-ratio: 4 / 3; background: #222; border-radius: 4px; display: block; }
+  .pop .camera .actions { margin-top: 6px; }
+  .pop .cams { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+  .pop .cams button { font-size: 12px; padding: 2px 6px; }
   .stag { font-size: 11px; border: 1px solid var(--line); border-radius: 10px; padding: 0 6px; color: var(--muted); }
   .stag.status { color: var(--accent); border-color: var(--accent); }
   .pop mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 3px; }
@@ -218,6 +227,10 @@ function popup(incident) {
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
   box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
   if (incident.channel) box.append(el('div', 'channel', 'Working on ' + incident.channel));
+  const road = roadEventsAt(incident);
+  if (road) box.append(el('div', 'road-note', road));
+  const cams = cameraButtons(incident.lat, incident.lon);
+  if (cams) box.append(cams);
   incident.pages.forEach(p => {
     const tones = p.tone_b ? p.tone_a.toFixed(1) + ' + ' + p.tone_b.toFixed(1) + ' Hz' : p.tone_a.toFixed(1) + ' Hz long tone';
     box.append(el('div', 'page', 'Tone out ' + clock(p.page_time) + ': ' + (p.label || 'not on the station list') + ' (' + tones + ')'));
@@ -361,6 +374,8 @@ function render(incidents) {
     item.append(meta);
     const heli = helicoptersAt(incident.id);
     if (heli) item.append(el('div', 'heli-note', heli));
+    const road = roadEventsAt(incident);
+    if (road) item.append(el('div', 'road-note', road));
     if (incident.summary) item.append(summary(incident, false));
     items[incident.id] = item;
     item.onclick = () => { pick('map'); map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); markers[incident.id].openPopup(); };
@@ -421,6 +436,188 @@ async function loadAircraft() {
     if (!seen.has(hex)) { aircraftLayer.removeLayer(aircraftMarkers[hex].marker); aircraftLayer.removeLayer(aircraftMarkers[hex].trail); delete aircraftMarkers[hex]; }
   });
   return true;
+}
+
+// ---- PennDOT crashes, closures, roadwork and traffic cameras from 511PA ([traffic] in config.toml)
+const roadLayer = L.layerGroup();
+const roadworkLayer = L.layerGroup();
+const cameraLayer = L.layerGroup();
+const ROAD_KINDS = { incident: ['⚠️', 'Incident'], closure: ['⛔', 'Road closed'], roadwork: ['🚧', 'Roadwork'] };
+let roadEvents = [];
+let cameras = [];
+let matchMiles = 0.5;
+let cameraIds = '';
+let roadPopupOpen = false;
+let cameraMarkers = {};
+
+function miles(lat1, lon1, lat2, lon2) {
+  const r = Math.PI / 180, a = Math.sin((lat2 - lat1) * r / 2) ** 2
+    + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin((lon2 - lon1) * r / 2) ** 2;
+  return 3958.8 * 2 * Math.asin(Math.sqrt(a));
+}
+
+function roadTitle(e) {
+  const kind = ROAD_KINDS[e.kind] || ROAD_KINDS.incident;
+  const what = e.type && e.kind !== 'closure' ? e.type.charAt(0).toUpperCase() + e.type.slice(1) : kind[1];
+  return what + (e.roadway ? ' · ' + e.roadway : '');
+}
+
+function roadEventsAt(incident) {
+  const here = roadEvents.filter(e => e.kind !== 'roadwork' && miles(incident.lat, incident.lon, e.lat, e.lon) <= matchMiles);
+  if (!here.length) return '';
+  return '🚦 PennDOT: ' + here.map(e => roadTitle(e)).join('; ');
+}
+
+function camerasNear(lat, lon, limit) {
+  return cameras.map(c => [miles(lat, lon, c.lat, c.lon), c]).filter(x => x[0] <= 1.5)
+    .sort((a, b) => a[0] - b[0]).slice(0, limit).map(x => x[1]);
+}
+
+function cameraButtons(lat, lon) {
+  const near = camerasNear(lat, lon, 4);
+  if (!near.length) return null;
+  const box = el('div', 'cams');
+  box.append(el('span', 'muted', 'Cameras nearby:'));
+  near.forEach(c => {
+    const b = el('button', null, '📷 ' + (c.name || c.roadway));
+    b.onclick = () => { const m = cameraMarkers[c.id]; if (!m) return;
+      if (!map.hasLayer(cameraLayer)) map.addLayer(cameraLayer);
+      map.closePopup(); m.openPopup(); };
+    box.append(b);
+  });
+  return box;
+}
+
+function roadPopup(e) {
+  const pop = el('div', 'pop');
+  pop.append(el('div', 'where', (ROAD_KINDS[e.kind] || ROAD_KINDS.incident)[0] + ' ' + roadTitle(e)));
+  if (e.direction && e.direction !== 'BOTHDIR') pop.append(el('div', 'muted', e.direction));
+  pop.append(el('div', null, e.description));
+  if (e.lanes) pop.append(el('div', 'muted', 'Lanes: ' + e.lanes));
+  const when = [];
+  if (e.start) when.push('Since ' + time(e.start));
+  if (e.updated) when.push('updated ' + time(e.updated));
+  if (when.length) pop.append(el('div', 'muted', when.join(' · ')));
+  const cams = cameraButtons(e.lat, e.lon);
+  if (cams) pop.append(cams);
+  pop.append(el('div', 'credit', 'Source: PennDOT 511PA'));
+  return pop;
+}
+
+function cameraPopup(c) {
+  const pop = el('div', 'pop camera');
+  pop.append(el('div', 'where', '📷 ' + (c.name || c.roadway)));
+  let view = c.views[0];
+  const img = el('img');
+  img.alt = 'Traffic camera picture';
+  const video = el('video');
+  video.muted = true; video.playsInline = true; video.controls = true; video.hidden = true;
+  const note = el('div', 'muted', c.views.length > 1 ? '' : view.description);
+  const actions = el('div', 'actions');
+  let timer = null, hls = null;
+  const still = () => { img.src = 'api/traffic/cameras/' + view.image_id + '/image?t=' + Date.now(); };
+  const stopVideo = () => { if (hls) { hls.destroy(); hls = null; } video.pause(); video.removeAttribute('src'); video.load(); video.hidden = true; img.hidden = false; };
+  const play = el('button', null, '▶ Live video');
+  play.onclick = async () => {
+    if (hls || !video.hidden) { stopVideo(); play.textContent = '▶ Live video'; return; }
+    play.textContent = 'Loading…';
+    try {
+      const reply = await fetch('api/traffic/cameras/' + view.image_id + '/video');
+      if (!reply.ok) throw new Error((await reply.json()).detail || reply.status);
+      const url = (await reply.json()).url;
+      img.hidden = true; video.hidden = false;
+      if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = url; }
+      else {
+        await loadHls();
+        hls = new Hls({ liveSyncDurationCount: 2 });
+        hls.on(Hls.Events.ERROR, (ev, data) => { if (data.fatal) { stopVideo(); play.textContent = '▶ Live video'; note.textContent = 'Video stopped. Try again.'; } });
+        hls.loadSource(url); hls.attachMedia(video);
+      }
+      await video.play().catch(() => {});
+      play.textContent = '■ Stop video';
+    } catch (err) { stopVideo(); play.textContent = '▶ Live video'; note.textContent = 'No live video right now (' + err.message + ').'; }
+  };
+  if (c.views.length > 1) {
+    const choose = el('select');
+    c.views.forEach((v, i) => { const o = el('option', null, v.description || 'View ' + (i + 1)); o.value = i; choose.append(o); });
+    choose.onchange = () => { stopVideo(); play.textContent = '▶ Live video'; view = c.views[+choose.value];
+      note.textContent = ''; play.hidden = !view.video; still(); };
+    actions.append(choose);
+  }
+  play.hidden = !view.video;
+  actions.append(play);
+  pop.append(img, video, note, actions, el('div', 'credit', 'Live from PennDOT 511PA · not recorded'));
+  pop.start = () => { still(); timer = setInterval(() => { if (video.hidden) still(); }, 10000); };
+  pop.stop = () => { clearInterval(timer); stopVideo(); play.textContent = '▶ Live video'; };
+  return pop;
+}
+
+let hlsLoading = null;
+function loadHls() {
+  if (window.Hls) return Promise.resolve();
+  hlsLoading = hlsLoading || new Promise((ok, fail) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js';
+    s.onload = ok; s.onerror = () => { hlsLoading = null; fail(new Error('video player did not load')); };
+    document.head.append(s);
+  });
+  return hlsLoading;
+}
+
+function drawRoadEvents() {
+  roadLayer.clearLayers();
+  roadworkLayer.clearLayers();
+  // Roadwork first, then closures and crashes on top.
+  [...roadEvents].reverse().forEach(e => {
+    const target = e.kind === 'roadwork' ? roadworkLayer : roadLayer;
+    const kind = ROAD_KINDS[e.kind] || ROAD_KINDS.incident;
+    if (e.path && e.path.length > 1) {
+      L.polyline(e.path, { color: e.kind === 'roadwork' ? '#e0a100' : '#d33c2f', weight: 5, opacity: 0.6 }).addTo(target);
+    }
+    const icon = L.divIcon({ className: 'road' + (e.major ? ' major' : ''), html: kind[0], iconSize: [24, 24] });
+    const m = L.marker([e.lat, e.lon], { icon, zIndexOffset: e.kind === 'roadwork' ? -500 : 500 }).addTo(target);
+    m.bindTooltip(roadTitle(e));
+    m.bindPopup(() => roadPopup(e), { maxWidth: 360, autoPanPadding: [16, 16] });
+    m.on('popupopen', () => { roadPopupOpen = true; });
+    m.on('popupclose', () => { roadPopupOpen = false; });
+  });
+}
+
+function drawCameras() {
+  cameraLayer.clearLayers();
+  cameraMarkers = {};
+  cameras.forEach(c => {
+    const icon = L.divIcon({ className: 'cam', html: '📷', iconSize: [18, 18] });
+    const m = L.marker([c.lat, c.lon], { icon }).addTo(cameraLayer);
+    m.bindTooltip(c.name || c.roadway);
+    let pop = null;
+    m.bindPopup(() => { pop = cameraPopup(c); return pop; }, { minWidth: 280, maxWidth: 380, autoPanPadding: [16, 16] });
+    m.on('popupopen', () => { roadPopupOpen = true; if (pop) pop.start(); });
+    m.on('popupclose', () => { roadPopupOpen = false; if (pop) pop.stop(); });
+    cameraMarkers[c.id] = m;
+  });
+}
+
+async function loadTraffic() {
+  let reply;
+  try { reply = await (await fetch('api/traffic')).json(); } catch (e) { return; }
+  if (!reply.enabled) return false;
+  matchMiles = reply.match_miles || 0.5;
+  roadEvents = reply.events || [];
+  if (!roadPopupOpen) drawRoadEvents();
+  const ids = (reply.cameras || []).map(c => c.id).join(',');
+  if (ids !== cameraIds && !roadPopupOpen) { cameras = reply.cameras || []; cameraIds = ids; drawCameras(); }
+  return true;
+}
+
+function addTrafficControl() {
+  const overlays = { '⚠️ PennDOT crashes &amp; closures': roadLayer, '🚧 PennDOT roadwork': roadworkLayer, '📷 Traffic cameras': cameraLayer };
+  const keys = { '⚠️ PennDOT crashes &amp; closures': 'road', '🚧 PennDOT roadwork': 'roadwork', '📷 Traffic cameras': 'cameras' };
+  const on = stored('map.trafficLayers', { road: true, roadwork: false, cameras: true });
+  Object.entries(overlays).forEach(([name, l]) => { if (on[keys[name]]) l.addTo(map); });
+  L.control.layers(null, overlays, { collapsed: false }).addTo(map);
+  const save = () => store('map.trafficLayers', Object.fromEntries(Object.entries(overlays).map(([n, l]) => [keys[n], map.hasLayer(l)])));
+  map.on('overlayadd overlayremove', save);
 }
 
 function buildTypes() {
@@ -611,6 +808,8 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
   const watchingAircraft = await loadAircraft();
+  const watchingTraffic = await loadTraffic();
+  if (watchingTraffic) addTrafficControl();
   await load();
   // Opened from the unit board: map#incident-12
   const linked = /^#incident-(\d+)$/.exec(location.hash);
@@ -618,6 +817,7 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
   loadFeed();
   setInterval(loadFeed, 5000);
   if (watchingAircraft) setInterval(loadAircraft, 5000);
+  if (watchingTraffic) setInterval(loadTraffic, 60000);
   setInterval(async () => { await status(); if (!popupOpen && !playing() && !editing) await load(); }, 10000);
 })();
 $('range').value = stored('map.range', '86400');

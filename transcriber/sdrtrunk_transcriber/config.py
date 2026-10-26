@@ -104,6 +104,8 @@ class CodesConfig:
     # A spoken time ("1346", or "14-16" at the end of a dispatch) within this many minutes of the call
     # becomes "13:46". 0 = off.
     time_window_minutes: int = 3
+    # Write those times the 12-hour way ("1:46 PM") in transcripts.
+    twelve_hour: bool = True
 
 
 @dataclass

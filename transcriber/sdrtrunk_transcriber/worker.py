@@ -10,7 +10,7 @@ from pathlib import Path
 
 from . import audio
 from .backends import Backend
-from .codes import CodeBook
+from .codes import CodeBook, to_twelve_hour
 from .config import Config
 from .corrections import CorrectionBook
 from .db import Database
@@ -189,6 +189,8 @@ class TranscriptionWorker:
         transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))
         # Ken's own fixes last: they were learned from the finished transcript.
         transcript = self.corrections.normalize(transcript, call["talkgroup_label"])
+        if self.config.codes.twelve_hour:
+            transcript = to_twelve_hour(transcript)
 
         self.db.update_call(
             call_id,

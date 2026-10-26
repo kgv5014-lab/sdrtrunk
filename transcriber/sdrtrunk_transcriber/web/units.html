@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unit status</title>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --warn: #b26a00;
+          --dispatched: #d33c2f; --responding: #e07b00; --onscene: #2a6fdb; --transporting: #8e44ad; --hospital: #1f8a5b; --available: #7a7a82; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --warn: #f0a640;
+            --dispatched: #ff6b5e; --responding: #ffa13d; --onscene: #6ea2ff; --transporting: #c38be0; --hospital: #4cc38a; --available: #a0a0a8; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  h1 { font-size: 16px; margin: 0; }
+  a { color: var(--accent); }
+  select, input { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chips label { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 14px; padding: 2px 9px 2px 6px; cursor: pointer; user-select: none; color: var(--fg); }
+  .chips label:has(input:not(:checked)) { opacity: 0.45; }
+  .chips input { margin: 0; }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  main { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; padding: 10px 16px 32px; }
+  @media (max-width: 1100px) { main { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { main { grid-template-columns: 1fr; } }
+  section h2 { font-size: 13px; margin: 2px 2px 8px; display: flex; align-items: center; gap: 6px; }
+  section h2 .count { color: var(--muted); font-weight: 400; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .unit { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--available); border-radius: 8px; padding: 7px 9px; margin: 0 0 7px; }
+  .unit.stale { opacity: 0.5; }
+  .unit .top { display: flex; align-items: baseline; gap: 8px; }
+  .unit .sign { font-size: 16px; font-weight: 700; }
+  .unit .age { margin-left: auto; color: var(--muted); font-size: 12px; white-space: nowrap; }
+  .unit .what { color: var(--muted); font-size: 12px; }
+  .unit .said { margin-top: 3px; font-size: 12px; color: var(--muted); font-style: italic; overflow-wrap: anywhere; }
+  .unit .where { margin-top: 3px; font-size: 13px; }
+  .empty { color: var(--muted); font-size: 12px; padding: 4px 2px; }
+  .note { color: var(--muted); font-size: 12px; padding: 0 16px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Unit status</h1>
+  <a href="./">Call log</a>
+  <a href="map">Incident map</a>
+  <div class="chips" id="agencies"></div>
+  <select id="hours" title="Units heard in">
+    <option value="2">Last 2 hours</option>
+    <option value="6">Last 6 hours</option>
+    <option value="12">Last 12 hours</option>
+    <option value="24">Last 24 hours</option>
+  </select>
+  <input id="q" type="search" placeholder="Find a unit" size="12">
+  <span id="status"></span>
+</header>
+<p class="note">From what the radio said, as transcribed. A unit takes the status of the last call that named it with status words.</p>
+<main id="board"></main>
+<script>
+const COLUMNS = [
+  ['dispatched', 'Dispatched', '--dispatched'], ['responding', 'Responding', '--responding'],
+  ['on scene', 'On scene', '--onscene'], ['transporting', 'Transporting', '--transporting'],
+  ['at hospital', 'At hospital', '--hospital'], ['available', 'Available', '--available'], [null, 'Heard, no status', '--available'],
+];
+const AGENCIES = [['fire', 'Fire'], ['ems', 'EMS'], ['police', 'Police'], ['other', 'Other']];
+// A unit busy longer than this without another word is probably done; it is shown faded.
+const STALE_S = 2 * 3600;
+const $ = id => document.getElementById(id);
+
+function stored(key, fallback) { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch (e) { return fallback; } }
+function store(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private window */ } }
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+
+function ago(t) {
+  const s = Math.max(0, Date.now() / 1000 - t);
+  if (s < 60) return 'now';
+  if (s < 3600) return Math.round(s / 60) + ' min';
+  return Math.floor(s / 3600) + ' h ' + String(Math.round(s % 3600 / 60)).padStart(2, '0');
+}
+function clock(t) { return new Date(t * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+
+const shown = new Set(stored('units.agencies', ['fire', 'ems', 'police', 'other']));
+AGENCIES.forEach(([key, label]) => {
+  const l = el('label'); const box = el('input'); box.type = 'checkbox'; box.checked = shown.has(key);
+  box.onchange = () => { box.checked ? shown.add(key) : shown.delete(key); store('units.agencies', [...shown]); render(); };
+  l.append(box, label); $('agencies').append(l);
+});
+$('hours').value = String(stored('units.hours', 12));
+$('hours').onchange = () => { store('units.hours', Number($('hours').value)); load(); };
+$('q').oninput = () => render();
+
+let units = [];
+
+function card(u, color) {
+  const now = Date.now() / 1000;
+  const busy = u.status && u.status !== 'available';
+  const c = el('div', 'unit' + (busy && now - u.status_time > STALE_S ? ' stale' : ''));
+  c.style.borderLeftColor = `var(${color})`;
+  const top = el('div', 'top');
+  top.append(el('span', 'sign', u.shown || u.unit));
+  top.append(el('span', 'age', u.status_time ? ago(u.status_time) + ' · ' + clock(u.status_time) : 'heard ' + ago(u.last_heard)));
+  c.append(top);
+  if (u.meaning) c.append(el('div', 'what', u.meaning));
+  if (u.incident_id) {
+    const where = el('div', 'where');
+    const link = el('a', null, [u.incident_nature, u.incident_label].filter(Boolean).join(' · ') || 'Incident');
+    link.href = 'map#incident-' + u.incident_id;
+    where.append(link);
+    c.append(where);
+  }
+  if (u.said) c.append(el('div', 'said', '“' + u.said + '”'));
+  const meta = el('div', 'what', (u.talkgroup || '') + (u.last_heard !== u.status_time && u.status_time ? ' · last heard ' + ago(u.last_heard) + ' ago' : ''));
+  c.append(meta);
+  return c;
+}
+
+function render() {
+  const q = $('q').value.trim().toLowerCase();
+  const board = $('board');
+  board.textContent = '';
+  const visible = units.filter(u => shown.has(u.agency || 'other'))
+    .filter(u => !q || (u.unit + ' ' + (u.shown || '') + ' ' + (u.meaning || '')).toLowerCase().includes(q));
+  COLUMNS.forEach(([status, title, color]) => {
+    const here = visible.filter(u => (u.status || null) === status);
+    const section = el('section');
+    const h = el('h2'); const dot = el('span', 'dot'); dot.style.background = `var(${color})`;
+    h.append(dot, title, el('span', 'count', String(here.length)));
+    section.append(h);
+    if (!here.length) section.append(el('div', 'empty', 'None'));
+    here.forEach(u => section.append(card(u, color)));
+    board.append(section);
+  });
+}
+
+async function load() {
+  try {
+    units = await (await fetch('api/units?hours=' + $('hours').value)).json();
+    $('status').textContent = units.length + ' units · updated ' + clock(Date.now() / 1000);
+  } catch (e) { $('status').textContent = 'Could not reach the transcriber'; }
+  render();
+}
+load();
+setInterval(load, 10000);
+</script>
+</body>
+</html>

@@ -209,3 +209,11 @@ def test_police_channels_read_numbers_as_police_cars(county):
         ("2741", "Palmer Twp PD, car 41"), ("MVA", "Motor vehicle accident")]
     # The same number on a fire channel is a fire call sign
     assert county.annotate("2781", "Countywide")[0]["meaning"] == "Palmer Twp Fire, Ambulance"
+
+
+def test_times_are_written_the_twelve_hour_way():
+    from sdrtrunk_transcriber.codes import to_twelve_hour
+    assert to_twelve_hour("EMS 13, 1382 BLS, Ops 1, 13:41") == "EMS 13, 1382 BLS, Ops 1, 1:41 PM"
+    assert to_twelve_hour("00:05 and 09:30 and 12:00") == "12:05 AM and 9:30 AM and 12:00 PM"
+    # Already 12-hour, not a time, or not a clock time: left alone
+    assert to_twelve_hour("1:41 PM, 13:41 pm, 10-4, 24:10, 3:15") == "1:41 PM, 13:41 pm, 10-4, 24:10, 3:15"

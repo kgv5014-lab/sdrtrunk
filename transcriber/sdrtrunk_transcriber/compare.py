@@ -80,7 +80,8 @@ class Runner:
         result = self.backend.transcribe(samples, ", ".join(terms))
         text = result.text
         if after and self.config.transcription.junk_filter:
-            text, _junk = remove_junk(text, result.confidence, terms, self.config.transcription.stock_phrase_logprob)
+            text, _junk = remove_junk(text, result.confidence, terms, self.config.transcription.stock_phrase_logprob,
+                                      self.config.transcription.english_only)
         text = self.placebook.normalize(text, *context)
         text = self.codebook.normalize(text, datetime.fromtimestamp(call["call_time"]))
         if after:

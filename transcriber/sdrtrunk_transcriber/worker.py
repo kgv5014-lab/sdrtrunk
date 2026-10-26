@@ -163,7 +163,8 @@ class TranscriptionWorker:
         transcript, junk = result.text, []
         if self.config.transcription.junk_filter:
             transcript, junk = remove_junk(transcript, result.confidence, terms,
-                                           self.config.transcription.stock_phrase_logprob)
+                                           self.config.transcription.stock_phrase_logprob,
+                                           self.config.transcription.english_only)
         # Places first, so "route ten" becomes Route 10 before the codes see "ten".
         transcript = self.placebook.normalize(transcript, *context)
         transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))

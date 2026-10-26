@@ -5,6 +5,8 @@ Three patterns show up in real radio calls:
   Whisper produces these on noise and squelch tails.
 - Loops: the same word or phrase over and over, or a counting run ("11, 12, 13, 14, 14, 15...").
 - Hint-list echoes: several terms from Whisper's own prompt, in prompt order, with nothing between.
+- Foreign script: on noise Whisper sometimes writes Korean, Chinese, Cyrillic, Arabic and so on even
+  when told the language is English.
 """
 
 import re
@@ -24,6 +26,29 @@ COUNTING_RUN = 6
 # the prompt. Real calls name units and streets too, but not in the hint list's exact order.
 ECHO_RUN = 3
 ECHO_MAX_STEP = 2
+# Letters and marks an English transcript can hold: ASCII, accented Latin letters, curly quotes,
+# dashes, ellipsis and the degree sign. Anything else is another script (or a broken character).
+NOT_ENGLISH = re.compile(r"[^\x00-\x7f\u00a0-\u024f\u2010-\u2027\u00b0]")
+# When this share of the letters or more is in another script, the whole call is noise.
+FOREIGN_SHARE = 0.25
+
+
+def is_english(text: str) -> bool:
+    return NOT_ENGLISH.search(text) is None
+
+
+def drop_foreign(text: str) -> tuple[str, bool]:
+    """Removes characters from other scripts. Returns ("", True) when a quarter or more of the letters
+    are, since then the whole call is made up."""
+    foreign = len(NOT_ENGLISH.findall(text))
+    if not foreign:
+        return text, False
+    letters = foreign + sum(ch.isalnum() for ch in NOT_ENGLISH.sub("", text))
+    if foreign / max(letters, 1) >= FOREIGN_SHARE:
+        return "", True
+    cleaned = re.sub(r"\s+", " ", NOT_ENGLISH.sub(" ", text))
+    cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
+    return re.sub(r"([,.;!?])\1+", r"\1", cleaned).strip(), True
 
 
 def _key(text: str) -> str:
@@ -111,13 +136,19 @@ def drop_prompt_echo(items: list[str], prompt_terms: list[str]) -> list[str]:
 
 
 def remove_junk(text: str, confidence: float | None, prompt_terms: list[str],
-                stock_phrase_logprob: float = -0.7) -> tuple[str, list[str]]:
+                stock_phrase_logprob: float = -0.7, english_only: bool = True) -> tuple[str, list[str]]:
     """Returns the transcript with made-up parts removed, and what was removed (for the log)."""
     if not text:
         return text, []
     removed = []
+    if english_only:
+        text, foreign = drop_foreign(text)
+        if foreign:
+            removed.append("foreign script")
+            if not text:
+                return "", removed
     if is_stock_phrase(text) and (confidence is None or confidence < stock_phrase_logprob):
-        return "", ["stock phrase"]
+        return "", removed + ["stock phrase"]
 
     items = _items(text)
     for name, step in (("loop", collapse_loops), ("counting", drop_counting),
@@ -128,6 +159,8 @@ def remove_junk(text: str, confidence: float | None, prompt_terms: list[str],
             removed.append(name)
     if not removed:
         return text, []
+    if removed == ["foreign script"]:
+        return text, removed
 
     cleaned = " ".join(items).strip()
     # Tidy the end: a removed tail can leave a trailing comma

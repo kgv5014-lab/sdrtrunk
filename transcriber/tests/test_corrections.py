@@ -148,3 +148,35 @@ def test_edit_saves_learns_and_fixes_later_calls(tmp_path):
         assert client.post("/api/calls/999/transcript", json={"text": "x"}).status_code == 404
         assert client.post(f"/api/calls/{call['id']}/transcript", json={"nope": 1}).status_code == 400
     assert (tmp_path / "corrections.csv").read_text(encoding="utf-8-sig").startswith("heard,correct")
+
+
+def test_foreign_script_is_removed():
+    # Real transcripts from the call log
+    assert remove_junk("Engine 12,なしの11, 10-24.", -1.9, [])[0] == "Engine 12, 11, 10-24."
+    assert remove_junk("We have up toとう 18-E2.", -2.0, [])[0] == "We have up to 18-E2."
+    assert remove_junk("워널브롿, 인보 heights, 20-7, MS4", -3.6, []) == ("", ["foreign script"])
+    # Accented Latin letters, curly quotes and dashes are fine
+    assert remove_junk("St. Luke’s café — 10-4.", -0.3, []) == ("St. Luke’s café — 10-4.", [])
+    # Off when the language isn't English
+    assert remove_junk("Engine 12,なしの11.", -1.9, [], english_only=False)[0] == "Engine 12,なしの11."
+
+
+def test_whisper_is_kept_from_writing_other_scripts():
+    from sdrtrunk_transcriber.backends import non_english_tokens
+
+    pieces = [" the", " Engine", " 10", "-4", " café", "’", " Из", "国", "�", " ف", "<|endoftext|>"]
+
+    class Tokenizer:
+        def token_to_id(self, token):
+            return pieces.index(token)
+
+        def decode(self, ids):
+            return "".join(pieces[i] for i in ids)
+
+    assert non_english_tokens(Tokenizer()) == [-1, 6, 7, 8, 9]
+
+    class Broken:
+        def token_to_id(self, token):
+            raise RuntimeError("no tokenizer")
+
+    assert non_english_tokens(Broken()) is None

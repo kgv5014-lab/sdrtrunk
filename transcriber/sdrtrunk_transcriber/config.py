@@ -32,6 +32,9 @@ class TranscriptionConfig:
     junk_filter: bool = True
     # A call that is only a stock phrase is dropped when Whisper's confidence is below this.
     stock_phrase_logprob: float = -0.7
+    # With language "en": stop Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...)
+    # and remove any that still get through.
+    english_only: bool = True
 
 
 @dataclass

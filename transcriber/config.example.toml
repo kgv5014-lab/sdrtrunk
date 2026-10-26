@@ -29,6 +29,9 @@ stock_phrase_logprob = -0.7
 # With language = "en": keep Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...),
 # which it sometimes does on noise, and remove any that still get through.
 english_only = true
+# Also forbid other scripts while Whisper decodes. Slow (3-7x on a GTX 1070 Ti for the same text), so
+# off; english_only above still removes any that get through.
+block_other_scripts = false
 # Stop a call that runs away into a loop ("RIT, RIT, RIT...") from holding up the queue: Whisper may
 # write at most this many tokens per second of audio (about 4 words a second). 0 = no limit.
 max_tokens_per_second = 8.0

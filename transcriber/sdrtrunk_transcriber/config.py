@@ -36,6 +36,10 @@ class TranscriptionConfig:
     # With language "en": stop Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...)
     # and remove any that still get through.
     english_only: bool = True
+    # Also forbid Whisper from even writing other scripts while it decodes. That list is thousands of
+    # tokens and made every call 3-7 times slower on Ken's GTX 1070 Ti for the same text, so it is off;
+    # english_only still removes any that get through.
+    block_other_scripts: bool = False
     # Stops a call from running away into a loop ("RIT, RIT, RIT...") that holds up the queue for
     # minutes: Whisper may write at most this many tokens per second of audio (about 4 words a second).
     # 0 = no limit.

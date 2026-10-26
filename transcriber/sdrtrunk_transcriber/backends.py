@@ -131,7 +131,7 @@ class FasterWhisperBackend(Backend):
         log.info("faster-whisper model loaded")
         self._suppress = None
         tc = config.transcription
-        if tc.english_only and (tc.language or "").lower().startswith("en"):
+        if tc.english_only and tc.block_other_scripts and (tc.language or "").lower().startswith("en"):
             self._suppress = non_english_tokens(getattr(self._model, "hf_tokenizer", None))
 
     def transcribe(self, samples: np.ndarray, prompt: str) -> Transcript:

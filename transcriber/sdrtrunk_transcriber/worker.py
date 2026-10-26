@@ -20,7 +20,9 @@ from .places import PlaceBook
 log = logging.getLogger(__name__)
 
 
-PROMPT_LIMIT = 800
+# Whisper keeps only the last ~224 tokens of a prompt; Ken's 800-character prompts were 291 tokens, so
+# the first place names were silently dropped. About 2.75 characters a token.
+PROMPT_LIMIT = 600
 # A call with no words and at least this much tone (paging tones, alert beeps) is labelled tones only.
 TONES_ONLY_MIN_S = 1.0
 TONES_ONLY = "tones only"

@@ -86,6 +86,7 @@
   .cam { font-size: 14px; line-height: 18px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
   .road-note { color: var(--mva); font-weight: 600; font-size: 13px; }
   .pop .credit { font-size: 11px; color: #777; margin-top: 6px; }
+  .pop .camera iframe.live { width: 100%; max-width: 360px; height: 300px; border: 0; border-radius: 4px; display: block; background: #222; }
   .pop .camera img { width: 100%; max-width: 360px; aspect-ratio: 4 / 3; background: #222; border-radius: 4px; display: block; }
   .pop .camera .actions { margin-top: 6px; }
   .pop .cams { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
@@ -520,15 +521,25 @@ function cameraPopup(c) {
     choose.onchange = () => { view = c.views[+choose.value]; still(); };
     actions.append(choose);
   }
-  // PennDOT only hands live video to its own site, so it plays there.
+  // PennDOT only hands live video to its own site, so its camera window is shown here, or opened in a tab.
+  let frame = null;
+  const closeFrame = () => { if (frame) { frame.remove(); frame = null; img.hidden = false; } };
   if (c.page && c.views.some(v => v.live)) {
-    const live = el('a', null, '▶ Live video on 511PA');
-    live.href = c.page; live.target = '_blank'; live.rel = 'noopener';
-    actions.append(live);
+    const play = el('button', null, '▶ Live video');
+    play.onclick = () => {
+      if (frame) { closeFrame(); play.textContent = '▶ Live video'; return; }
+      frame = el('iframe', 'live');
+      frame.src = c.page; frame.title = 'Live video from 511PA'; frame.allow = 'autoplay; fullscreen';
+      img.hidden = true; img.after(frame); play.textContent = '■ Back to picture';
+    };
+    const tab = el('a', null, 'Open on 511PA');
+    tab.href = c.page; tab.target = '_blank'; tab.rel = 'noopener';
+    tab.title = 'Use this if the video window stays blank';
+    actions.append(play, tab);
   }
   pop.append(img, note, actions, el('div', 'credit', 'Live from PennDOT 511PA · not recorded'));
-  pop.start = () => { still(); timer = setInterval(still, 5000); };
-  pop.stop = () => { clearInterval(timer); };
+  pop.start = () => { still(); timer = setInterval(() => { if (!frame) still(); }, 5000); };
+  pop.stop = () => { clearInterval(timer); closeFrame(); };
   return pop;
 }
 

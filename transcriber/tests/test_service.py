@@ -325,7 +325,39 @@ def test_faster_whisper_backend_passes_gpu_settings(monkeypatch):
     assert created["transcribe"]["language"] == "en"
     # No tokenizer on the fake model: English only falls back to cleaning transcripts afterwards
     assert created["transcribe"]["suppress_tokens"] == [-1]
+    # Radio speech scores low on the voice detector; its 0.5 default blanked real calls
+    assert created["transcribe"]["vad_parameters"] == {"threshold": 0.2, "min_silence_duration_ms": 300}
+    # A one second call can't run on into a minutes-long loop, and retries stop at 0.4
+    assert created["transcribe"]["max_new_tokens"] == 24
+    assert created["transcribe"]["temperature"] == [0.0, 0.2, 0.4]
     assert result.text == "Medic 4 on scene."
+
+
+def test_token_limit_grows_with_the_call_up_to_one_window():
+    assert backends.token_limit(1.0, 8.0) == 24
+    assert backends.token_limit(0.3, 8.0) == 24
+    assert backends.token_limit(10.0, 8.0) == 96
+    # Whisper hears 30 s at a time and holds 448 tokens per window, half of them prompt
+    assert backends.token_limit(30.0, 8.0) == 216
+    assert backends.token_limit(108.0, 8.0) == 216
+    assert backends.token_limit(10.0, 0) is None
+
+
+def test_tone_only_call_is_labelled_not_left_as_no_speech(make_client):
+    class Silent(FakeBackend):
+        def transcribe(self, samples, prompt):
+            return Transcript("", None)
+
+    client, _ = make_client(backend=Silent())
+    with client:
+        # make_mp3 is a steady 440 Hz tone, like a paging tone or alert beep
+        post(client, sdrtrunk_body(CALL, make_mp3(3.0)))
+        assert client.app.state.worker.wait_idle()
+        call = client.get("/api/calls").json()[0]
+
+    assert call["status"] == "done"
+    assert call["transcript"] == ""
+    assert call["error"] == "tones only"
 
 
 def test_codes_are_cleaned_up_and_labelled(make_client, tmp_path):

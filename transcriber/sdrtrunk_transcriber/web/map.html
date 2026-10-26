@@ -475,7 +475,7 @@ function feedCall(c) {
   card.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
     (c.duration_s ? ' · ' + c.duration_s.toFixed(0) + ' s' : '') + (c.corrected_at ? ' · fixed by hand' : '')));
   let text;
-  if (c.status === 'done') text = el('div', 'text' + (c.transcript ? '' : ' none'), c.transcript || 'no speech found');
+  if (c.status === 'done') text = el('div', 'text' + (c.transcript ? '' : ' none'), c.transcript || (c.error === 'tones only' ? 'tones only, no speech' : 'no speech found'));
   else if (['queued', 'processing'].includes(c.status)) text = el('div', 'text none', 'transcribing…');
   else text = el('div', 'text none', 'not transcribed' + (c.error ? ' (' + c.error + ')' : ''));
   card.append(text);

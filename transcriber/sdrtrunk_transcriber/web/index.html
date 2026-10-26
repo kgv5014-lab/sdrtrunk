@@ -97,7 +97,7 @@ function render(call) {
   card.append(meta);
 
   let text, cls = 'text';
-  if (call.status === 'done') { text = call.transcript || 'no speech found'; if (!call.transcript) cls += ' none'; }
+  if (call.status === 'done') { text = call.transcript || (call.error === 'tones only' ? 'tones only, no speech' : 'no speech found'); if (!call.transcript) cls += ' none'; }
   else if (call.status === 'skipped') { text = 'not transcribed (' + (call.error || 'skipped') + ')'; cls += ' none'; }
   else if (call.status === 'failed') { text = 'transcription failed: ' + (call.error || ''); cls += ' failed'; }
   else { text = call.status + '...'; cls += ' pending'; }

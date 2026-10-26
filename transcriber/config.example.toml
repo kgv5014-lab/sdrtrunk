@@ -29,6 +29,12 @@ stock_phrase_logprob = -0.7
 # With language = "en": keep Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...),
 # which it sometimes does on noise, and remove any that still get through.
 english_only = true
+# Stop a call that runs away into a loop ("RIT, RIT, RIT...") from holding up the queue: Whisper may
+# write at most this many tokens per second of audio (about 4 words a second). 0 = no limit.
+max_tokens_per_second = 8.0
+# When a try comes out as a loop or very unsure, Whisper tries again at these temperatures. Whisper's
+# own list goes up to 1.0 (six tries), which is slow and mostly adds made-up text on radio audio.
+temperatures = [0.0, 0.2, 0.4]
 
 [audio]
 # Clean up each call before Whisper hears it: keep only the voice band (drops the low hum of
@@ -47,6 +53,11 @@ device_index = 0
 # GTX 10-series (Pascal) cards can't run float16 fast. Use int8 (fastest) or float32.
 compute_type = "int8"
 vad_filter = true
+# How sure the voice detector must be that a stretch is speech (0-1). Its own default, 0.5, threw away
+# real radio speech whole and left calls blank; 0.2 keeps it and still drops tones and silence.
+vad_threshold = 0.2
+# Pauses shorter than this (ms) stay part of the speech around them.
+vad_min_silence_ms = 300
 
 [whisper_cpp]
 # Start the server with e.g.: whisper-server -m models\ggml-large-v3-turbo.bin --port 8080

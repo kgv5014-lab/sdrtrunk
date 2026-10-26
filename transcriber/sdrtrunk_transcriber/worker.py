@@ -20,6 +20,9 @@ log = logging.getLogger(__name__)
 
 
 PROMPT_LIMIT = 800
+# A call with no words and at least this much tone (paging tones, alert beeps) is labelled tones only.
+TONES_ONLY_MIN_S = 1.0
+TONES_ONLY = "tones only"
 # The sample terms that vocabulary.example.txt used to ship with. Left in place, Whisper echoes them
 # back on unclear audio ("10-4, Main Street, Battalion 1"), so they are ignored.
 SAMPLE_VOCABULARY = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main Street"]
@@ -181,7 +184,8 @@ class TranscriptionWorker:
             backend=self._backend.name,
             model=self._backend.model,
             transcribe_ms=elapsed_ms,
-            error=None,
+            # Shown in place of "no speech found", so a tone-out doesn't look like a missed call.
+            error=TONES_ONLY if not transcript and tone_s >= TONES_ONLY_MIN_S else None,
         )
         notes = ([f"{tone_s:.1f}s of tones cut"] if tone_s else []) + [f"{name} removed" for name in junk]
         log.info("Call %d TG %s (%.1fs%s) in %d ms: %s", call_id, call["talkgroup"], duration,

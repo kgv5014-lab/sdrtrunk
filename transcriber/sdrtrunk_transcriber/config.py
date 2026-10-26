@@ -35,6 +35,14 @@ class TranscriptionConfig:
     # With language "en": stop Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...)
     # and remove any that still get through.
     english_only: bool = True
+    # Stops a call from running away into a loop ("RIT, RIT, RIT...") that holds up the queue for
+    # minutes: Whisper may write at most this many tokens per second of audio (about 4 words a second).
+    # 0 = no limit.
+    max_tokens_per_second: float = 8.0
+    # When a try comes out as a loop or very unsure, Whisper tries again at these temperatures (more
+    # randomness each time). Whisper's own list goes to 1.0, six tries in all, which is slow and mostly
+    # adds made-up text on radio audio.
+    temperatures: list = field(default_factory=lambda: [0.0, 0.2, 0.4])
 
 
 @dataclass
@@ -66,6 +74,11 @@ class FasterWhisperConfig:
     # GTX 10xx (Pascal) cards: int8 or float32. float16 needs a 20xx or newer.
     compute_type: str = "int8"
     vad_filter: bool = True
+    # How sure the voice detector must be that a stretch is speech (0-1). Its own default, 0.5, threw
+    # away real radio speech whole, leaving calls blank. 0.2 keeps it and still drops tones and silence.
+    vad_threshold: float = 0.2
+    # Pauses shorter than this stay part of the speech around them.
+    vad_min_silence_ms: int = 300
     # Where downloaded models are cached; empty = the Hugging Face default.
     download_root: str = ""
 

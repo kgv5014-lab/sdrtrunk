@@ -104,7 +104,7 @@ CREATE TABLE IF NOT EXISTS alerts (
     incident_id INTEGER,
     call_id INTEGER,
     page_id INTEGER,
-    page_label TEXT
+    page_label TEXT                      -- the tone-out's station, or the watch zone's name
 );
 CREATE INDEX IF NOT EXISTS alerts_time ON alerts(time);
 
@@ -567,15 +567,17 @@ class Database:
             self._conn.commit()
 
     def alerted(self, incident_id: int | None = None, call_id: int | None = None,
-                page_label: str | None = None, since: float | None = None) -> bool:
-        """Whether an alert already went out for this incident or call, or for this station since then."""
+                page_label: str | None = None, since: float | None = None, kind: str | None = None) -> bool:
+        """Whether an alert (of this kind) already went out for this incident or call, or for this station
+        or zone since then."""
+        of_kind, args = ("kind = ? AND ", [kind]) if kind else ("", [])
         with self._lock:
             if page_label is not None:
-                row = self._conn.execute("SELECT 1 FROM alerts WHERE page_label = ? AND time >= ?",
-                                         (page_label, since or 0)).fetchone()
+                row = self._conn.execute(f"SELECT 1 FROM alerts WHERE {of_kind}page_label = ? AND time >= ?",
+                                         (*args, page_label, since or 0)).fetchone()
             else:
-                row = self._conn.execute("SELECT 1 FROM alerts WHERE incident_id = ? OR call_id = ?",
-                                         (incident_id, call_id)).fetchone()
+                row = self._conn.execute(f"SELECT 1 FROM alerts WHERE {of_kind}(incident_id = ? OR call_id = ?)",
+                                         (*args, incident_id, call_id)).fetchone()
         return row is not None
 
     def alerts(self, since: float, after_id: str | None = None, alert_id: str | None = None,

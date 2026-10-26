@@ -286,6 +286,8 @@ class MapWorker:
         self._backlog_loaded = False
         # Called with (call id, incident id, call) after a call is placed (phone alerts listen here).
         self.on_placed = None
+        # Called with (call, incident id or None) once each call has been looked at.
+        self.on_done = None
         # Called with the ids of incidents whose calls the user changed by hand.
         self.on_changed = None
         # Whisper's prompt: on unclear audio it repeats these words back ("Dispatch, Engine 12, Main Street").
@@ -363,6 +365,8 @@ class MapWorker:
             return
         try:
             self._process(call)
+            if self.on_done:
+                self.on_done(call, self.db.incident_of_call(call_id))
         finally:
             text = call["transcript"] or ""
             if is_dispatch(text) or CLEARED.search(text):

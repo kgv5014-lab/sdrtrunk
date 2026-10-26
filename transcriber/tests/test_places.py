@@ -310,6 +310,8 @@ def test_failed_download_changes_nothing_and_keeps_what_worked(overpass_servers,
      ("Free Bridge", "bridge", fetch_places.BRIDGE_RANK)),
     ({"man_made": "bridge", "name": "Hill to Hill Bridge"}, ("Hill to Hill Bridge", "bridge", fetch_places.BRIDGE_RANK)),
     ({"shop": "supermarket", "name": "Giant"}, ("Giant", "shop=supermarket", 45)),
+    ({"shop": "electronics", "name": "Best Buy"}, ("Best Buy", "shop=electronics", fetch_places.SHOP_RANK)),
+    ({"amenity": "social_facility", "name": "Arden Courts"}, ("Arden Courts", "amenity=social_facility", 35)),
     ({"landuse": "residential", "name": "Hampton Woods"}, ("Hampton Woods", "landuse=residential", 35)),
     ({"amenity": "hospital", "building": "apartments", "name": "X"}, ("X", "amenity=hospital", 85)),
 ])

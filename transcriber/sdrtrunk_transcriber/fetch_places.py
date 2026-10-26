@@ -65,7 +65,11 @@ LANDMARKS = {
     ("amenity", "place_of_worship"): 30, ("landuse", "cemetery"): 30, ("amenity", "grave_yard"): 25,
     ("leisure", "golf_course"): 35, ("leisure", "sports_centre"): 30, ("tourism", "attraction"): 30,
     ("tourism", "museum"): 30, ("railway", "station"): 40,
+    # Care homes, day cares and preschools.
+    ("amenity", "social_facility"): 35, ("amenity", "kindergarten"): 25, ("amenity", "childcare"): 25,
 }
+# Every other named shop (electronics, books, salons, ...): a plaza's stores are called by name too.
+SHOP_RANK = 20
 # Named bridges (rank) and highway exits (rank); see landmark_name().
 BRIDGE_RANK = 55
 EXIT_RANK = 50
@@ -84,6 +88,7 @@ def queries(bbox) -> dict[str, str]:
         f'  way["bridge"]["bridge:name"]({box});',
         f'  nwr["man_made"="bridge"]["name"]({box});',
         f'  node["highway"="motorway_junction"]["ref"]({box});',
+        f'  nwr["shop"]["name"]({box});',
     ])
     return {
         "roads": f'[out:json][timeout:300];\nway["highway"~"^({roads})$"]["name"]({box});\nout tags geom;',
@@ -231,6 +236,8 @@ def landmark_name(tags: dict) -> tuple[str | None, str | None, int]:
     if tags.get("man_made") == "bridge":
         return tags.get("name"), "bridge", BRIDGE_RANK
     matches = [(r, f"{k}={v}") for (k, v), r in LANDMARKS.items() if tags.get(k) == v]
+    if not matches and tags.get("shop"):
+        matches = [(SHOP_RANK, f"shop={tags['shop']}")]
     rank, kind = max(matches, default=(30, None))
     return tags.get("name"), kind, rank
 

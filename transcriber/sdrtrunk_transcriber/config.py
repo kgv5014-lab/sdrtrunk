@@ -138,6 +138,9 @@ class AlertsConfig:
     incidents: list = field(default_factory=lambda: ["MVA", "Structure fire"])
     # Tone-outs whose station name (from SDRTrunk's paging_tones.csv) contains one of these.
     stations: list = field(default_factory=list)
+    # Watch zones: any call placed within radius_miles of a spot alerts, whatever it is about. Each is
+    # {name, lat, lon (or address, looked up online), radius_miles, prefix (put first in the alert)}.
+    zones: list = field(default_factory=list)
     # Calls and tone-outs older than this don't alert (e.g. old calls placed after a restart).
     max_age_minutes: int = 15
     # Bark iPhone app, instead of or as well as ntfy. The device key from the app's push URL

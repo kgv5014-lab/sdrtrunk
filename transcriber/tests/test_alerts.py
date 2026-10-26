@@ -212,3 +212,63 @@ def test_bark_key_length_is_checked(tmp_path):
     with pytest.raises(ValueError):
         with TestClient(create_app(config, backend_factory=lambda _c: Radio([]))):
             pass
+
+
+def test_any_call_in_a_watch_zone_alerts(tmp_path, wakeups):
+    config = make_config(tmp_path, incidents=[], zones=[
+        {"name": "Downtown", "lat": 40.6915, "lon": -75.21, "radius_miles": 0.5, "prefix": "DRONE LAUNCH REQUESTED"},
+        {"name": "Wilson", "lat": 40.6805, "lon": -75.24, "radius_miles": 0.5, "prefix": "DRONE LAUNCH REQUESTED"},
+    ])
+    radio = Radio([
+        "Engine 41 respond North Third and Northampton for a fall.",
+        "Engine 41 on location North 3rd and Northampton.",
+        "Medic 49 respond Main and Center in Nazareth for a fall.",
+        "Ambulance 22 respond Short Lane for a lift assist.",
+        "Ambulance 23 respond Northampton Street for a lift assist.",
+    ])
+    now = int(time.time())
+    client = TestClient(create_app(config, backend_factory=lambda _c: radio))
+    with client:
+        for offset in range(5):
+            post(client, sdrtrunk_body({**CALL, "dateTime": str(now - 300 + 60 * offset)}, make_mp3(2.0)))
+            assert client.app.state.worker.wait_idle()
+            assert client.app.state.map_worker.wait_idle()
+        sent = lines(client.get("/sdrtrunk-alerts/json", params={"poll": 1}))
+
+    # Once for the incident downtown, though two calls were placed there; nothing for Nazareth or for a
+    # long road that only passes through a zone; and a short road wholly inside the other zone.
+    assert [m["title"] for m in sent] == ["DRONE LAUNCH REQUESTED - Fall",
+                                          "DRONE LAUNCH REQUESTED - Call near Wilson"]
+    downtown, wilson = sent
+    assert downtown["message"].startswith("North 3rd Street & Northampton Street, Easton (0.0 mi away)\nEngine 41")
+    assert downtown["priority"] == 5
+    assert wilson["message"].startswith("Short Lane, Wilson\nAmbulance 22")
+
+
+def test_watch_zones_are_checked(tmp_path):
+    config = make_config(tmp_path, zones=[{"name": "Home", "radius_miles": 0.5}])
+    with pytest.raises(ValueError):
+        with TestClient(create_app(config, backend_factory=lambda _c: Radio([]))):
+            pass
+
+
+def test_a_road_named_in_another_town_is_not_in_the_zone(tmp_path):
+    from sdrtrunk_transcriber.addresses import Gazetteer
+    from sdrtrunk_transcriber.zones import ZoneWatch, read_zones
+    make_config(tmp_path)
+    watch = ZoneWatch(read_zones([{"name": "Wilson", "lat": 40.6805, "lon": -75.24}]),
+                      Gazetteer(tmp_path / "places-geo.json", None))
+    assert watch.check({"transcript": "Respond Short Lane for a fall."}, None)[1] == "Short Lane, Wilson"
+    assert watch.check({"transcript": "Respond Short Lane in Easton for a fall."}, None) is None
+
+
+def test_a_landmark_in_the_zone_alerts(tmp_path):
+    from sdrtrunk_transcriber.addresses import Gazetteer
+    from sdrtrunk_transcriber.zones import ZoneWatch, read_zones
+    make_config(tmp_path)
+    gazetteer = Gazetteer(tmp_path / "places-geo.json", None)
+    near = ZoneWatch(read_zones([{"name": "Hospital", "lat": 40.692, "lon": -75.229}]), gazetteer)
+    far = ZoneWatch(read_zones([{"name": "Wilson", "lat": 40.6805, "lon": -75.24}]), gazetteer)
+    assert near.check({"transcript": "Medic 2 respond Easton Hospital lobby."}, None)[1] == "Easton Hospital, Easton"
+    assert near.check({"transcript": "Medic 2 transporting one to Easton Hospital."}, None) is None
+    assert far.check({"transcript": "Medic 2 respond Easton Hospital lobby."}, None) is None

@@ -257,6 +257,23 @@ Setting it up, once:
    same address, and enter the topic name `sdrtrunk-alerts`. Allow notifications when it asks.
 5. Double-click **send-test-alert.bat** on the PC. The phone should buzz within a few seconds.
 
+### Watch zones
+
+A watch zone alerts for **any** call near a spot, whatever the call is about. Add one under `[alerts]`:
+
+```toml
+zones = [{name = "Home", lat = 40.6915, lon = -75.2100, radius_miles = 0.5, prefix = "DRONE LAUNCH REQUESTED"}]
+```
+
+A call alerts when the map places it, or the incident it joins, inside the circle. The alert reads like
+"DRONE LAUNCH REQUESTED - MVA" with the place and what was said, once per incident. A call that only
+names a road ("Concord Circle", with no house number or cross street) alerts when that whole road is
+inside the circle, since a long road passing through could mean anywhere along it. A store, school or
+other landmark from the street list counts the same way when every one of that name is inside the circle
+(a chain with branches elsewhere only counts when the call names the town). Instead of `lat` and `lon`
+you can give `address = "123 Main Street, Easton"`, looked up online once. When the transcriber starts,
+its log lists the roads it found within each zone.
+
 ### Bark instead (iPhone)
 
 If ntfy won't buzz the phone, the free **Bark** app can deliver the same alerts. Bark's server passes each

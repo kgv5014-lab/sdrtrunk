@@ -596,6 +596,14 @@ class Gazetteer:
             street._cells = cells
         return street._cells
 
+    def points(self, street: Street) -> list[tuple[float, float]]:
+        """Points every few metres along a street, as flat x/y metres (see self.proj)."""
+        return self._points(street)
+
+    def mentions(self, w: list[str]) -> list[Mention]:
+        """Street names in these words."""
+        return self._mentions(w)
+
     def distance_to(self, streets: list[Street], lat: float, lon: float) -> float | None:
         """Metres from a point to the nearest of these streets, None without shapes."""
         x, y = self.proj.xy(lat, lon)

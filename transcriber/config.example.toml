@@ -107,6 +107,11 @@ wakeup_url = "https://ntfy.sh"
 incidents = ["MVA", "Structure fire"]
 # Tone-outs alert when the station name contains one of these, e.g. ["Station 4", "Easton"].
 stations = []
+# Watch zones: any call the map places within radius_miles of a spot alerts, whatever it is about, and so
+# does a call naming a road that lies wholly inside the circle. prefix goes first in the alert's title.
+# Give lat and lon, or an address to look up online once. One {...} per zone, e.g.
+# zones = [{name = "Home", lat = 40.6915, lon = -75.2100, radius_miles = 0.5, prefix = "DRONE LAUNCH REQUESTED"}]
+zones = []
 # Calls and tone-outs older than this don't alert.
 max_age_minutes = 15
 # Bark iPhone app (see "Bark instead" in the README). The device key from Bark's push address.

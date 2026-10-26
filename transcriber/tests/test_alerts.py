@@ -250,3 +250,13 @@ def test_watch_zones_are_checked(tmp_path):
     with pytest.raises(ValueError):
         with TestClient(create_app(config, backend_factory=lambda _c: Radio([]))):
             pass
+
+
+def test_a_road_named_in_another_town_is_not_in_the_zone(tmp_path):
+    from sdrtrunk_transcriber.addresses import Gazetteer
+    from sdrtrunk_transcriber.zones import ZoneWatch, read_zones
+    make_config(tmp_path)
+    watch = ZoneWatch(read_zones([{"name": "Wilson", "lat": 40.6805, "lon": -75.24}]),
+                      Gazetteer(tmp_path / "places-geo.json", None))
+    assert watch.check({"transcript": "Respond Short Lane for a fall."}, None)[1] == "Short Lane, Wilson"
+    assert watch.check({"transcript": "Respond Short Lane in Easton for a fall."}, None) is None

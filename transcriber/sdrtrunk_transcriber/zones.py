@@ -123,11 +123,15 @@ class ZoneWatch:
         if not zone.roads:
             return None
         w = words(text)
+        towns = self.gazetteer.towns_in(w)
         for mention in self.gazetteer.mentions(w):
             # With its suffix ("Concord Circle", not just "Concord"), so a common word isn't a road.
             if not mention.strong:
                 continue
+            # "Concord Drive in Upper Saucon" is another Concord Drive than the one in the zone.
             for street in mention.streets:
+                if towns and street.town_key not in towns:
+                    continue
                 if street in zone.roads:
                     return street.name + (f", {street.town}" if street.town else "")
         return None

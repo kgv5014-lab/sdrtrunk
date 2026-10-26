@@ -1,6 +1,6 @@
 @echo off
 rem Starts Ollama on the GTX 1070 for call summaries (see "Call summaries" in the README).
-rem Your CUDA_VISIBLE_DEVICES setting gives Whisper the 1070 Ti; this window picks the 1070 by name instead.
+rem start-transcriber.bat gives Whisper the 1070 Ti by UUID; this window picks the 1070 the same way.
 rem GPU_NAME must match a line of `nvidia-smi -L` up to " (UUID". "GTX 1070" does not match the 1070 Ti.
 set GPU_NAME=GTX 1070
 set MODEL=qwen2.5:7b

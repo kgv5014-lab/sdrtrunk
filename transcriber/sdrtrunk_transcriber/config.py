@@ -1,5 +1,6 @@
 """Loads config.toml and fills in defaults."""
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -61,7 +62,9 @@ class FasterWhisperConfig:
     model: str = "large-v3-turbo"
     # cuda | cpu
     device: str = "cuda"
-    # CUDA device index, in the same order as `nvidia-smi -L`.
+    # Which card Whisper uses when more than one is visible. start-transcriber.bat normally picks the
+    # GTX 1070 Ti by name (see use-whisper-gpu.bat) and Whisper then sees only that card, so this is
+    # ignored. Card numbers are only a fallback: CUDA and nvidia-smi can number cards differently.
     device_index: int = 0
     # GTX 10xx (Pascal) cards: int8 or float32. float16 needs a 20xx or newer.
     compute_type: str = "int8"
@@ -237,10 +240,16 @@ def _apply(section, values: dict, name: str):
 
 def load_config(path: Path | None) -> Config:
     config = Config()
+    if path is not None:
+        _load_file(config, path)
+    # use-whisper-gpu.bat found the card by name and left Whisper only that one to see
+    index = os.environ.get("WHISPER_DEVICE_INDEX", "")
+    if index.isdigit():
+        config.faster_whisper.device_index = int(index)
+    return config
 
-    if path is None:
-        return config
 
+def _load_file(config: Config, path: Path):
     with open(path, "rb") as f:
         raw = tomllib.load(f)
 
@@ -251,5 +260,3 @@ def load_config(path: Path | None) -> Config:
         if section is None or name == "base_dir":
             raise ValueError(f"Unknown section [{name}] in {path}")
         _apply(section, values, name)
-
-    return config

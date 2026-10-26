@@ -225,6 +225,25 @@ After editing `places.csv` by hand, map earlier calls again with (from the same 
 Settings are under `[map]` in `config.toml`. The map page loads Leaflet and the map tiles from the
 internet; map data is © OpenStreetMap contributors.
 
+### Helicopters from ADS-B
+
+If an ADS-B receiver (readsb, tar1090 or ultrafeeder) runs on your network, the map can show helicopters
+with a short trail, and mark one coming down low near a recent incident as landing there ("🚁 LIFE12
+landing" on the incident). Air ambulance operators (Geisinger Life Flight, Air Methods, PHI and others)
+are outlined in red. In `config.toml`:
+
+```toml
+[aircraft]
+enabled = true
+url = "http://192.168.50.102:8080/data/aircraft.json"
+# Name aircraft you know, or show only these with all_helicopters = false
+watch = [{match = "N123AB", name = "St. Luke's 1"}]
+# Also send a phone alert when a helicopter lands near an incident
+alert_landing = true
+```
+
+The service reads the receiver, so the map works the same from your phone over Tailscale.
+
 ## Fire and EMS tone-outs
 
 SDRTrunk's Two-Tone Paging decoder (turn it on under a channel's Additional Decoders) sends each tone-out

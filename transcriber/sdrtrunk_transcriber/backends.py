@@ -1,6 +1,7 @@
 """Whisper backends. Each one turns 16 kHz mono samples into a Transcript."""
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 
@@ -40,6 +41,20 @@ class Segment:
 class Transcript:
     text: str
     confidence: float | None
+
+
+# Whisper reads audio in 30 s windows and holds 448 tokens per window, up to 224 of them prompt.
+WINDOW_S = 30.0
+MAX_WINDOW_TOKENS = 216
+
+
+def token_limit(duration_s: float, tokens_per_second: float) -> int | None:
+    """The most tokens Whisper may write per 30 s window of a call this long, or None for no limit.
+    Real speech is about 5 tokens a second; a loop runs on to the window's limit."""
+    if tokens_per_second <= 0:
+        return None
+    seconds = min(max(duration_s, 1.0), WINDOW_S)
+    return min(MAX_WINDOW_TOKENS, math.ceil(seconds * tokens_per_second) + 16)
 
 
 class Backend:
@@ -121,6 +136,7 @@ class FasterWhisperBackend(Backend):
 
     def transcribe(self, samples: np.ndarray, prompt: str) -> Transcript:
         tc = self.config.transcription
+        fw = self.config.faster_whisper
         segments, _info = self._model.transcribe(
             samples,
             language=tc.language or None,
@@ -128,10 +144,14 @@ class FasterWhisperBackend(Backend):
             initial_prompt=prompt or None,
             # Each radio call stands alone; carrying text over spreads one bad guess.
             condition_on_previous_text=False,
-            vad_filter=self.config.faster_whisper.vad_filter,
+            vad_filter=fw.vad_filter,
+            vad_parameters={"threshold": fw.vad_threshold,
+                            "min_silence_duration_ms": fw.vad_min_silence_ms} if fw.vad_filter else None,
             no_speech_threshold=tc.no_speech_threshold,
             log_prob_threshold=tc.log_prob_threshold,
             suppress_tokens=self._suppress or [-1],
+            temperature=tc.temperatures or [0.0],
+            max_new_tokens=token_limit(audio.duration_seconds(samples), tc.max_tokens_per_second),
         )
         return clean_segments(
             [Segment(s.text, s.avg_logprob, s.no_speech_prob) for s in segments],

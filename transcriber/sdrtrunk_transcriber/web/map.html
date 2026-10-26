@@ -77,6 +77,10 @@
   .summary.stale { opacity: 0.7; }
   .item .summary { font-size: 13px; }
   .stags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 3px; }
+  .heli { font-size: 20px; line-height: 20px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
+  .heli.medical { filter: drop-shadow(0 0 3px #d33c2f); }
+  .heli-label { font-size: 11px; font-weight: 600; padding: 0 4px; }
+  .heli-note { color: var(--fire); font-weight: 600; }
   .stag { font-size: 11px; border: 1px solid var(--line); border-radius: 10px; padding: 0 6px; color: var(--muted); }
   .stag.status { color: var(--accent); border-color: var(--accent); }
   .pop mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 3px; }
@@ -354,12 +358,68 @@ function render(incidents) {
     meta.append(incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's'));
     if (incident.channel) meta.append(' · ', el('span', 'channel', incident.channel));
     item.append(meta);
+    const heli = helicoptersAt(incident.id);
+    if (heli) item.append(el('div', 'heli-note', heli));
     if (incident.summary) item.append(summary(incident, false));
     items[incident.id] = item;
     item.onclick = () => { pick('map'); map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); markers[incident.id].openPopup(); };
     list.append(item);
   });
   if (!fitted && bounds.length) { map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 }); fitted = true; }
+}
+
+// ---- helicopters from the ADS-B receiver ([aircraft] in config.toml)
+const aircraftLayer = L.layerGroup().addTo(map);
+const aircraftMarkers = {};
+let aircraft = [];
+
+function aircraftName(a) { return a.name || a.flight || a.reg || a.hex; }
+
+function helicoptersAt(incidentId) {
+  const here = aircraft.filter(a => a.near && a.near.incident_id === incidentId);
+  if (!here.length) return '';
+  return '🚁 ' + here.map(a => aircraftName(a) + (a.near.landing ? ' landing' : ' nearby')).join(', ');
+}
+
+function aircraftText(a) {
+  const lines = [aircraftName(a) + (a.type ? ' · ' + a.type : '')];
+  if (a.operator) lines.push(a.operator);
+  if (a.desc) lines.push(a.desc);
+  lines.push((a.alt_ft === null ? '? ft' : a.alt_ft === 0 ? 'on the ground' : a.alt_ft.toLocaleString() + ' ft')
+             + (a.speed_kt != null ? ' · ' + Math.round(a.speed_kt) + ' kt' : ''));
+  if (a.near) lines.push((a.near.landing ? 'Coming down ' : '') + a.near.miles + ' mi from ' + (a.near.label || 'an incident'));
+  return lines.join('\n');
+}
+
+async function loadAircraft() {
+  let reply;
+  try { reply = await (await fetch('/api/aircraft')).json(); } catch (e) { return; }
+  if (!reply.enabled) return false;
+  aircraft = reply.aircraft || [];
+  const seen = new Set();
+  aircraft.forEach(a => {
+    seen.add(a.hex);
+    let m = aircraftMarkers[a.hex];
+    const icon = L.divIcon({ className: 'heli' + (a.medical || a.watched ? ' medical' : ''), html: '🚁', iconSize: [22, 22] });
+    if (!m) {
+      m = { marker: L.marker([a.lat, a.lon], { icon, zIndexOffset: 1000 }).addTo(aircraftLayer),
+            trail: L.polyline(a.trail, { color: a.medical || a.watched ? '#d33c2f' : '#555', weight: 2, opacity: 0.6, dashArray: '4 4' }).addTo(aircraftLayer) };
+      m.marker.bindTooltip('', { permanent: true, direction: 'right', offset: [10, 0], className: 'heli-label' });
+      m.marker.bindPopup('', { minWidth: 240 });
+      aircraftMarkers[a.hex] = m;
+    }
+    m.marker.setLatLng([a.lat, a.lon]).setIcon(icon);
+    m.marker.setTooltipContent(aircraftName(a) + (a.alt_ft != null ? ' ' + (a.alt_ft === 0 ? 'GND' : Math.round(a.alt_ft / 100) * 100 + ' ft') : ''));
+    const pop = el('div', 'pop');
+    pop.style.whiteSpace = 'pre-line';
+    pop.textContent = aircraftText(a);
+    m.marker.setPopupContent(pop);
+    m.trail.setLatLngs(a.trail);
+  });
+  Object.keys(aircraftMarkers).forEach(hex => {
+    if (!seen.has(hex)) { aircraftLayer.removeLayer(aircraftMarkers[hex].marker); aircraftLayer.removeLayer(aircraftMarkers[hex].trail); delete aircraftMarkers[hex]; }
+  });
+  return true;
 }
 
 function buildTypes() {
@@ -475,7 +535,7 @@ function feedCall(c) {
   card.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
     (c.duration_s ? ' · ' + c.duration_s.toFixed(0) + ' s' : '') + (c.corrected_at ? ' · fixed by hand' : '')));
   let text;
-  if (c.status === 'done') text = el('div', 'text' + (c.transcript ? '' : ' none'), c.transcript || 'no speech found');
+  if (c.status === 'done') text = el('div', 'text' + (c.transcript ? '' : ' none'), c.transcript || (c.error === 'tones only' ? 'tones only, no speech' : 'no speech found'));
   else if (['queued', 'processing'].includes(c.status)) text = el('div', 'text none', 'transcribing…');
   else text = el('div', 'text none', 'not transcribed' + (c.error ? ' (' + c.error + ')' : ''));
   card.append(text);
@@ -549,9 +609,11 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
   L.tileLayer((s && s.tiles_url) || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
+  const watchingAircraft = await loadAircraft();
   await load();
   loadFeed();
   setInterval(loadFeed, 5000);
+  if (watchingAircraft) setInterval(loadAircraft, 5000);
   setInterval(async () => { await status(); if (!popupOpen && !playing() && !editing) await load(); }, 10000);
 })();
 $('range').value = stored('map.range', '86400');

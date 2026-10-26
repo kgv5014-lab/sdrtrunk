@@ -36,6 +36,14 @@ class TranscriptionConfig:
     # With language "en": stop Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...)
     # and remove any that still get through.
     english_only: bool = True
+    # Stops a call from running away into a loop ("RIT, RIT, RIT...") that holds up the queue for
+    # minutes: Whisper may write at most this many tokens per second of audio (about 4 words a second).
+    # 0 = no limit.
+    max_tokens_per_second: float = 8.0
+    # When a try comes out as a loop or very unsure, Whisper tries again at these temperatures (more
+    # randomness each time). Whisper's own list goes to 1.0, six tries in all, which is slow and mostly
+    # adds made-up text on radio audio.
+    temperatures: list = field(default_factory=lambda: [0.0, 0.2, 0.4])
 
 
 @dataclass
@@ -69,6 +77,11 @@ class FasterWhisperConfig:
     # GTX 10xx (Pascal) cards: int8 or float32. float16 needs a 20xx or newer.
     compute_type: str = "int8"
     vad_filter: bool = True
+    # How sure the voice detector must be that a stretch is speech (0-1). Its own default, 0.5, threw
+    # away real radio speech whole, leaving calls blank. 0.2 keeps it and still drops tones and silence.
+    vad_threshold: float = 0.2
+    # Pauses shorter than this stay part of the speech around them.
+    vad_min_silence_ms: int = 300
     # Where downloaded models are cached; empty = the Hugging Face default.
     download_root: str = ""
 
@@ -128,6 +141,27 @@ class MapConfig:
     channel_window_minutes: int = 60
     # Map background tiles.
     tiles_url: str = "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+
+@dataclass
+class AircraftConfig:
+    # Helicopters on the incident map, from an ADS-B receiver on the network (readsb, tar1090, ultrafeeder).
+    enabled: bool = False
+    # The receiver's aircraft.json. Ultrafeeder serves it on port 8080.
+    url: str = "http://192.168.50.102:8080/data/aircraft.json"
+    poll_s: float = 5.0
+    # Show every helicopter. Off = only aircraft on the watch list.
+    all_helicopters: bool = True
+    # Aircraft to always show and name: [{match = "N123AB", name = "St. Luke's 1"}]. match is a tail
+    # number, flight callsign or ICAO hex code, and may end in * ("LIFE*").
+    watch: list = field(default_factory=list)
+    # A helicopter this low (feet), within this distance of an incident from the last incident_hours, is
+    # marked as landing there.
+    landing_altitude_ft: int = 1500
+    landing_radius_miles: float = 1.0
+    incident_hours: float = 2.0
+    # Also send a phone alert when that happens (needs [alerts] set up).
+    alert_landing: bool = False
 
 
 @dataclass
@@ -195,6 +229,7 @@ class Config:
     places: PlacesConfig = field(default_factory=PlacesConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    aircraft: AircraftConfig = field(default_factory=AircraftConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
     base_dir: Path = Path(".")
 

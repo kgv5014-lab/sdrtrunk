@@ -131,6 +131,18 @@ incident_hours = 2.0
 # Also send a phone alert when that happens (needs [alerts] set up).
 alert_landing = false
 
+[traffic]
+# PennDOT crashes, road closures and roadwork, plus live traffic cameras, on the incident map. Read from
+# the public 511PA website (no sign-up). Cameras are shown live only; PennDOT doesn't allow recording them.
+enabled = false
+# South, west, north, east. Empty = the same box as [map] area.
+area = []
+poll_s = 180.0
+cameras = true
+cameras_refresh_hours = 24.0
+# A radio incident this many miles from a PennDOT crash or closure shows it in the incident list.
+match_miles = 0.5
+
 [alerts]
 # Phone alerts through the ntfy app over Tailscale (see "Phone alerts" in the README).
 enabled = false

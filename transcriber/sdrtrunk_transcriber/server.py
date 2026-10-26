@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from starlette.datastructures import UploadFile
 
 from . import audio
@@ -35,6 +35,7 @@ from .corrections import CorrectionBook
 from .places import PlaceBook
 from .addresses import Gazetteer
 from .aircraft import AircraftWatch
+from .traffic import Traffic511
 from .config import Config
 from .db import Database
 from .geocode import Geocoder
@@ -147,6 +148,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         aircraft = AircraftWatch(config, db, alerter) if config.aircraft.enabled else None
         if aircraft:
             aircraft.start()
+        traffic = Traffic511(config) if config.traffic.enabled else None
+        if traffic:
+            traffic.start()
         if summarizer:
             summarizer.start()
         worker.start()
@@ -158,12 +162,15 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.alerter = alerter
         app.state.summarizer = summarizer
         app.state.aircraft = aircraft
+        app.state.traffic = traffic
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
         worker.stop()
         if aircraft:
             aircraft.stop()
+        if traffic:
+            traffic.stop()
         if map_worker:
             map_worker.stop()
         if alerter:
@@ -365,6 +372,42 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             return {"enabled": False, "aircraft": []}
         return {"enabled": True, "aircraft": aircraft.aircraft(), "error": aircraft.error,
                 "updated": aircraft.updated}
+
+    def _traffic(request: Request) -> Traffic511:
+        if request.app.state.traffic is None:
+            raise HTTPException(404, "PennDOT traffic is turned off in config.toml ([traffic] enabled)")
+        return request.app.state.traffic
+
+    @app.get("/api/traffic")
+    def list_traffic(request: Request):
+        traffic = request.app.state.traffic
+        if traffic is None:
+            return {"enabled": False, "events": [], "cameras": []}
+        return {"enabled": True, "events": traffic.events(), "cameras": traffic.cameras(),
+                "match_miles": config.traffic.match_miles, "error": traffic.error, "updated": traffic.updated}
+
+    @app.get("/api/traffic/cameras/{image_id}/image")
+    def camera_image(request: Request, image_id: int):
+        traffic = _traffic(request)
+        if not traffic.known_image(image_id):
+            raise HTTPException(404)
+        try:
+            content, kind = traffic.image(image_id)
+        except Exception as e:
+            raise HTTPException(502, f"511PA: {e}")
+        return Response(content, media_type=kind, headers={"Cache-Control": "no-store"})
+
+    @app.get("/api/traffic/cameras/{image_id}/video")
+    def camera_video(request: Request, image_id: int):
+        traffic = _traffic(request)
+        try:
+            url = traffic.video_url(image_id)
+        except Exception as e:
+            log.warning("511PA: no video for camera image %d (%s)", image_id, e)
+            raise HTTPException(502, f"511PA: {e}")
+        if url is None:
+            raise HTTPException(404, "This camera has no live video")
+        return {"url": url}
 
     @app.get("/api/incidents")
     def list_incidents(request: Request, since: int | None = None, until: int | None = None,

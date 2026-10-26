@@ -165,6 +165,20 @@ class AircraftConfig:
 
 
 @dataclass
+class TrafficConfig:
+    # PennDOT crashes, closures and roadwork, and traffic cameras, from the public 511PA website.
+    enabled: bool = False
+    # South, west, north, east. Empty = the same box as [map] area.
+    area: list = field(default_factory=list)
+    poll_s: float = 180.0
+    cameras: bool = True
+    # The camera list hardly changes; it is read again this often.
+    cameras_refresh_hours: float = 24.0
+    # A radio incident this close to a PennDOT crash or closure shows it.
+    match_miles: float = 0.5
+
+
+@dataclass
 class AlertsConfig:
     # Phone alerts through the ntfy app, answered by this service itself (see the README).
     enabled: bool = False
@@ -230,6 +244,7 @@ class Config:
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     aircraft: AircraftConfig = field(default_factory=AircraftConfig)
+    traffic: TrafficConfig = field(default_factory=TrafficConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
     base_dir: Path = Path(".")
 

@@ -494,3 +494,11 @@ def test_gpu_picked_by_name_overrides_device_index(tmp_path, monkeypatch):
     assert load_config(path).faster_whisper.device_index == 1
     monkeypatch.setenv("WHISPER_DEVICE_INDEX", "0")
     assert load_config(path).faster_whisper.device_index == 0
+
+
+def test_traffic_is_off_unless_turned_on(make_client):
+    client, _ = make_client()
+    with client:
+        assert client.get("/api/traffic").json() == {"enabled": False, "events": [], "cameras": []}
+        assert client.get("/api/traffic/cameras/5383/image").status_code == 404
+        assert client.get("/api/traffic/cameras/5383/video").status_code == 404

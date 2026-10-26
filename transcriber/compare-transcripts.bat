@@ -5,5 +5,6 @@ rem For more or fewer calls: compare-transcripts.bat 100
 cd /d "%~dp0"
 set CALLS=%1
 if "%CALLS%"=="" set CALLS=50
+call use-whisper-gpu.bat
 .venv\Scripts\python.exe -m sdrtrunk_transcriber.compare --config config.toml --calls %CALLS%
 pause

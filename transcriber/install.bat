@@ -10,5 +10,5 @@ if not exist vocabulary.txt copy vocabulary.example.txt vocabulary.txt >nul
 if not exist codes.csv copy codes.example.csv codes.csv >nul
 if not exist places.csv copy places.example.csv places.csv >nul
 echo.
-echo Installed. Next: edit config.toml (device_index for the 1070 Ti), then run start-transcriber.bat
+echo Installed. Next: run start-transcriber.bat (it picks the GTX 1070 Ti by itself)
 pause

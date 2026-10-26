@@ -453,3 +453,12 @@ def test_streets_are_hinted_and_cleaned_up(make_client, tmp_path):
 
     assert call["transcript"] == "Engine 2011 to 1201 Northampton Street off Route 22."
     assert "Larry Holmes Drive" in fake.prompts[0] and fake.prompts[0].endswith("Medic 2081")
+
+
+def test_gpu_picked_by_name_overrides_device_index(tmp_path, monkeypatch):
+    from sdrtrunk_transcriber.config import load_config
+    path = tmp_path / "config.toml"
+    path.write_text("[faster_whisper]\ndevice_index = 1\n", encoding="utf-8")
+    assert load_config(path).faster_whisper.device_index == 1
+    monkeypatch.setenv("WHISPER_DEVICE_INDEX", "0")
+    assert load_config(path).faster_whisper.device_index == 0

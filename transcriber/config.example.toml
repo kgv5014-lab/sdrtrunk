@@ -42,7 +42,9 @@ remove_tones = true
 [faster_whisper]
 model = "large-v3-turbo"
 device = "cuda"
-# Index from `nvidia-smi -L`. Point this at the GTX 1070 Ti; keep the 1070 for Ollama later.
+# start-transcriber.bat finds the GTX 1070 Ti by name and gives Whisper only that card, so this is
+# normally ignored. It's a fallback for when that fails; card numbers can differ between nvidia-smi
+# and CUDA, so check the startup log says "Whisper uses the GTX 1070 Ti".
 device_index = 0
 # GTX 10-series (Pascal) cards can't run float16 fast. Use int8 (fastest) or float32.
 compute_type = "int8"

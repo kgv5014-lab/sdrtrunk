@@ -86,7 +86,8 @@
   .cam { font-size: 14px; line-height: 18px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
   .road-note { color: var(--mva); font-weight: 600; font-size: 13px; }
   .pop .credit { font-size: 11px; color: #777; margin-top: 6px; }
-  .pop .camera img, .pop .camera video { width: 100%; max-width: 360px; aspect-ratio: 4 / 3; background: #222; border-radius: 4px; display: block; }
+  .pop .camera iframe.live { width: 100%; max-width: 360px; height: 300px; border: 0; border-radius: 4px; display: block; background: #222; }
+  .pop .camera img { width: 100%; max-width: 360px; aspect-ratio: 4 / 3; background: #222; border-radius: 4px; display: block; }
   .pop .camera .actions { margin-top: 6px; }
   .pop .cams { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
   .pop .cams button { font-size: 12px; padding: 2px 6px; }
@@ -510,58 +511,36 @@ function cameraPopup(c) {
   let view = c.views[0];
   const img = el('img');
   img.alt = 'Traffic camera picture';
-  const video = el('video');
-  video.muted = true; video.playsInline = true; video.controls = true; video.hidden = true;
   const note = el('div', 'muted', c.views.length > 1 ? '' : view.description);
   const actions = el('div', 'actions');
-  let timer = null, hls = null;
+  let timer = null;
   const still = () => { img.src = 'api/traffic/cameras/' + view.image_id + '/image?t=' + Date.now(); };
-  const stopVideo = () => { if (hls) { hls.destroy(); hls = null; } video.pause(); video.removeAttribute('src'); video.load(); video.hidden = true; img.hidden = false; };
-  const play = el('button', null, '▶ Live video');
-  play.onclick = async () => {
-    if (hls || !video.hidden) { stopVideo(); play.textContent = '▶ Live video'; return; }
-    play.textContent = 'Loading…';
-    try {
-      const reply = await fetch('api/traffic/cameras/' + view.image_id + '/video');
-      if (!reply.ok) throw new Error((await reply.json()).detail || reply.status);
-      const url = (await reply.json()).url;
-      img.hidden = true; video.hidden = false;
-      if (video.canPlayType('application/vnd.apple.mpegurl')) { video.src = url; }
-      else {
-        await loadHls();
-        hls = new Hls({ liveSyncDurationCount: 2 });
-        hls.on(Hls.Events.ERROR, (ev, data) => { if (data.fatal) { stopVideo(); play.textContent = '▶ Live video'; note.textContent = 'Video stopped. Try again.'; } });
-        hls.loadSource(url); hls.attachMedia(video);
-      }
-      await video.play().catch(() => {});
-      play.textContent = '■ Stop video';
-    } catch (err) { stopVideo(); play.textContent = '▶ Live video'; note.textContent = 'No live video right now (' + err.message + ').'; }
-  };
   if (c.views.length > 1) {
     const choose = el('select');
     c.views.forEach((v, i) => { const o = el('option', null, v.description || 'View ' + (i + 1)); o.value = i; choose.append(o); });
-    choose.onchange = () => { stopVideo(); play.textContent = '▶ Live video'; view = c.views[+choose.value];
-      note.textContent = ''; play.hidden = !view.video; still(); };
+    choose.onchange = () => { view = c.views[+choose.value]; still(); };
     actions.append(choose);
   }
-  play.hidden = !view.video;
-  actions.append(play);
-  pop.append(img, video, note, actions, el('div', 'credit', 'Live from PennDOT 511PA · not recorded'));
-  pop.start = () => { still(); timer = setInterval(() => { if (video.hidden) still(); }, 10000); };
-  pop.stop = () => { clearInterval(timer); stopVideo(); play.textContent = '▶ Live video'; };
+  // PennDOT only hands live video to its own site, so its camera window is shown here, or opened in a tab.
+  let frame = null;
+  const closeFrame = () => { if (frame) { frame.remove(); frame = null; img.hidden = false; } };
+  if (c.page && c.views.some(v => v.live)) {
+    const play = el('button', null, '▶ Live video');
+    play.onclick = () => {
+      if (frame) { closeFrame(); play.textContent = '▶ Live video'; return; }
+      frame = el('iframe', 'live');
+      frame.src = c.page; frame.title = 'Live video from 511PA'; frame.allow = 'autoplay; fullscreen';
+      img.hidden = true; img.after(frame); play.textContent = '■ Back to picture';
+    };
+    const tab = el('a', null, 'Open on 511PA');
+    tab.href = c.page; tab.target = '_blank'; tab.rel = 'noopener';
+    tab.title = 'Use this if the video window stays blank';
+    actions.append(play, tab);
+  }
+  pop.append(img, note, actions, el('div', 'credit', 'Live from PennDOT 511PA · not recorded'));
+  pop.start = () => { still(); timer = setInterval(() => { if (!frame) still(); }, 5000); };
+  pop.stop = () => { clearInterval(timer); closeFrame(); };
   return pop;
-}
-
-let hlsLoading = null;
-function loadHls() {
-  if (window.Hls) return Promise.resolve();
-  hlsLoading = hlsLoading || new Promise((ok, fail) => {
-    const s = document.createElement('script');
-    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js';
-    s.onload = ok; s.onerror = () => { hlsLoading = null; fail(new Error('video player did not load')); };
-    document.head.append(s);
-  });
-  return hlsLoading;
 }
 
 function drawRoadEvents() {

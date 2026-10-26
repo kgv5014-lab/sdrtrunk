@@ -37,6 +37,8 @@ TAGS = {"mva": "car", "structure fire": "fire"}
 KEEP_S = 12 * 3600
 # The same station toned out again this soon is the same tone-out.
 PAGE_REPEAT_S = 120
+# A call naming only a road in a watch zone this soon after the zone alerted is about the same thing.
+ZONE_REPEAT_S = 600
 
 
 def _type(name: str | None) -> str:
@@ -105,7 +107,7 @@ class Alerter:
         incident = self.db.get_incident(incident_id)
         if incident is None or incident["hidden"] or _type(incident["nature"]) not in self.incident_types:
             return
-        if self.db.alerted(incident_id=incident_id, call_id=call_id):
+        if self.db.alerted(incident_id=incident_id, call_id=call_id, kind="incident"):
             return
         heard = (transcript or "").strip()
         if len(heard) > 240:
@@ -114,6 +116,24 @@ class Alerter:
                   tags=[TAGS.get(_type(incident["nature"]), "rotating_light")], priority=4,
                   click=f"{self.base_url}/map" if self.base_url else None,
                   incident_id=incident_id, call_id=call_id)
+
+    def zone_call(self, zone, where: str, call: dict, incident: dict | None):
+        """A call in a watch zone (zones.py). `incident` is the call's incident when that is in the zone:
+        those alert once per incident; a call naming a road in the zone alerts unless the zone just did."""
+        if time.time() - call["call_time"] > self.settings.max_age_minutes * 60:
+            return
+        if incident and self.db.alerted(incident_id=incident["id"], kind="zone"):
+            return
+        if not incident and self.db.alerted(page_label=zone.name, since=time.time() - ZONE_REPEAT_S, kind="zone"):
+            return
+        nature = (incident or {}).get("nature")
+        title = " ".join(filter(None, (zone.prefix, "-" if zone.prefix else "", nature or "Call near " + zone.name)))
+        heard = (call.get("transcript") or "").strip()
+        if len(heard) > 240:
+            heard = heard[:239] + "…"
+        self.send("zone", title, "\n".join(filter(None, (where, heard))), tags=["rotating_light"], priority=5,
+                  click=f"{self.base_url}/map" if self.base_url else None,
+                  incident_id=incident["id"] if incident else None, call_id=call["id"], page_label=zone.name)
 
     def page(self, page: dict):
         """A tone-out came in from SDRTrunk."""
@@ -124,7 +144,7 @@ class Alerter:
         page_time = page.get("page_time") or time.time()
         if time.time() - page_time > self.settings.max_age_minutes * 60:
             return
-        if self.db.alerted(page_label=label, since=time.time() - PAGE_REPEAT_S):
+        if self.db.alerted(page_label=label, since=time.time() - PAGE_REPEAT_S, kind="page"):
             return
         tones = f"{page['tone_a']:g}" + (f" / {page['tone_b']:g}" if page.get("tone_b") else "") + " Hz"
         at = datetime.fromtimestamp(page_time).strftime("%H:%M")

@@ -38,6 +38,7 @@ from .config import Config
 from .db import Database
 from .geocode import Geocoder
 from .incidents import MapWorker, highlights
+from .zones import ZoneWatch, read_zones
 from .summaries import Summarizer, attach as attach_summary, incident_basis
 from .tones import ToneFinder
 from .worker import TranscriptionWorker
@@ -119,6 +120,17 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                     summarizer.incident_changed(incident_id)
 
             map_worker.on_placed = placed
+            zones = read_zones(config.alerts.zones) if alerter else []
+            if zones:
+                watch = ZoneWatch(zones, gazetteer, geocoder)
+
+                def looked_at(call, incident_id):
+                    found = watch.check(call, db.get_incident(incident_id) if incident_id else None)
+                    if found:
+                        zone, where, incident = found
+                        alerter.zone_call(zone, where, call, incident)
+
+                map_worker.on_done = looked_at
             if summarizer:
                 # Calls moved between incidents by hand on the map.
                 map_worker.on_changed = lambda ids: [summarizer.incident_changed(i) for i in ids]

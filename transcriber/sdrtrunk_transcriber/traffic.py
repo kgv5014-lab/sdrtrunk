@@ -2,9 +2,9 @@
 
 511PA's map page reads the same data with no key: /map/mapIcons/{layer} lists every item's id and position
 statewide, and /map/data/{layer}/{id} has the details. Only items inside [traffic] area are fetched in detail.
-Camera stills are passed through this server; live video needs a short-lived token that only a server can
-get (511PA's token service answers 511pa.com pages only), after which the browser plays the stream itself.
-PennDOT's video license allows showing cameras live but not recording them, so nothing is saved.
+Camera stills are passed through this server. Live video is only handed out to 511pa.com's own pages, so the
+map links to the camera's 511PA page for it. PennDOT allows showing cameras live but not recording them, so
+nothing is saved.
 """
 
 import logging
@@ -19,9 +19,7 @@ from .config import Config
 log = logging.getLogger(__name__)
 
 SITE = "https://www.511pa.com"
-TOKEN_URL = "https://pa.arcadis-ivds.com/api/SecureTokenUri/GetSecureTokenUriBySourceId"
-HEADERS = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
-                         "Chrome/130.0 Safari/537.36", "Referer": f"{SITE}/map"}
+HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; sdrtrunk-transcriber)"}
 # 511PA layer name -> what the map calls it.
 EVENT_LAYERS = {
     "MajorRouteIncident": "incident", "OtherRouteIncident": "incident",
@@ -103,11 +101,13 @@ def camera_from(data: dict, location) -> dict:
             continue
         views.append({
             "image_id": int(image["id"]), "description": image.get("description") or "",
-            "video": bool(image.get("videoUrl")) and not image.get("videoDisabled"),
+            "live": bool(image.get("videoUrl")) and not image.get("videoDisabled"),
         })
     return {
         "id": str(data.get("id")), "roadway": data.get("roadway") or "", "name": data.get("location") or "",
         "lat": float(location[0]), "lon": float(location[1]), "views": views,
+        # 511PA's own camera window, which plays the live video.
+        "page": f"{SITE}/tooltip/Cameras/{data.get('id')}?lang=en",
     }
 
 
@@ -121,8 +121,6 @@ class Traffic511:
         self._events: dict[str, dict] = {}
         self._fetched: dict[str, float] = {}
         self._cameras: dict[str, dict] = {}
-        # Camera image id -> (video URL, video needs a token)
-        self._video: dict[int, tuple[str, bool]] = {}
         self._cameras_at = 0.0
         self.error: str | None = None
         self.updated: float | None = None
@@ -184,7 +182,7 @@ class Traffic511:
         self.updated = now
 
     def _load_cameras(self):
-        cameras, video = {}, {}
+        cameras = {}
         for icon in self._icons("Cameras"):
             item_id = str(icon["itemId"])
             try:
@@ -197,12 +195,8 @@ class Traffic511:
             camera = camera_from(data, icon["location"])
             if camera["views"]:
                 cameras[item_id] = camera
-            for image in data.get("images") or []:
-                if image.get("id") is not None and image.get("videoUrl"):
-                    video[int(image["id"])] = (image["videoUrl"], bool(image.get("isVideoAuthRequired")))
         with self._lock:
             self._cameras = cameras
-            self._video.update(video)
         log.info("511PA: %d traffic cameras in the map area", len(cameras))
 
     def events(self) -> list[dict]:
@@ -222,22 +216,3 @@ class Traffic511:
         reply = self.session.get(f"{SITE}/map/Cctv/{image_id}", timeout=15)
         reply.raise_for_status()
         return reply.content, reply.headers.get("content-type", "image/jpeg")
-
-    def video_url(self, image_id: int) -> str | None:
-        """A playable HLS address for a camera view, with a fresh token when one is needed."""
-        with self._lock:
-            found = self._video.get(image_id)
-        if not found:
-            return None
-        url, needs_token = found
-        if not needs_token:
-            return url
-        reply = self.session.get(f"{SITE}/Camera/GetVideoUrl", params={"imageId": image_id}, timeout=15)
-        reply.raise_for_status()
-        ticket = reply.json()
-        reply = self.session.post(TOKEN_URL, json=ticket, timeout=15)
-        reply.raise_for_status()
-        suffix = reply.text.strip().strip('"')
-        if not suffix.startswith("?"):
-            raise ValueError(f"unexpected token reply {suffix[:60]!r}")
-        return url + suffix

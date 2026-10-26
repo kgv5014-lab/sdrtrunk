@@ -247,8 +247,8 @@ The service reads the receiver, so the map works the same from your phone over T
 ### PennDOT traffic and cameras
 
 The map can show PennDOT's crashes, road closures and roadwork from the public 511PA website (no sign-up),
-and the traffic cameras in the map area. Click a camera for its picture, refreshed every 10 seconds, and
-"Live video" for the stream. A radio incident near a PennDOT crash or closure shows it ("🚦 PennDOT:
+and the traffic cameras in the map area. Click a camera for its picture, refreshed every 5 seconds;
+"Live video on 511PA" opens the camera's own 511PA window, since PennDOT only plays video there. A radio incident near a PennDOT crash or closure shows it ("🚦 PennDOT:
 Multi vehicle crash · US 22"), and incident popups list the closest cameras. The three layers are turned
 on and off in the box at the top right of the map. In `config.toml`:
 

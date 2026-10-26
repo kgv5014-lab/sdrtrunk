@@ -63,15 +63,9 @@ class FakeSession:
             return Reply({"item1": {}, "item2": ICONS.get(path.rsplit("/", 1)[1], [])})
         if path in DETAILS:
             return Reply(DETAILS[path])
-        if path == "/Camera/GetVideoUrl":
-            return Reply({"token": "ABC", "sourceId": "1888", "systemSourceId": "PennDOT"})
         if path.startswith("/map/Cctv/"):
             return Reply(content=b"\xff\xd8jpeg", headers={"content-type": "image/jpeg"})
         return Reply(status=404)
-
-    def post(self, url, json=None, timeout=None):
-        self.calls.append(("POST", url, json))
-        return Reply(text='"?token=79eca96a"')
 
 
 def make(**settings):
@@ -109,16 +103,14 @@ def test_details_are_not_fetched_again_until_stale():
     assert session.calls.count("/map/data/OtherRouteIncident/500001") == first + 1
 
 
-def test_cameras_keep_working_views_and_video_needs_a_token():
+def test_cameras_keep_working_views_and_link_to_511pa_for_video():
     traffic, session = make()
     traffic.poll(NOW)
     [camera] = traffic.cameras()
     assert camera["name"] == "US 22 @ PA 378"
-    assert [(v["image_id"], v["video"]) for v in camera["views"]] == [(7001, True), (7002, False)]
+    assert [(v["image_id"], v["live"]) for v in camera["views"]] == [(7001, True), (7002, False)]
+    assert camera["page"] == "https://www.511pa.com/tooltip/Cameras/4001?lang=en"
     assert traffic.known_image(7001) and not traffic.known_image(7003)
-    assert traffic.video_url(7001) == "https://pa-se3.arcadis-ivds.com:8200/chan-3207/index.m3u8?token=79eca96a"
-    assert session.calls[-1][2] == {"token": "ABC", "sourceId": "1888", "systemSourceId": "PennDOT"}
-    assert traffic.video_url(7002) is None
     assert traffic.image(7001) == (b"\xff\xd8jpeg", "image/jpeg")
 
 

@@ -421,18 +421,6 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             raise HTTPException(502, f"511PA: {e}")
         return Response(content, media_type=kind, headers={"Cache-Control": "no-store"})
 
-    @app.get("/api/traffic/cameras/{image_id}/video")
-    def camera_video(request: Request, image_id: int):
-        traffic = _traffic(request)
-        try:
-            url = traffic.video_url(image_id)
-        except Exception as e:
-            log.warning("511PA: no video for camera image %d (%s)", image_id, e)
-            raise HTTPException(502, f"511PA: {e}")
-        if url is None:
-            raise HTTPException(404, "This camera has no live video")
-        return {"url": url}
-
     @app.get("/api/incidents")
     def list_incidents(request: Request, since: int | None = None, until: int | None = None,
                        hidden: bool = False, limit: int = 300):

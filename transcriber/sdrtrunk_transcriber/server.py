@@ -43,6 +43,7 @@ from .incidents import MapWorker, highlights
 from .zones import ZoneWatch, read_zones
 from .summaries import Summarizer, attach as attach_summary, incident_basis
 from .tones import ToneFinder
+from .units import UnitBoard
 from .worker import TranscriptionWorker
 
 log = logging.getLogger(__name__)
@@ -138,7 +139,17 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 map_worker.on_changed = lambda ids: [summarizer.incident_changed(i) for i in ids]
             map_worker.start()
 
+        units = UnitBoard(db, codebook)
+        try:
+            units.rebuild()
+        except Exception:
+            log.exception("Unit board: could not read recent calls")
+
         def done(call_id):
+            try:
+                units.call_done(call_id)
+            except Exception:
+                log.exception("Unit board: call %s failed", call_id)
             if map_worker:
                 map_worker.submit(call_id)
             if summarizer:
@@ -163,6 +174,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.summarizer = summarizer
         app.state.aircraft = aircraft
         app.state.traffic = traffic
+        app.state.units = units
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
@@ -364,6 +376,18 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if request.app.state.map_worker is None:
             raise HTTPException(404, "The incident map is turned off in config.toml ([map] enabled)")
         return request.app.state.map_worker
+
+    @app.get("/units", response_class=HTMLResponse)
+    def units_page():
+        return (WEB_DIR / "units.html").read_text(encoding="utf-8")
+
+    @app.get("/api/units")
+    def list_units(request: Request, hours: float = 12):
+        return request.app.state.units.board(hours)
+
+    @app.post("/api/units/rebuild")
+    def rebuild_units(request: Request, hours: float = 12):
+        return {"calls": request.app.state.units.rebuild(hours)}
 
     @app.get("/api/aircraft")
     def list_aircraft(request: Request):

@@ -29,12 +29,19 @@ stock_phrase_logprob = -0.7
 # With language = "en": keep Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...),
 # which it sometimes does on noise, and remove any that still get through.
 english_only = true
+# Also forbid other scripts while Whisper decodes. Slow (3-7x on a GTX 1070 Ti for the same text), so
+# off; english_only above still removes any that get through.
+block_other_scripts = false
 # Stop a call that runs away into a loop ("RIT, RIT, RIT...") from holding up the queue: Whisper may
 # write at most this many tokens per second of audio (about 4 words a second). 0 = no limit.
 max_tokens_per_second = 8.0
 # When a try comes out as a loop or very unsure, Whisper tries again at these temperatures. Whisper's
 # own list goes up to 1.0 (six tries), which is slow and mostly adds made-up text on radio audio.
 temperatures = [0.0, 0.2, 0.4]
+# When calls pile up, ones on these talkgroups are transcribed first, in this order, so fire and EMS
+# dispatch (and their alerts) don't wait behind police chatter. Matched against the talkgroup's name,
+# group or number. Everything else waits its turn, oldest first.
+first_talkgroups = ["Countywide", "Fire", "FD", "EMS", "Med", "Ops", "Tac"]
 
 [audio]
 # Clean up each call before Whisper hears it: keep only the voice band (drops the low hum of
@@ -73,6 +80,8 @@ file = "codes.csv"
 # written as 13:46, and so is the time at the end of a dispatch however Whisper wrote it ("Ops 1,
 # 14-16"). 0 turns this off.
 time_window_minutes = 3
+# Write those times the 12-hour way ("1:46 PM").
+twelve_hour = true
 
 [corrections]
 # Fixes you make with the Edit button on the call log page. Replaced words are learned here as

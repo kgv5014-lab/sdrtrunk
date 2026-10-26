@@ -1,5 +1,6 @@
 """Background thread that transcribes queued calls one at a time."""
 
+import itertools
 import logging
 import queue
 import threading
@@ -9,7 +10,7 @@ from pathlib import Path
 
 from . import audio
 from .backends import Backend
-from .codes import CodeBook
+from .codes import CodeBook, to_twelve_hour
 from .config import Config
 from .corrections import CorrectionBook
 from .db import Database
@@ -19,10 +20,13 @@ from .places import PlaceBook
 log = logging.getLogger(__name__)
 
 
-PROMPT_LIMIT = 800
+# Whisper keeps only the last ~224 tokens of a prompt; Ken's 800-character prompts were 291 tokens, so
+# the first place names were silently dropped. About 2.75 characters a token.
+PROMPT_LIMIT = 600
 # A call with no words and at least this much tone (paging tones, alert beeps) is labelled tones only.
 TONES_ONLY_MIN_S = 1.0
 TONES_ONLY = "tones only"
+LAST_RANK = 1_000_000
 # The sample terms that vocabulary.example.txt used to ship with. Left in place, Whisper echoes them
 # back on unclear audio ("10-4, Main Street, Battalion 1"), so they are ignored.
 SAMPLE_VOCABULARY = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main Street"]
@@ -65,7 +69,9 @@ class TranscriptionWorker:
         self.db = db
         self._backend_factory = backend_factory
         self._backend: Backend | None = None
-        self._queue: "queue.Queue[int | None]" = queue.Queue()
+        # (rank, arrival order, call id): lower ranks first, oldest first within a rank.
+        self._queue: "queue.PriorityQueue[tuple[int, int, int | None]]" = queue.PriorityQueue()
+        self._order = itertools.count()
         self._thread = threading.Thread(target=self._run, name="transcriber", daemon=True)
         self.ready = threading.Event()
         self.codebook = codebook
@@ -88,15 +94,27 @@ class TranscriptionWorker:
 
     def start(self):
         for call_id in self.db.pending_ids():
-            self._queue.put(call_id)
+            self.submit(call_id)
         self._thread.start()
 
     def stop(self, timeout: float = 30):
-        self._queue.put(None)
+        # Ranked after every call, so the queue drains first as before.
+        self._queue.put((LAST_RANK, next(self._order), None))
         self._thread.join(timeout)
 
+    def rank(self, call: dict | None) -> int:
+        """Where a call goes in line: its place in first_talkgroups, or after all of them."""
+        first = self.config.transcription.first_talkgroups
+        if call:
+            names = " ".join(str(call.get(k) or "") for k in ("talkgroup_label", "talkgroup_group", "talkgroup"))
+            names = names.lower()
+            for i, word in enumerate(first):
+                if str(word).lower() in names:
+                    return i
+        return len(first)
+
     def submit(self, call_id: int):
-        self._queue.put(call_id)
+        self._queue.put((self.rank(self.db.get_call(call_id)), next(self._order), call_id))
 
     def queue_size(self) -> int:
         return self._queue.qsize()
@@ -119,7 +137,7 @@ class TranscriptionWorker:
         self.ready.set()
 
         while True:
-            call_id = self._queue.get()
+            _rank, _order, call_id = self._queue.get()
             try:
                 if call_id is None:
                     return
@@ -173,6 +191,8 @@ class TranscriptionWorker:
         transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))
         # Ken's own fixes last: they were learned from the finished transcript.
         transcript = self.corrections.normalize(transcript, call["talkgroup_label"])
+        if self.config.codes.twelve_hour:
+            transcript = to_twelve_hour(transcript)
 
         self.db.update_call(
             call_id,

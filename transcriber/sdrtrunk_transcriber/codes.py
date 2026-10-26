@@ -176,6 +176,15 @@ def twelve_hour(hour: int, minute: int) -> str:
     return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
 
 
+# A 24-hour time as normalize writes it ("13:46"), not already followed by AM or PM.
+TWENTY_FOUR_HOUR = re.compile(r"(?<![\d:])([01]\d|2[0-3]):([0-5]\d)(?![\d:])(?!\s*[ap]\.?m\b)", re.IGNORECASE)
+
+
+def to_twelve_hour(text: str) -> str:
+    """"Ops 1, 13:41" -> "Ops 1, 1:41 PM"."""
+    return TWENTY_FOUR_HOUR.sub(lambda m: twelve_hour(int(m.group(1)), int(m.group(2))), text or "")
+
+
 class CodeBook:
     def __init__(self, path: Path | None, time_window_minutes: int = 3):
         self.path = path

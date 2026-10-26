@@ -103,6 +103,7 @@
 <header>
   <h1>Incident map</h1>
   <a href="./">Call log</a>
+  <a href="units">Units</a>
   <select id="range" title="Time range">
     <option value="3600">Last hour</option>
     <option value="21600">Last 6 hours</option>
@@ -810,6 +811,9 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
   const watchingTraffic = await loadTraffic();
   if (watchingTraffic) addTrafficControl();
   await load();
+  // Opened from the unit board: map#incident-12
+  const linked = /^#incident-(\d+)$/.exec(location.hash);
+  if (linked) showIncident(Number(linked[1]));
   loadFeed();
   setInterval(loadFeed, 5000);
   if (watchingAircraft) setInterval(loadAircraft, 5000);

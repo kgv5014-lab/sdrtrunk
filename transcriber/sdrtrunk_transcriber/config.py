@@ -36,6 +36,10 @@ class TranscriptionConfig:
     # With language "en": stop Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...)
     # and remove any that still get through.
     english_only: bool = True
+    # Also forbid Whisper from even writing other scripts while it decodes. That list is thousands of
+    # tokens and made every call 3-7 times slower on Ken's GTX 1070 Ti for the same text, so it is off;
+    # english_only still removes any that get through.
+    block_other_scripts: bool = False
     # Stops a call from running away into a loop ("RIT, RIT, RIT...") that holds up the queue for
     # minutes: Whisper may write at most this many tokens per second of audio (about 4 words a second).
     # 0 = no limit.
@@ -44,6 +48,10 @@ class TranscriptionConfig:
     # randomness each time). Whisper's own list goes to 1.0, six tries in all, which is slow and mostly
     # adds made-up text on radio audio.
     temperatures: list = field(default_factory=lambda: [0.0, 0.2, 0.4])
+    # When calls pile up, ones on these talkgroups are transcribed first, in this order, so fire and EMS
+    # dispatch (and their alerts) don't wait behind police chatter. Matched against the talkgroup's name,
+    # group or number. Everything else waits its turn, oldest first.
+    first_talkgroups: list = field(default_factory=lambda: ["Countywide", "Fire", "FD", "EMS", "Med", "Ops", "Tac"])
 
 
 @dataclass
@@ -100,6 +108,8 @@ class CodesConfig:
     # A spoken time ("1346", or "14-16" at the end of a dispatch) within this many minutes of the call
     # becomes "13:46". 0 = off.
     time_window_minutes: int = 3
+    # Write those times the 12-hour way ("1:46 PM") in transcripts.
+    twelve_hour: bool = True
 
 
 @dataclass

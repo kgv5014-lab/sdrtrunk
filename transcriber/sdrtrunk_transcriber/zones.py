@@ -3,15 +3,17 @@
 A zone is set in config.toml under [alerts] zones with a centre (lat and lon, or an address looked up
 once online) and a radius. A call alerts when the map places it, or the incident it joins, inside
 the circle. A call that names a road without placing it ("Concord Circle", with no house number or cross
-street), or that joined an incident elsewhere, alerts when that road lies wholly inside the circle: a short local road there
-can only mean somewhere in the zone, while a long road passing through could be anywhere along it.
+street), or that joined an incident elsewhere, alerts when that road lies wholly inside the circle:
+a short local road there can only mean somewhere in the zone, while a long road passing through could
+be anywhere along it. The same goes for a store or other landmark: it counts when every one of that
+name is inside the circle.
 """
 
 import logging
 import math
 from dataclasses import dataclass, field
 
-from .addresses import Gazetteer, words
+from .addresses import TRANSPORT_WORDS, Gazetteer, town_key, words
 from .incidents import distance_m
 
 log = logging.getLogger(__name__)
@@ -114,9 +116,10 @@ class ZoneWatch:
                 if d <= zone.radius_m:
                     where = incident.get("label") or "on the map"
                     return zone, f"{where} ({d / METRES_PER_MILE:.1f} mi away)", incident
-            road = self._road_named(zone, call.get("transcript") or "")
-            if road:
-                return zone, road, None
+            text = call.get("transcript") or ""
+            named = self._road_named(zone, text) or self._place_named(zone, text)
+            if named:
+                return zone, named, None
         return None
 
     def _road_named(self, zone: Zone, text: str) -> str | None:
@@ -134,4 +137,22 @@ class ZoneWatch:
                     continue
                 if street in zone.roads:
                     return street.name + (f", {street.town}" if street.town else "")
+        return None
+
+    def _place_named(self, zone: Zone, text: str) -> str | None:
+        """A store, school or other landmark in the zone, when every one of that name is in the zone
+        (a chain store with branches elsewhere only counts with the town named)."""
+        w = words(text)
+        # "Transporting one to St. Luke's" is where the patient goes, not where the call is.
+        if TRANSPORT_WORDS & set(w):
+            return None
+        towns = self.gazetteer.towns_in(w)
+        for i in range(len(w)):
+            # One-word names are too often ordinary words, as on the map.
+            for length in range(min(6, len(w) - i), 1, -1):
+                marks = [m for m in self.gazetteer.landmarks.get(tuple(w[i:i + length]), []) if m.lat is not None]
+                if towns:
+                    marks = [m for m in marks if town_key(m.town) in towns]
+                if marks and all(distance_m(zone.lat, zone.lon, m.lat, m.lon) <= zone.radius_m for m in marks):
+                    return marks[0].name + (f", {marks[0].town}" if marks[0].town else "")
         return None

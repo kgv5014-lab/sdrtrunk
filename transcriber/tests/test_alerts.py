@@ -260,3 +260,15 @@ def test_a_road_named_in_another_town_is_not_in_the_zone(tmp_path):
                       Gazetteer(tmp_path / "places-geo.json", None))
     assert watch.check({"transcript": "Respond Short Lane for a fall."}, None)[1] == "Short Lane, Wilson"
     assert watch.check({"transcript": "Respond Short Lane in Easton for a fall."}, None) is None
+
+
+def test_a_landmark_in_the_zone_alerts(tmp_path):
+    from sdrtrunk_transcriber.addresses import Gazetteer
+    from sdrtrunk_transcriber.zones import ZoneWatch, read_zones
+    make_config(tmp_path)
+    gazetteer = Gazetteer(tmp_path / "places-geo.json", None)
+    near = ZoneWatch(read_zones([{"name": "Hospital", "lat": 40.692, "lon": -75.229}]), gazetteer)
+    far = ZoneWatch(read_zones([{"name": "Wilson", "lat": 40.6805, "lon": -75.24}]), gazetteer)
+    assert near.check({"transcript": "Medic 2 respond Easton Hospital lobby."}, None)[1] == "Easton Hospital, Easton"
+    assert near.check({"transcript": "Medic 2 transporting one to Easton Hospital."}, None) is None
+    assert far.check({"transcript": "Medic 2 respond Easton Hospital lobby."}, None) is None

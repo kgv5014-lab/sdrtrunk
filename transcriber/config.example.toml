@@ -35,6 +35,10 @@ max_tokens_per_second = 8.0
 # When a try comes out as a loop or very unsure, Whisper tries again at these temperatures. Whisper's
 # own list goes up to 1.0 (six tries), which is slow and mostly adds made-up text on radio audio.
 temperatures = [0.0, 0.2, 0.4]
+# When calls pile up, ones on these talkgroups are transcribed first, in this order, so fire and EMS
+# dispatch (and their alerts) don't wait behind police chatter. Matched against the talkgroup's name,
+# group or number. Everything else waits its turn, oldest first.
+first_talkgroups = ["Countywide", "Fire", "FD", "EMS", "Med", "Ops", "Tac"]
 
 [audio]
 # Clean up each call before Whisper hears it: keep only the voice band (drops the low hum of

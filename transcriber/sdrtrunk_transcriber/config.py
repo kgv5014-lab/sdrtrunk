@@ -44,6 +44,10 @@ class TranscriptionConfig:
     # randomness each time). Whisper's own list goes to 1.0, six tries in all, which is slow and mostly
     # adds made-up text on radio audio.
     temperatures: list = field(default_factory=lambda: [0.0, 0.2, 0.4])
+    # When calls pile up, ones on these talkgroups are transcribed first, in this order, so fire and EMS
+    # dispatch (and their alerts) don't wait behind police chatter. Matched against the talkgroup's name,
+    # group or number. Everything else waits its turn, oldest first.
+    first_talkgroups: list = field(default_factory=lambda: ["Countywide", "Fire", "FD", "EMS", "Med", "Ops", "Tac"])
 
 
 @dataclass

@@ -34,6 +34,7 @@ from .codes import CodeBook
 from .corrections import CorrectionBook
 from .places import PlaceBook
 from .addresses import Gazetteer
+from .aircraft import AircraftWatch
 from .config import Config
 from .db import Database
 from .geocode import Geocoder
@@ -143,6 +144,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 summarizer.call_done(call_id)
 
         worker.on_done = done
+        aircraft = AircraftWatch(config, db, alerter) if config.aircraft.enabled else None
+        if aircraft:
+            aircraft.start()
         if summarizer:
             summarizer.start()
         worker.start()
@@ -153,10 +157,13 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.map_worker = map_worker
         app.state.alerter = alerter
         app.state.summarizer = summarizer
+        app.state.aircraft = aircraft
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
         worker.stop()
+        if aircraft:
+            aircraft.stop()
         if map_worker:
             map_worker.stop()
         if alerter:
@@ -350,6 +357,14 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if request.app.state.map_worker is None:
             raise HTTPException(404, "The incident map is turned off in config.toml ([map] enabled)")
         return request.app.state.map_worker
+
+    @app.get("/api/aircraft")
+    def list_aircraft(request: Request):
+        aircraft = request.app.state.aircraft
+        if aircraft is None:
+            return {"enabled": False, "aircraft": []}
+        return {"enabled": True, "aircraft": aircraft.aircraft(), "error": aircraft.error,
+                "updated": aircraft.updated}
 
     @app.get("/api/incidents")
     def list_incidents(request: Request, since: int | None = None, until: int | None = None,

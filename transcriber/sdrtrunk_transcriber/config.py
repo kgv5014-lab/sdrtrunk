@@ -141,6 +141,27 @@ class MapConfig:
 
 
 @dataclass
+class AircraftConfig:
+    # Helicopters on the incident map, from an ADS-B receiver on the network (readsb, tar1090, ultrafeeder).
+    enabled: bool = False
+    # The receiver's aircraft.json. Ultrafeeder serves it on port 8080.
+    url: str = "http://192.168.50.102:8080/data/aircraft.json"
+    poll_s: float = 5.0
+    # Show every helicopter. Off = only aircraft on the watch list.
+    all_helicopters: bool = True
+    # Aircraft to always show and name: [{match = "N123AB", name = "St. Luke's 1"}]. match is a tail
+    # number, flight callsign or ICAO hex code, and may end in * ("LIFE*").
+    watch: list = field(default_factory=list)
+    # A helicopter this low (feet), within this distance of an incident from the last incident_hours, is
+    # marked as landing there.
+    landing_altitude_ft: int = 1500
+    landing_radius_miles: float = 1.0
+    incident_hours: float = 2.0
+    # Also send a phone alert when that happens (needs [alerts] set up).
+    alert_landing: bool = False
+
+
+@dataclass
 class AlertsConfig:
     # Phone alerts through the ntfy app, answered by this service itself (see the README).
     enabled: bool = False
@@ -205,6 +226,7 @@ class Config:
     places: PlacesConfig = field(default_factory=PlacesConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
+    aircraft: AircraftConfig = field(default_factory=AircraftConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
     base_dir: Path = Path(".")
 

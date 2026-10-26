@@ -109,6 +109,26 @@ incident_radius_m = 500
 follow_channels = ["Tac", "Fireground"]
 channel_window_minutes = 60
 
+[aircraft]
+# Helicopters on the incident map, from an ADS-B receiver on your network (readsb, tar1090, ultrafeeder).
+enabled = false
+# The receiver's aircraft.json. Ultrafeeder serves it on port 8080.
+url = "http://192.168.50.102:8080/data/aircraft.json"
+poll_s = 5.0
+# Show every helicopter. false = only aircraft on the watch list below.
+all_helicopters = true
+# Aircraft to always show and name. match is a tail number, flight callsign or ICAO hex code, and may
+# end in * to match the start ("LIFE*").
+# watch = [{match = "N123AB", name = "St. Luke's 1"}]
+watch = []
+# A helicopter this low (feet), within this many miles of an incident from the last incident_hours, is
+# marked on the map as landing there.
+landing_altitude_ft = 1500
+landing_radius_miles = 1.0
+incident_hours = 2.0
+# Also send a phone alert when that happens (needs [alerts] set up).
+alert_landing = false
+
 [alerts]
 # Phone alerts through the ntfy app over Tailscale (see "Phone alerts" in the README).
 enabled = false

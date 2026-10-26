@@ -57,7 +57,8 @@ url = "http://127.0.0.1:8080/inference"
 # Notepad; changes apply without a restart. Set to "" to turn codes off.
 file = "codes.csv"
 # Dispatch reads the time as "1346". A four-digit time within this many minutes of the call is
-# written as 13:46. 0 turns this off.
+# written as 13:46, and so is the time at the end of a dispatch however Whisper wrote it ("Ops 1,
+# 14-16"). 0 turns this off.
 time_window_minutes = 3
 
 [corrections]

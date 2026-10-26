@@ -1,8 +1,9 @@
 """Local radio codes: Whisper hints, spoken-code cleanup, and meaning labels.
 
 Everything comes from one CSV that the user edits (codes.csv), with columns:
-    type        ten-code | signal | unit-suffix | station
-    code        10-23, Signal 33, 81-89 (a range of the last two digits of a call sign), 20 (a station number)
+    type        ten-code | signal | unit-suffix | station | police-esn | call-type | acronym
+    code        10-23, Signal 33, 81-89 (a range of the last two digits of a call sign), 20 (a station or
+                police department number), ALS (a call type or acronym, matched as written)
     meaning     what it means, shown next to the transcript
     applies_to  all | police | fire | ems | fire-ems   (picks between agencies that use a code differently)
     prompt      yes to include it in Whisper's hint list (keep this short; Whisper only reads ~200 words)
@@ -52,6 +53,24 @@ UNIT_WORD_BEFORE = re.compile(r"(?:engine|medic|ladder|tanker|truck|rescue|squad
                               r"station|ambulance|qrs|qrv|brush|tower|utility|box|number|#)\s*$", re.IGNORECASE)
 STREET_WORD_AFTER = re.compile(r"^\s+(?:[A-Z][a-z]+\s+)?(?:street|st|avenue|ave|road|rd|lane|ln|drive|dr|"
                                r"boulevard|blvd|way|court|ct|pike|highway|hwy|place|pl)\b", re.IGNORECASE)
+# Dispatch ends a call with the current time, give or take a minute or two of clock difference.
+# Whisper writes it many ways: "1416", "14-16", "14, 11", "13.43", "30 hours", and sometimes glued to
+# the channel number before it ("Ops 113-30" is Ops 1, 13:30).
+TRAILING_TIME = re.compile(r"(?<![\w.,:-])(\d[\d\s,.:-]*\d)(\s+hours)?\s*[.!]?\s*$", re.IGNORECASE)
+# Words dispatch says just before the time, so a "10-28" there is the time and not a 10-code.
+DISPATCH_WORD_BEFORE = re.compile(r"(?:ops|tac|dispatch|communications|office|ems|fire|channel|"
+                                  r"talkgroup|countywide)\W*(?:\d\W*)?$", re.IGNORECASE)
+# Call signs written with a dash ("15-82"), and station numbers said with the service ("EMS 15").
+DASHED_CALL_SIGN = re.compile(r"(?<![\d-])(\d{2})-(\d{2})(?![\d-])(?!\s+(?:[A-Z][a-z]+\s+)?(?:street|st|"
+                              r"avenue|ave|road|rd|lane|ln|drive|dr|boulevard|blvd|way|court|ct|pike|"
+                              r"highway|hwy|place|pl)\b)", re.IGNORECASE)
+STATION_REF = re.compile(r"\b(?:fire|ems|station|medic|company)\s+(\d{2})\b|\b(\d{2})\s+command\b", re.IGNORECASE)
+# Police cars: department number then car number ("2741" is Palmer Twp car 41).
+POLICE_CAR = re.compile(r"(?<![\d.,-])(\d{2})(\d{1,2})(?![\d-])(?!,?\s+(?:[A-Z][a-z]+\s+){0,2}(?:street|st|"
+                        r"avenue|ave|road|rd|lane|ln|drive|dr|boulevard|blvd|way|court|ct|pike|highway|hwy|"
+                        r"place|pl|circle|north|south|east|west)\b)", re.IGNORECASE)
+# Words before a three-digit number that make it a road or house number, not a police car.
+ADDRESS_WORD_BEFORE = re.compile(r"(?:route|rt|on|at|of|to|out|in|from|near|by)\W*$", re.IGNORECASE)
 WRITTEN_TIME = re.compile(r"(?<![\d:])([01]\d|2[0-3]):([0-5]\d)\b(?!:)")
 
 AGENCY_WORDS = {
@@ -109,6 +128,50 @@ def normalize_times(text: str, call_time: datetime | None, window_minutes: int) 
     return SPOKEN_TIME.sub(replace, text)
 
 
+def normalize_dispatch_time(text: str, call_time: datetime | None, window_minutes: int, ten_codes=()) -> str:
+    """Rewrites the time dispatch reads at the end of a call ("..., Ops 1, 14-16.") as "14:16" when it
+    is within window_minutes of the call. A glued channel number is split off ("Ops 113-30" becomes
+    "Ops 1, 13:30")."""
+    if not text or call_time is None or window_minutes <= 0:
+        return text
+    match = TRAILING_TIME.search(text)
+    if not match:
+        return text
+    token = match.group(1)
+    groups = list(re.finditer(r"\d+", token))
+    now = call_time.hour * 60 + call_time.minute
+    # Try the last one, two or three number groups: "1416", "14-16", "1, 14, 11"
+    for count in (1, 2, 3):
+        if count > len(groups):
+            break
+        first = groups[-count]
+        digits = "".join(g.group(0) for g in groups[-count:])
+        if len(digits) not in (4, 5) or len(groups[-1].group(0)) not in (2, 4, 5) or \
+                (count > 1 and len(groups[-1].group(0)) != 2):
+            continue
+        prefix, hour, minute = digits[:-4], int(digits[-4:-2]), int(digits[-2:])
+        if hour > 23 or minute > 59:
+            continue
+        before = text[:match.start(1) + first.start()]
+        dispatch_word = DISPATCH_WORD_BEFORE.search(before)
+        # A glued channel number only follows a channel word; "10-28" alone may be the 10-code.
+        if prefix and not dispatch_word:
+            continue
+        if not prefix and digits[:2] == "10" and f"10-{minute}" in ten_codes and not dispatch_word:
+            continue
+        # Groups before this one must end where a number list would ("2000, 14-16" keeps the 2000)
+        if before and (before[-1].isdigit() or before[-1] == "-"):
+            continue
+        diff = abs(now - (hour * 60 + minute))
+        if min(diff, 24 * 60 - diff) > window_minutes:
+            continue
+        written = f"{hour:02d}:{minute:02d}"
+        if prefix:
+            written = f"{prefix}, {written}"
+        return before + written + text[match.start(1) + groups[-1].end():]
+    return text
+
+
 def twelve_hour(hour: int, minute: int) -> str:
     return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
 
@@ -122,6 +185,9 @@ class CodeBook:
         self._codes: dict[str, list[Entry]] = {}
         self._stations: dict[str, str] = {}
         self._suffixes: list[SuffixRange] = []
+        self._police: dict[str, str] = {}
+        self._words: dict[str, Entry] = {}
+        self._word_pattern: re.Pattern | None = None
         self._prompt: list[str] = []
         self.reload_if_changed()
 
@@ -137,7 +203,7 @@ class CodeBook:
             self._load()
 
     def _load(self):
-        codes, stations, suffixes, prompt = {}, {}, [], []
+        codes, stations, suffixes, prompt, police, words = {}, {}, [], [], {}, {}
         for row in self._read_rows():
             entry = Entry(
                 type=(row.get("type") or "").strip().lower(),
@@ -156,13 +222,23 @@ class CodeBook:
                         prompt.append(key)
             elif entry.type == "station":
                 stations[entry.code.zfill(2)] = entry.meaning
+            elif entry.type == "police-esn":
+                police[entry.code.zfill(2)] = entry.meaning
+            elif entry.type in ("call-type", "acronym"):
+                # A call type wins over an acronym with the same letters
+                if entry.type == "call-type" or entry.code not in words:
+                    words[entry.code] = entry
             elif entry.type == "unit-suffix":
                 low, _, high = entry.code.partition("-")
                 if low.isdigit() and (not high or high.isdigit()):
                     suffixes.append(SuffixRange(int(low), int(high or low), entry.meaning))
         self._codes, self._stations, self._suffixes, self._prompt = codes, stations, suffixes, prompt
-        log.info("Loaded %d codes, %d stations, %d unit types from %s",
-                 len(codes), len(stations), len(suffixes), self.path)
+        self._police = police
+        self._words = words
+        self._word_pattern = re.compile(r"(?<![\w-])(" + "|".join(
+            re.escape(w) for w in sorted(words, key=len, reverse=True)) + r")(?![\w-])") if words else None
+        log.info("Loaded %d codes, %d stations, %d unit types, %d police departments, %d call types and "
+                 "acronyms from %s", len(codes), len(stations), len(suffixes), len(police), len(words), self.path)
 
     def _read_rows(self) -> list[dict]:
         if self._mtime is None:
@@ -201,13 +277,18 @@ class CodeBook:
         text = SPOKEN_TEN_CODE.sub(ten, text)
         text = SPOKEN_SIGNAL.sub(signal, text)
         # After the codes, so "10 23" said at 10:23 still becomes the code 10-23.
-        return normalize_times(text, call_time, self.time_window_minutes)
+        text = normalize_times(text, call_time, self.time_window_minutes)
+        return normalize_dispatch_time(text, call_time, self.time_window_minutes, codes)
 
-    def annotate(self, text: str | None, *context: str | None) -> list[dict]:
-        """Labels for the codes and call signs found in a transcript, in order of appearance."""
+    def annotate(self, text: str | None, *context: str | None, call_time: float | None = None) -> list[dict]:
+        """Labels for the codes and call signs found in a transcript, in order of appearance. With the
+        call's time, a dispatch time written the old way ("14-16") is labelled too."""
         if not text:
             return []
         self.reload_if_changed()
+        if call_time:
+            text = normalize_dispatch_time(text, datetime.fromtimestamp(call_time), self.time_window_minutes,
+                                           self._codes)
         agency = _agency(" ".join(c for c in context if c))
         found, seen = [], set()
 
@@ -216,20 +297,51 @@ class CodeBook:
         for match in SIGNAL.finditer(text):
             self._add_code(found, seen, match.start(), f"Signal {int(match.group(1))}", match.group(0), agency)
 
+        used = []
         for match in WRITTEN_TIME.finditer(text):
+            used.append(match.span())
             if match.group(0) not in seen:
                 seen.add(match.group(0))
                 found.append((match.start(), {"code": match.group(0), "kind": "time",
                                               "meaning": twelve_hour(int(match.group(1)), int(match.group(2)))}))
 
-        if self._stations and self._suffixes:
-            for match in CALL_SIGN.finditer(text):
-                station = self._stations.get(match.group(1))
-                unit = next((s.meaning for s in self._suffixes if s.low <= int(match.group(2)) <= s.high), None)
-                if station and unit and match.group(0) not in seen:
+        if agency == "police" and self._police:
+            for match in POLICE_CAR.finditer(text):
+                department = self._police.get(match.group(1))
+                car = int(match.group(2))
+                if len(match.group(0)) == 3 and ADDRESS_WORD_BEFORE.search(text[:match.start()]):
+                    continue
+                if department and car and match.group(0) not in seen and not _inside(match, used):
                     seen.add(match.group(0))
-                    found.append((match.start(), {"code": match.group(0), "meaning": f"{station}, {unit}",
+                    found.append((match.start(), {"code": match.group(0), "meaning": f"{department}, car {car}",
                                                   "kind": "unit"}))
+        elif self._stations and self._suffixes:
+            for pattern in (CALL_SIGN, DASHED_CALL_SIGN):
+                for match in pattern.finditer(text):
+                    if _inside(match, used) or (pattern is DASHED_CALL_SIGN and match.group(1) == "10"):
+                        continue
+                    station = self._stations.get(match.group(1))
+                    unit = next((s.meaning for s in self._suffixes if s.low <= int(match.group(2)) <= s.high), None)
+                    if station and unit and match.group(0) not in seen:
+                        seen.add(match.group(0))
+                        found.append((match.start(), {"code": match.group(0), "meaning": f"{station}, {unit}",
+                                                      "kind": "unit"}))
+
+        if self._stations:
+            for match in STATION_REF.finditer(text):
+                station = self._stations.get(match.group(1) or match.group(2))
+                if station:
+                    used.append(match.span())
+                if station and match.group(0).lower() not in seen:
+                    seen.add(match.group(0).lower())
+                    found.append((match.start(), {"code": match.group(0), "meaning": station, "kind": "unit"}))
+
+        if self._word_pattern:
+            for match in self._word_pattern.finditer(text):
+                if match.group(1) not in seen and not _inside(match, used):
+                    seen.add(match.group(1))
+                    found.append((match.start(), {"code": match.group(1), "meaning": self._words[match.group(1)].meaning,
+                                                  "kind": "code"}))
 
         return [item for _, item in sorted(found, key=lambda pair: pair[0])]
 
@@ -240,6 +352,10 @@ class CodeBook:
         seen.add(key)
         entry = _pick(entries, agency)
         found.append((position, {"code": shown, "meaning": entry.meaning, "kind": "code"}))
+
+
+def _inside(match, spans) -> bool:
+    return any(start < match.end() and match.start() < end for start, end in spans)
 
 
 def _code_key(code: str) -> str | None:

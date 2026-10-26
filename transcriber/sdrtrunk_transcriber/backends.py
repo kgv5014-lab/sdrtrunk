@@ -9,6 +9,7 @@ import requests
 
 from . import audio
 from .config import Config
+from .junk import is_english
 
 log = logging.getLogger(__name__)
 
@@ -72,6 +73,28 @@ def clean_segments(segments: list[Segment], no_speech_threshold: float,
     return Transcript(text, confidence)
 
 
+def non_english_tokens(tokenizer) -> list[int] | None:
+    """Token ids that write another script, so Whisper can't pick them. Returns None (suppress only
+    Whisper's usual tokens) if the tokenizer can't be read.
+
+    Whisper's tokens are pieces of UTF-8: Chinese and Korean characters are often split over two or
+    three tokens that each decode to a broken character, so those are blocked too. Accented Latin
+    letters are whole tokens and stay allowed."""
+    try:
+        end_of_text = tokenizer.token_to_id("<|endoftext|>")
+        ids = []
+        for token_id in range(end_of_text):
+            text = tokenizer.decode([token_id])
+            if "\ufffd" in text or not is_english(text):
+                ids.append(token_id)
+        log.info("English only: blocked %d of %d text tokens that write other scripts", len(ids), end_of_text)
+        # -1 keeps Whisper's own default list of suppressed symbols
+        return [-1] + ids
+    except Exception as e:
+        log.warning("English only: could not read the tokenizer (%s); only cleaning transcripts afterwards", e)
+        return None
+
+
 class FasterWhisperBackend(Backend):
     name = "faster-whisper"
 
@@ -91,6 +114,10 @@ class FasterWhisperBackend(Backend):
             download_root=fw.download_root or None,
         )
         log.info("faster-whisper model loaded")
+        self._suppress = None
+        tc = config.transcription
+        if tc.english_only and (tc.language or "").lower().startswith("en"):
+            self._suppress = non_english_tokens(getattr(self._model, "hf_tokenizer", None))
 
     def transcribe(self, samples: np.ndarray, prompt: str) -> Transcript:
         tc = self.config.transcription
@@ -104,6 +131,7 @@ class FasterWhisperBackend(Backend):
             vad_filter=self.config.faster_whisper.vad_filter,
             no_speech_threshold=tc.no_speech_threshold,
             log_prob_threshold=tc.log_prob_threshold,
+            suppress_tokens=self._suppress or [-1],
         )
         return clean_segments(
             [Segment(s.text, s.avg_logprob, s.no_speech_prob) for s in segments],

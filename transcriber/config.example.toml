@@ -26,6 +26,9 @@ junk_filter = true
 # A call that is only a stock phrase like "Thank you." is dropped when Whisper's confidence (shown as
 # "low confidence" on the call log page below -0.8) is below this.
 stock_phrase_logprob = -0.7
+# With language = "en": keep Whisper from writing other scripts (Korean, Chinese, Cyrillic, Arabic...),
+# which it sometimes does on noise, and remove any that still get through.
+english_only = true
 
 [audio]
 # Clean up each call before Whisper hears it: keep only the voice band (drops the low hum of

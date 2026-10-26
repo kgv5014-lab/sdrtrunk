@@ -323,6 +323,8 @@ def test_faster_whisper_backend_passes_gpu_settings(monkeypatch):
     assert created["transcribe"]["vad_filter"] is True
     assert created["transcribe"]["initial_prompt"] == "Medic 4"
     assert created["transcribe"]["language"] == "en"
+    # No tokenizer on the fake model: English only falls back to cleaning transcripts afterwards
+    assert created["transcribe"]["suppress_tokens"] == [-1]
     assert result.text == "Medic 4 on scene."
 
 

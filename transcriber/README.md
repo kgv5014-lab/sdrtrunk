@@ -360,6 +360,9 @@ restart. Settings are under `[tones]`; `talkgroups` limits the search to dispatc
 * Whisper invents words on noise. `junk_filter` drops a whole call of "Thank you." heard with low
   confidence, cuts loops ("10-4, 10-4, 10-4...") to one copy, and removes counting runs and echoes of
   the hint list.
+* Whisper sometimes writes Korean, Chinese, Cyrillic or Arabic on noise, even with `language = "en"`.
+  `english_only` blocks those characters while Whisper writes (faster-whisper) and removes any left
+  afterwards; a call that is mostly another script is dropped.
 * Keep vocabulary.txt to your own names. Whisper repeats hint words back on unclear audio, and the old
   sample terms ("Engine 12", "Main Street") are now ignored for that reason.
 * Whisper invents words on silence. The service drops calls shorter than `min_duration_s`, runs voice

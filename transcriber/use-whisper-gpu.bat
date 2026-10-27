@@ -1,5 +1,5 @@
 @echo off
-rem Points Whisper at the GTX 1070 Ti, called by start-transcriber.bat and compare-transcripts.bat.
+rem Points Whisper at the GTX 1070 Ti, called by start-transcriber.bat, compare-transcripts.bat and compare-hints.bat.
 rem Windows tools (nvidia-smi) and CUDA can number the two cards differently, so a card number such as
 rem CUDA_VISIBLE_DEVICES=1 can land on the 1070 that Ollama uses. A card's UUID never changes, so this
 rem finds the 1070 Ti by name and hands CUDA its UUID. Whisper then sees only that card, as device 0.

@@ -354,6 +354,23 @@ To check whether changes help, run **compare-transcripts.bat**. It runs the 50 n
 call you fixed by hand, through Whisper both the old way (no cleanup) and the new way. Then it opens a
 side-by-side report that scores both against your fixes. The transcriber can keep running while it works.
 
+### Hints learned from your calls
+
+Whisper also gets street and unit names learned from the call log, so nothing needs to be kept up by hand:
+
+- **Going on now:** the streets, landmarks and units of incidents with a call on the map in the last hour.
+  A follow-up call like "2011 on location, Northampton Street" then comes out spelled the way dispatch
+  said it.
+- **Most heard:** the places found most often in each talkgroup's calls over the last 30 days, and the
+  unit call signs said most often (three times or more). These are better hints than the biggest roads,
+  many of which hardly ever come up on the radio.
+
+They take about 160 characters of the hint list. Whisper only reads about 600, so when the list is full
+the biggest-roads list and the 10-codes are dropped first (spoken codes are still written as 10-4 after
+Whisper). Your vocabulary.txt is never dropped for them. Settings are under `[hints]` in config.toml;
+`enabled = false` turns them off. To see whether they help, run **compare-hints.bat**: it runs the same
+calls without and with the learned hints and scores both against your fixes.
+
 ## Call summaries
 
 Ollama, a free program that runs AI language models on your own PC, can write a short summary for each

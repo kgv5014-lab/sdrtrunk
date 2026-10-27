@@ -131,6 +131,23 @@ class PlacesConfig:
 
 
 @dataclass
+class HintsConfig:
+    # Whisper hints learned from the call log (see hints.py): streets and units of incidents from the
+    # last hour, and the ones each talkgroup names most. Off = the hint list works as before.
+    enabled: bool = True
+    # Room for them in Whisper's hint list, in characters. They go ahead of the places list, codes and
+    # learned corrections, which are dropped first when the list is full; vocabulary.txt stays.
+    prompt_chars: int = 160
+    # Incidents with a call on the map this recently count as going on now.
+    active_minutes: int = 60
+    # How far back "most heard" looks, and how many times a name must be heard to count.
+    history_days: int = 30
+    min_count: int = 3
+    # How often "most heard" is counted again.
+    refresh_minutes: int = 30
+
+
+@dataclass
 class MapConfig:
     # Possible incidents on a map at /map, from addresses heard in transcripts.
     enabled: bool = True
@@ -251,6 +268,7 @@ class Config:
     codes: CodesConfig = field(default_factory=CodesConfig)
     corrections: CorrectionsConfig = field(default_factory=CorrectionsConfig)
     places: PlacesConfig = field(default_factory=PlacesConfig)
+    hints: HintsConfig = field(default_factory=HintsConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     aircraft: AircraftConfig = field(default_factory=AircraftConfig)

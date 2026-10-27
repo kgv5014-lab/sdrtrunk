@@ -232,7 +232,7 @@ def pick_name(heard: list[tuple[set[str], set[int]]], min_seen: int, share: floa
     for index, name_of in ((0, str), (1, lambda n: f"Station {n}")):
         named = [found[index] for found in heard if found[index]]
         top = Counter(n for found in named for n in found).most_common(2)
-        if top and top[0][1] >= max(min_seen, share * len(named)) and (len(top) == 1 or top[0][1] > top[1][1]):
+        if top and top[0][1] >= min_seen and top[0][1] > share * len(named) and (len(top) == 1 or top[0][1] > top[1][1]):
             return name_of(top[0][0]), top[0][1]
     return None
 

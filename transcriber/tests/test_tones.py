@@ -197,3 +197,5 @@ def test_tone_outs_with_no_station_heard_do_not_count_against_a_name():
     assert pick_name(heard, 3, 0.5) == ("EMS 49", 8)
     # Two stations named as often: unclear.
     assert pick_name([({"EMS 50"}, {50})] * 6 + [({"EMS 4"}, {4})] * 6 + [nothing] * 5, 3, 0.5) is None
+    # Exactly half isn't enough.
+    assert pick_name([({"EMS 50"}, {50})] * 3 + [({"EMS 4"}, {4})] * 2 + [({"EMS 3"}, {3})], 3, 0.5) is None

@@ -224,16 +224,15 @@ def stations_named(text: str) -> tuple[set[str], set[int]]:
 
 
 def pick_name(heard: list[tuple[set[str], set[int]]], min_seen: int, share: float) -> tuple[str, int] | None:
-    """The station dispatch names after most of a tone pair's tone-outs, and after how many: by name
-    ("EMS 27"), or else by number when the service varies ("Fire 20" and "EMS 20" make "Station 20").
-    None while it is unclear. Tones every fire call starts or ends with name a different station each
-    time, so they stay unnamed."""
-    if len(heard) < min_seen:
-        return None
-    for counts, name_of in ((Counter(n for names, _ in heard for n in names), str),
-                            (Counter(n for _, numbers in heard for n in numbers), lambda n: f"Station {n}")):
-        top = counts.most_common(2)
-        if top and top[0][1] >= max(min_seen, share * len(heard)) and (len(top) == 1 or top[0][1] > top[1][1]):
+    """The station dispatch names after most of a tone pair's tone-outs that name any, and after how
+    many: by name ("EMS 27"), or else by number when the service varies ("Fire 20" and "EMS 20" make
+    "Station 20"). Many tone-outs are followed by no station heard at all (an unclear transcript, or the
+    dispatch only gives an address), so those don't count against it. None while it is unclear. Tones
+    every fire call starts or ends with name a different station each time, so they stay unnamed."""
+    for index, name_of in ((0, str), (1, lambda n: f"Station {n}")):
+        named = [found[index] for found in heard if found[index]]
+        top = Counter(n for found in named for n in found).most_common(2)
+        if top and top[0][1] >= max(min_seen, share * len(named)) and (len(top) == 1 or top[0][1] > top[1][1]):
             return name_of(top[0][0]), top[0][1]
     return None
 

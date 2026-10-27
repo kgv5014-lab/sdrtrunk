@@ -398,8 +398,8 @@ restart. Settings are under `[tones]`; `talkgroups` limits the search to dispatc
 Unnamed tones also get named by themselves (`learn = true`). Every few minutes the transcriber looks at
 the last `learn_days` of unnamed tone-outs and at what dispatch said on that talkgroup from the tones
 until 90 seconds later ("EMS 27", "Fire 54", "Station 20", or a call sign like "Medic 2781"). When the
-same station was named after at least `learn_share` of a tone pair's tone-outs, and at least
-`learn_min_seen` times, the pair is added to `paging_tones.csv` with a "# Learned" note above it, and its
+same station was named after at least `learn_share` (half) of a tone pair's tone-outs that name a
+station, more often than any other, and at least `learn_min_seen` times, the pair is added to `paging_tones.csv` with a "# Learned" note above it, and its
 tone-outs already logged get the name. When the service varies ("Fire 20", then "EMS 20") the name is
 "Station 20". Tones that start or end every fire call name a different station each time, so they stay
 unnamed. Fix or delete a learned line like any other; it is not learned again while it's in the file.

@@ -202,5 +202,5 @@ talkgroups = []
 # Name unlisted tones by themselves from the station dispatch names right after them (see the README).
 learn = true
 learn_min_seen = 3
-learn_share = 0.6
+learn_share = 0.5
 learn_days = 30

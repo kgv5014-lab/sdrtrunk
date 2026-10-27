@@ -71,12 +71,12 @@ class TonesConfig:
     file: str = "paging_tones.csv"
     # Only calls whose talkgroup name or number contains one of these. Empty = every call.
     talkgroups: list = field(default_factory=list)
-    # Name unlisted tones by themselves: when dispatch names the same station after a tone pair in at
-    # least learn_share of its last learn_days of tone-outs (and learn_min_seen of them), the pair is
-    # added to the station list.
+    # Name unlisted tones by themselves: when dispatch names the same station after at least learn_share
+    # of a tone pair's tone-outs that name one (last learn_days, at least learn_min_seen times), the pair
+    # is added to the station list.
     learn: bool = True
     learn_min_seen: int = 3
-    learn_share: float = 0.6
+    learn_share: float = 0.5
     learn_days: int = 30
 
 

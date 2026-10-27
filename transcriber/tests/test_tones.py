@@ -188,3 +188,12 @@ def test_unlisted_tones_are_named_after_the_station_dispatch_keeps_naming(tmp_pa
     # Nothing new to learn the next time.
     assert finder.learn(now) == []
     assert finder.tone_list.name(2468.0, 656.0) == "EMS 27"
+
+
+def test_tone_outs_with_no_station_heard_do_not_count_against_a_name():
+    from sdrtrunk_transcriber.tones import pick_name
+    nothing = (set(), set())
+    heard = [({"EMS 49"}, {49})] * 8 + [({"Fire 42"}, {42})] * 4 + [({"Fire 45"}, {45})] * 3 + [nothing] * 27
+    assert pick_name(heard, 3, 0.5) == ("EMS 49", 8)
+    # Two stations named as often: unclear.
+    assert pick_name([({"EMS 50"}, {50})] * 6 + [({"EMS 4"}, {4})] * 6 + [nothing] * 5, 3, 0.5) is None

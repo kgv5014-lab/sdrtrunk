@@ -106,8 +106,8 @@ def camera_from(data: dict, location) -> dict:
     return {
         "id": str(data.get("id")), "roadway": data.get("roadway") or "", "name": data.get("location") or "",
         "lat": float(location[0]), "lon": float(location[1]), "views": views,
-        # 511PA's own camera window, which plays the live video.
-        "page": f"{SITE}/tooltip/Cameras/{data.get('id')}?lang=en",
+        # 511PA's map opened on this camera; its popup's Show Video plays the live stream.
+        "page": f"{SITE}/map#camera-{data.get('id')}",
     }
 
 

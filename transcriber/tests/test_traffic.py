@@ -109,7 +109,7 @@ def test_cameras_keep_working_views_and_link_to_511pa_for_video():
     [camera] = traffic.cameras()
     assert camera["name"] == "US 22 @ PA 378"
     assert [(v["image_id"], v["live"]) for v in camera["views"]] == [(7001, True), (7002, False)]
-    assert camera["page"] == "https://www.511pa.com/tooltip/Cameras/4001?lang=en"
+    assert camera["page"] == "https://www.511pa.com/map#camera-4001"
     assert traffic.known_image(7001) and not traffic.known_image(7003)
     assert traffic.image(7001) == (b"\xff\xd8jpeg", "image/jpeg")
 

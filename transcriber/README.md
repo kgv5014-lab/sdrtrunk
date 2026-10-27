@@ -208,7 +208,15 @@ What happens to each transcribed call:
    more than 100 m away, or to the same place more than 20 minutes after the last call, starts a new
    incident. The call type comes from the dispatch first, so a later call mentioning a crash doesn't turn
    a fire alarm into an MVA.
-7. **Made-up transcripts are skipped.** On unclear audio Whisper often reads its hint words back
+7. **Police, fire and EMS sent to one scene.** Each dispatcher words the place a little differently, so a
+   dispatch that brings a service the incident doesn't have yet (police to a fire, an ambulance to a
+   fight) joins it within 15 minutes of its latest call: within 500 m, anywhere along the same street
+   (up to 2 km), or, if its place couldn't be found, when it names the incident's street. The call types
+   must go together: a theft and a cardiac arrest a block apart stay two incidents. The service comes
+   from the talkgroup, or on a shared "Fire / EMS" talkgroup from the call (an ambulance or ALS/BLS is
+   EMS, an engine is fire). The map shows Police / Fire / EMS tags on each incident, and "Several
+   services" shows only incidents more than one service was sent to.
+8. **Made-up transcripts are skipped.** On unclear audio Whisper often reads its hint words back
    ("Dispatch, Engine 12, Main Street") or repeats a phrase over and over. Those calls stay off the map.
 
 Radio speech is messy, so some calls are missed and some land in the wrong place. Each call in a popup

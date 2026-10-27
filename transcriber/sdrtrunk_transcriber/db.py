@@ -154,7 +154,7 @@ END;
 # Bumped when a change to the incident map means existing incidents should be rebuilt.
 # 2: EMS type, ALS/BLS, ten-codes no longer read as house numbers.
 # 3: incidents followed onto Tac channels, calls joined by channel and cross street.
-MAP_VERSION = 3
+MAP_VERSION = 4
 
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",

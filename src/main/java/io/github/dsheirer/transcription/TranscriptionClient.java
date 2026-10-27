@@ -208,11 +208,24 @@ public class TranscriptionClient
                 }
             }
 
+            List<String> services = new ArrayList<>();
+
+            if(incident.has("services") && incident.get("services").isJsonArray())
+            {
+                for(JsonElement item : incident.getAsJsonArray("services"))
+                {
+                    if(item.isJsonPrimitive())
+                    {
+                        services.add(item.getAsString());
+                    }
+                }
+            }
+
             incidents.add(new TranscriptIncident(number(incident, "id", 0L), number(incident, "first_time", 0L),
                 number(incident, "last_time", 0L), decimal(incident, "lat"), decimal(incident, "lon"),
                 string(incident, "label"), string(incident, "category"), string(incident, "nature"),
                 string(incident, "type"), calls, pages, string(incident, "summary"), summaryTags,
-                string(incident, "summary_status")));
+                string(incident, "summary_status"), services));
         }
 
         return incidents;

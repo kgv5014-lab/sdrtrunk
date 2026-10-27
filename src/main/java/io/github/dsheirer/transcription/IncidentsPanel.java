@@ -71,6 +71,7 @@ public class IncidentsPanel extends JPanel
     private static final String PREFERENCE_URL = "transcription.service.url";
     private static final String PREFERENCE_RANGE = "transcription.incidents.range";
     private static final String PREFERENCE_TYPES = "transcription.incidents.types";
+    private static final String PREFERENCE_SEVERAL = "transcription.incidents.several.services";
     static final String[] TYPES = {"fire", "ems", "police", "mva", "other"};
     private static final Map<String, Color> TYPE_COLORS = Map.of(
         "fire", new Color(0xD3, 0x3C, 0x2F), "ems", new Color(0x1F, 0x8A, 0x5B),
@@ -122,6 +123,7 @@ public class IncidentsPanel extends JPanel
     private final JTable mTable = new JTable(mTableModel);
     private final JComboBox<Range> mRangeCombo = new JComboBox<>(Range.values());
     private final Map<String, JCheckBox> mTypeBoxes = new LinkedHashMap<>();
+    private final JCheckBox mSeveralBox = new JCheckBox("Several services");
     private final JButton mMapButton = new JButton("Open Map");
     private final JTextArea mDetailArea = new JTextArea(6, 40);
     private final JLabel mStatusLabel = new JLabel(" ");
@@ -160,6 +162,14 @@ public class IncidentsPanel extends JPanel
             add(box);
         }
 
+        mSeveralBox.setToolTipText("Only incidents that more than one of police, fire and EMS were sent to");
+        mSeveralBox.setSelected(mPreferences.getBoolean(PREFERENCE_SEVERAL, false));
+        mSeveralBox.addActionListener(e -> {
+            mPreferences.putBoolean(PREFERENCE_SEVERAL, mSeveralBox.isSelected());
+            applyFilter();
+        });
+        add(mSeveralBox);
+
         mMapButton.setToolTipText("Open the incident map in a browser");
         mMapButton.addActionListener(e -> openMap());
         add(new JLabel(""), "growx");
@@ -172,6 +182,7 @@ public class IncidentsPanel extends JPanel
         mTable.getColumnModel().getColumn(IncidentTableModel.TYPE).setPreferredWidth(70);
         mTable.getColumnModel().getColumn(IncidentTableModel.TYPE).setMaxWidth(90);
         mTable.getColumnModel().getColumn(IncidentTableModel.WHAT).setPreferredWidth(140);
+        mTable.getColumnModel().getColumn(IncidentTableModel.SERVICES).setPreferredWidth(120);
         mTable.getColumnModel().getColumn(IncidentTableModel.PLACE).setPreferredWidth(280);
         mTable.getColumnModel().getColumn(IncidentTableModel.SUMMARY).setPreferredWidth(420);
         mTable.getColumnModel().getColumn(IncidentTableModel.CALLS).setPreferredWidth(50);
@@ -299,7 +310,9 @@ public class IncidentsPanel extends JPanel
     private void applyFilter()
     {
         Set<String> shown = shownTypes();
-        List<TranscriptIncident> visible = mAllIncidents.stream().filter(i -> shown.contains(i.typeKey())).toList();
+        boolean several = mSeveralBox.isSelected();
+        List<TranscriptIncident> visible = mAllIncidents.stream().filter(i -> shown.contains(i.typeKey()))
+            .filter(i -> !several || i.services().size() > 1).toList();
         TranscriptIncident selected = getSelectedIncident();
 
         if(mTableModel.setIncidents(visible) && selected != null)
@@ -347,6 +360,11 @@ public class IncidentsPanel extends JPanel
 
         sb.append(String.format("   (%.5f, %.5f)", incident.latitude(), incident.longitude()));
 
+        if(!incident.services().isEmpty())
+        {
+            sb.append("\nServices: ").append(incident.servicesDisplay());
+        }
+
         if(incident.summary() != null && !incident.summary().isBlank())
         {
             sb.append("\nSummary (AI): ").append(incident.summary());
@@ -384,6 +402,10 @@ public class IncidentsPanel extends JPanel
             if("follow-up".equals(call.precision()))
             {
                 sb.append("  (follow-up, same unit)");
+            }
+            else if("other-service".equals(call.precision()))
+            {
+                sb.append("  (another service sent to its street)");
             }
 
             sb.append("\n").append(call.transcript() != null ? call.transcript() : "");
@@ -437,10 +459,11 @@ public class IncidentsPanel extends JPanel
         static final int TIME = 0;
         static final int TYPE = 1;
         static final int WHAT = 2;
-        static final int PLACE = 3;
-        static final int CALLS = 4;
-        static final int SUMMARY = 5;
-        private static final String[] COLUMNS = {"Latest", "Type", "What", "Place", "Calls", "Summary"};
+        static final int SERVICES = 3;
+        static final int PLACE = 4;
+        static final int CALLS = 5;
+        static final int SUMMARY = 6;
+        private static final String[] COLUMNS = {"Latest", "Type", "What", "Services", "Place", "Calls", "Summary"};
 
         private List<TranscriptIncident> mIncidents = new ArrayList<>();
 
@@ -506,6 +529,7 @@ public class IncidentsPanel extends JPanel
                 case TIME -> formatTime(incident.lastTime());
                 case TYPE -> incident.typeDisplay();
                 case WHAT -> incident.nature() != null ? incident.nature() : "";
+                case SERVICES -> incident.servicesDisplay();
                 case PLACE -> incident.label() != null ? incident.label() : "";
                 case CALLS -> incident.calls().size();
                 case SUMMARY -> incident.summary() != null ? incident.summary() : "";

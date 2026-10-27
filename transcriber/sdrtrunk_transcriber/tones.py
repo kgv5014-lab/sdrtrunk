@@ -6,12 +6,18 @@ the audio as uploaded (before audio.clean() cuts tones out for Whisper), the sam
 TwoToneDetector does: tone A for 0.3 to 5 s, at most 0.3 s gap, then a different tone B; or one
 steady tone of 6 s and more (an all-call).
 
-Names come from paging_tones.csv, the same format as SDRTrunk's list: tone_a,tone_b,name.
+Names come from paging_tones.csv, the same format as SDRTrunk's list: tone_a,tone_b,name. Tones not
+on the list are named by themselves when dispatch keeps naming the same station right after them
+(ToneFinder.learn).
 """
 
 import logging
 import math
+import re
+import time
+from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import numpy as np
@@ -39,6 +45,20 @@ MAX_GAP_S = 0.3
 LONG_TONE_S = 6.0
 # Tones match a list entry when each is within this fraction, as in SDRTrunk.
 MATCH_FRACTION = 0.015
+
+# Learning names: what dispatch says from just before a tone-out until this long after it.
+LEARN_BEFORE_S = 120
+LEARN_AFTER_S = 90
+# The same tones again this soon (dispatch often tones out twice) are the same tone-out.
+SAME_PAGE_S = 120
+LEARN_EVERY_S = 300
+# "Station 20", "Fire 54", "EMS 27", "Medic 27", "Rescue 71"; Whisper writes EMS as "E-M-S" or "MS".
+STATION_NAME = re.compile(r"\b(station|fire|company|ems|e-m-s|a?ms|medic|ambulance|rescue)[\s-]*#?\s*(\d{1,3})\b(?![\d:-])",
+                          re.IGNORECASE)
+# Four-digit call signs start with the station: "Engine 2011" and "Medic 2081" are Station 20.
+CALL_SIGN = re.compile(r"\b(?:engine|medic|ladder|tanker|truck|rescue|squad|ambulance|tower|brush|utility|qrs|"
+                       r"chief|ems)[\s-]*#?\s*(\d{2})-?(\d{2})\b(?![\d:-])", re.IGNORECASE)
+STATION_WORDS = {"station": "Station", "fire": "Fire", "company": "Fire", "rescue": "Rescue"}
 
 
 @dataclass
@@ -187,6 +207,37 @@ class ToneList:
         return best
 
 
+def stations_named(text: str) -> tuple[set[str], set[int]]:
+    """Station names ("EMS 27") and station numbers (27, also from call signs like "Medic 2781") in a
+    transcript."""
+    names, numbers = set(), set()
+    for m in STATION_NAME.finditer(text or ""):
+        number = int(m.group(2))
+        if number == 0:
+            continue
+        names.add(f"{STATION_WORDS.get(m.group(1).lower(), 'EMS')} {number}")
+        numbers.add(number)
+    for m in CALL_SIGN.finditer(text or ""):
+        if int(m.group(1)):
+            numbers.add(int(m.group(1)))
+    return names, numbers
+
+
+def pick_name(heard: list[tuple[set[str], set[int]]], min_seen: int, share: float) -> tuple[str, int] | None:
+    """The station dispatch names after most of a tone pair's tone-outs, and after how many: by name
+    ("EMS 27"), or else by number when the service varies ("Fire 20" and "EMS 20" make "Station 20").
+    None while it is unclear. Tones every fire call starts or ends with name a different station each
+    time, so they stay unnamed."""
+    if len(heard) < min_seen:
+        return None
+    for counts, name_of in ((Counter(n for names, _ in heard for n in names), str),
+                            (Counter(n for _, numbers in heard for n in numbers), lambda n: f"Station {n}")):
+        top = counts.most_common(2)
+        if top and top[0][1] >= max(min_seen, share * len(heard)) and (len(top) == 1 or top[0][1] > top[1][1]):
+            return name_of(top[0][0]), top[0][1]
+    return None
+
+
 def describe(tone_a: float, tone_b: float | None) -> str:
     return f"{tone_a:.1f} Hz long tone" if tone_b is None else f"{tone_a:.1f} Hz + {tone_b:.1f} Hz"
 
@@ -200,6 +251,8 @@ class ToneFinder:
         self.alerter = alerter
         self.rate = rate
         self.tone_list = ToneList(config.tones_path)
+        self.path = config.tones_path
+        self._learned_at = 0.0
 
     def wanted(self, call: dict) -> bool:
         if not self.settings.talkgroups:
@@ -233,3 +286,92 @@ class ToneFinder:
                 self.alerter.page(record)
             logged.append(record)
         return logged
+
+    # ---- learning names
+
+    def learn_if_due(self, now: float | None = None):
+        now = time.time() if now is None else now
+        if not self.settings.learn or now - self._learned_at < LEARN_EVERY_S:
+            return
+        self._learned_at = now
+        try:
+            self.learn(now)
+        except Exception:
+            log.exception("Learning tone names failed")
+
+    def learn(self, now: float) -> list[tuple[float, float | None, str]]:
+        """Names the unlisted tone pairs dispatch keeps naming the same station after, adds them to the
+        station list, and labels their tone-outs already logged. Returns what it added."""
+        pages = self.db.unnamed_pages(now - self.settings.learn_days * 86400, now - LEARN_AFTER_S)
+        if not pages:
+            return []
+        # Tone pairs, each with its tone-outs: [[page, ...], ...].
+        pairs: list[dict] = []
+        for page in pages:
+            pair = next((p for p in pairs if _same_tones(p, page)), None)
+            if pair is None:
+                pair = {"tone_a": page["tone_a"], "tone_b": page["tone_b"], "pages": [], "outs": []}
+                pairs.append(pair)
+            pair["pages"].append(page)
+            if pair["outs"] and page["page_time"] - pair["outs"][-1][-1]["page_time"] <= SAME_PAGE_S:
+                pair["outs"][-1].append(page)
+            else:
+                pair["outs"].append([page])
+        self.tone_list.reload_if_changed()
+        calls = self.db.transcripts_between(pages[0]["page_time"] - LEARN_BEFORE_S, now)
+        added = []
+        for pair in pairs:
+            ids = [p["id"] for p in pair["pages"]]
+            tone_a = sum(p["tone_a"] for p in pair["pages"]) / len(ids)
+            tone_b = None if pair["tone_b"] is None else sum(p["tone_b"] for p in pair["pages"]) / len(ids)
+            listed = self.tone_list.name(tone_a, tone_b)
+            if listed:
+                self.db.name_pages(ids, listed)      # logged before the name was on the list
+                continue
+            heard = [stations_named(" ".join(self._said_after(out[0], calls))) for out in pair["outs"]]
+            picked = pick_name(heard, self.settings.learn_min_seen, self.settings.learn_share)
+            if not picked:
+                continue
+            name, seen = picked
+            self._add_to_list(tone_a, tone_b, name, seen, len(heard))
+            self.db.name_pages(ids, name)
+            added.append((round(tone_a, 1), None if tone_b is None else round(tone_b, 1), name))
+            log.info("Learned tone-out %s: %s (named after %d of %d tone-outs)", describe(tone_a, tone_b), name,
+                     seen, len(heard))
+        return added
+
+    @staticmethod
+    def _said_after(page: dict, calls: list[dict]) -> list[str]:
+        """Transcripts on the page's channel from the call holding the tones until LEARN_AFTER_S later."""
+        t = page["page_time"]
+        return [c["transcript"] for c in calls
+                if t - LEARN_BEFORE_S <= c["call_time"] < t + LEARN_AFTER_S
+                and c["call_time"] + (c["duration_s"] or 0) >= t - 1
+                and (c["talkgroup_label"] or c["talkgroup"]) == page["channel"]]
+
+    def _add_to_list(self, tone_a: float, tone_b: float | None, name: str, seen: int, total: int):
+        if self.path is None:
+            return
+        newline = "\n"
+        text = ""
+        if self.path.exists():
+            raw = self.path.read_bytes()
+            newline = "\r\n" if b"\r\n" in raw else "\n"
+            text = raw.decode("utf-8-sig")
+        else:
+            text = "tone_a,tone_b,name" + newline
+        if text and not text.endswith(("\n", "\r")):
+            text += newline
+        b = "" if tone_b is None else f"{tone_b:.1f}"
+        text += (f"# Learned {datetime.now():%Y-%m-%d}: dispatch named {name} after {seen} of {total} tone-outs"
+                 f"{newline}{tone_a:.1f},{b},{name}{newline}")
+        self.path.write_text(text, encoding="utf-8", newline="")
+        self.tone_list.reload_if_changed()
+
+
+def _same_tones(pair: dict, page: dict) -> bool:
+    if (pair["tone_b"] is None) != (page["tone_b"] is None):
+        return False
+    if abs(page["tone_a"] - pair["tone_a"]) > pair["tone_a"] * MATCH_FRACTION:
+        return False
+    return pair["tone_b"] is None or abs(page["tone_b"] - pair["tone_b"]) <= pair["tone_b"] * MATCH_FRACTION

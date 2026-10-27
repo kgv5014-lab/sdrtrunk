@@ -108,7 +108,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         alerter = Alerter(config, db) if config.alerts.enabled else None
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:
-            worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
+            tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
         map_worker = None
         if config.map.enabled:
             gazetteer = Gazetteer(config.geo_path, config.places_path)
@@ -146,6 +146,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             log.exception("Unit board: could not read recent calls")
 
         def done(call_id):
+            if config.tones.enabled:
+                tone_finder.learn_if_due()
             try:
                 units.call_done(call_id)
             except Exception:

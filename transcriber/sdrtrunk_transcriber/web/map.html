@@ -36,6 +36,9 @@
     .tabs button.on { color: var(--accent); box-shadow: 0 -2px 0 var(--accent) inset; }
     #list, #feed { width: auto; flex: 1; border: 0; }
     .body > :not(.shown) { display: none; }
+    /* An open popup fills a phone screen; the zoom and layer buttons would cover its close X. */
+    #map.popup-open .leaflet-top { display: none; }
+    #map .leaflet-popup-content { max-width: calc(100vw - 80px); }
   }
   .feed-call { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; margin: 0 0 7px; }
   .feed-call.in-incident { border-left: 4px solid var(--accent); }
@@ -178,8 +181,8 @@ const layer = L.layerGroup().addTo(map);
 let markers = {};
 let fitted = false;
 let popupOpen = false;
-map.on('popupopen', () => { popupOpen = true; });
-map.on('popupclose', () => { popupOpen = false; });
+map.on('popupopen', () => { popupOpen = true; map.getContainer().classList.add('popup-open'); });
+map.on('popupclose', () => { popupOpen = false; map.getContainer().classList.remove('popup-open'); });
 map.on('resize', () => {
   Object.values(markers).forEach(m => { const p = m.getPopup(); if (p) p.options.maxHeight = popupHeight(); });
 });
@@ -597,7 +600,8 @@ function addTrafficControl() {
   const keys = { '⚠️ PennDOT crashes &amp; closures': 'road', '🚧 PennDOT roadwork': 'roadwork', '📷 Traffic cameras': 'cameras' };
   const on = stored('map.trafficLayers', { road: true, roadwork: false, cameras: true });
   Object.entries(overlays).forEach(([name, l]) => { if (on[keys[name]]) l.addTo(map); });
-  L.control.layers(null, overlays, { collapsed: false }).addTo(map);
+  // On a phone the open list covers part of the map, so it folds into a button there.
+  L.control.layers(null, overlays, { collapsed: window.matchMedia('(max-width: 1100px)').matches }).addTo(map);
   const save = () => store('map.trafficLayers', Object.fromEntries(Object.entries(overlays).map(([n, l]) => [keys[n], map.hasLayer(l)])));
   map.on('overlayadd overlayremove', save);
 }

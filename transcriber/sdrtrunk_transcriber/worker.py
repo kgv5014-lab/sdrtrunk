@@ -182,7 +182,8 @@ class TranscriptionWorker:
 
         tone_s = 0.0
         if self.config.audio.clean:
-            samples, tone_s = audio.clean(samples, self.config.audio.remove_tones)
+            samples, tone_s = audio.clean(samples, self.config.audio.remove_tones,
+                                          self.config.audio.reduce_hiss)
 
         started = time.perf_counter()
         context = (call["talkgroup_label"], call["talkgroup_group"])

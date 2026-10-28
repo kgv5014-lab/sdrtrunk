@@ -51,6 +51,17 @@ Check Whisper on its own with any recording before wiring up SDRTrunk:
 * Whisper (about 2 GB with int8) fits easily on the 8 GB 1070 Ti, leaving the 1070 free for Ollama later.
 * SDRTrunk does not use the GPU, so decoding is not affected.
 
+## Updating SDRTrunk and the transcriber
+
+Double-click **update-sdrtrunk-plus.bat** in the sdrtrunk code folder (on this PC
+`E:\SDR-Stuff\FreshSDRTrunk\BUILD\sdrtrunk`). It waits until SDRTrunk and the transcriber are closed (type C
+to have it close them), gets the latest code from GitHub, builds SDRTrunk and copies the new transcriber
+files into `E:\SDR-Stuff\sdrtrunk-transcriber`. It never touches config.toml, vocabulary.txt, codes.csv,
+corrections.csv, places.csv, places-geo.json, paging_tones.csv or the data, ab-samples and blank-samples folders.
+If the build fails, the old SDRTrunk is put back and the build log is in `update-log.txt` next to the code
+folder. The previous SDRTrunk stays in `sdrtrunk-previous-image` until the next update. For a different
+transcriber folder, run `update-sdrtrunk-plus.bat -TranscriberDir "D:\my-transcriber"`.
+
 ## Point SDRTrunk at it
 
 1. In SDRTrunk open **Playlist Editor > Streaming**, add a **Rdio Scanner** stream and set:

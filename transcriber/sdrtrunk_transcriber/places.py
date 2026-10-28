@@ -56,6 +56,10 @@ SPOKEN_ROUTE = re.compile(rf"(?<!\ben )\b(route|interstate)\s+({_ROUTE_NUMBER})\
 # Words that end a street name when looking backwards from "Street".
 STOP_WORDS = {"the", "on", "at", "to", "of", "and", "in", "from", "for", "by", "near", "off", "a", "an",
               "is", "be", "between", "onto", "into", "with", "en", "route", "block", "or"}
+# Words before a street word that make it no name at all ("Same Road", "Main Road").
+GENERIC_WORDS = {"this", "that", "same", "your", "my", "his", "her", "their", "our", "back", "dirt", "side",
+                 "main", "one", "each", "every", "other", "next", "cross", "private", "wrong", "old", "new",
+                 "which", "what", "any", "no", "county", "state", "city", "township"}
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9'.]*")
 MIN_FUZZY_LENGTH = 5
 FUZZY_RATIO = 0.8
@@ -244,6 +248,31 @@ class PlaceBook:
         if self._streets:
             text = self._fix_streets(text, set(self.areas_for(*context)))
         return text
+
+    def unknown_streets(self, text: str) -> list[str]:
+        """Street names in a finished transcript that aren't in the list, such as "Northbampton Street",
+        for the self-check. Only capitalized names ending in a capitalized street word, so "on the way"
+        and "we'll drive" don't count."""
+        if not text:
+            return []
+        self.reload_if_changed()
+        if not self._streets:
+            return []
+        found = []
+        for match in SUFFIX_WORD.finditer(text):
+            if not match.group(1)[0].isupper():
+                continue
+            suffix = SUFFIXES[match.group(1).lower()]
+            words = _words_before(text, match.start(), 0)
+            while words and not words[0][1][0].isupper():
+                words = words[1:]
+            if not words or words[-1][1].lower() in GENERIC_WORDS:
+                continue
+            names = self._streets.get(suffix, {})
+            stems = [" ".join(w.lower().rstrip(".") for _, w in words[-n:]) for n in range(1, len(words) + 1)]
+            if not any(f"{stem} {suffix}" in names for stem in stems):
+                found.append(text[words[0][0]:match.end()].rstrip("."))
+        return found
 
     def _exit(self, match):
         n = route_number(match.group(1))

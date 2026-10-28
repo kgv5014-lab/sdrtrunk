@@ -37,6 +37,7 @@ from .codes import CodeBook
 from .corrections import CorrectionBook
 from .hints import LearnedHints
 from .places import PlaceBook
+from .address_fix import AddressBook, AddressFixer
 from .addresses import Gazetteer
 from .aircraft import AircraftWatch
 from .traffic import Traffic511
@@ -47,6 +48,7 @@ from .incidents import MapWorker, highlights, services_of
 from .zones import ZoneWatch, read_zones
 from .summaries import Summarizer, attach as attach_summary, incident_basis
 from .signal_quality import SignalWatch
+from .recordings import RecordingCleanup
 from .tones import ToneFinder
 from .units import UnitBoard
 from .worker import TranscriptionWorker
@@ -110,17 +112,27 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
         corrections = CorrectionBook(config.corrections_path)
         hints = LearnedHints(data_path / "calls.db", config.hints) if config.hints.enabled else None
-        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections, hints)
+        gazetteer = Gazetteer(config.geo_path, config.places_path) \
+            if config.map.enabled or config.places.fix_addresses else None
+        address_book = AddressBook(config.ranges_path)
+        fixer = None
+        if gazetteer and config.places.fix_addresses:
+            window = config.map.incident_window_minutes * 60
+
+            def near_incidents(call_time):
+                return [(i["lat"], i["lon"]) for i in db.nearby_incidents(call_time - window, call_time)]
+
+            fixer = AddressFixer(gazetteer, address_book, near_incidents)
+        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections, hints, fixer)
         alerter = Alerter(config, db) if config.alerts.enabled else None
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:
             tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
         map_worker = None
         if config.map.enabled:
-            gazetteer = Gazetteer(config.geo_path, config.places_path)
             geocoder = Geocoder(db, config.map.area, contact=config.map.contact_email) \
                 if config.map.online_lookup else None
-            map_worker = MapWorker(config, db, gazetteer, geocoder)
+            map_worker = MapWorker(config, db, gazetteer, geocoder, address_book)
 
             def placed(call_id, incident_id, call):
                 if alerter:
@@ -172,6 +184,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             traffic.start()
         if summarizer:
             summarizer.start()
+        recordings = RecordingCleanup(config, db)
+        if recordings.enabled:
+            recordings.start()
         worker.start()
         app.state.db = db
         app.state.worker = worker
@@ -188,6 +203,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                  config.server.host, config.server.port)
         yield
         worker.stop()
+        recordings.stop()
         if aircraft:
             aircraft.stop()
         if traffic:
@@ -400,6 +416,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         call = request.app.state.db.get_call(call_id)
         if call is None:
             raise HTTPException(404)
+        if call.get("audio_deleted_at"):
+            raise HTTPException(410, "Audio deleted to save space")
         path = (data_path / call["audio_path"]).resolve()
         if not path.is_relative_to(data_path.resolve()) or not path.exists():
             raise HTTPException(404)

@@ -51,6 +51,9 @@ clean = true
 # Also cut out steady tones such as paging tones and alert beeps. Whisper tends to invent words
 # like "Thank you" over them.
 remove_tones = true
+# Also turn down the steady hiss on weak FM channels (T-band, UHF fire). Calls without hiss, such as
+# P25, are left as they are. Adds a few hundredths of a second per call.
+reduce_hiss = true
 
 [faster_whisper]
 model = "large-v3-turbo"
@@ -95,6 +98,9 @@ file = "corrections.csv"
 file = "places.csv"
 # Room for place names in Whisper's hint list, in characters. The whole hint list is about 800.
 prompt_chars = 400
+# Snap a misheard house number (or street) to a real address, using the house-number ranges that
+# fetch-places.bat downloads from the US Census into address-ranges.json. Nothing changes without that file.
+fix_addresses = true
 
 # Which towns' streets to hint for talkgroups whose name doesn't say the town. Talkgroups named after
 # a town ("Easton PD", "Bethlehem Fire") pick it up on their own. Keys match part of the talkgroup name.
@@ -113,6 +119,23 @@ active_minutes = 60
 # How far back "most heard" looks, and how many times a name must be heard to count.
 history_days = 30
 min_count = 3
+
+[self_check]
+# Spot transcripts that look garbled and run Whisper again on them, slower and more carefully, keeping the
+# better of the two. The call log marks them "rechecked" (the retry came out clean) or "still unsure".
+enabled = true
+# What counts as garbled: Whisper's confidence below this, a street that isn't in places.csv, a fire or EMS
+# unit whose station isn't in codes.csv, words going round in a loop, or far too many or too few words.
+low_confidence = -0.8
+streets = true
+units = true
+# Ask the Ollama model from [summaries] about calls Whisper was only middling sure of (needs [summaries]
+# enabled; when Ollama is off, only the checks above run). It never rewrites the text.
+ollama = true
+ollama_below_confidence = -0.45
+# The careful retry: a wider search and more tries. retry = false only marks the calls.
+retry = true
+retry_beam_size = 10
 
 [map]
 # Possible incidents on a map at http://localhost:3000/map, from addresses heard in transcripts.
@@ -239,3 +262,30 @@ ppm_jump = 1.0
 ppm_drift = 2.0
 usb_errors = 5
 keep_days = 90
+
+[watchdog]
+# start-everything.bat starts Ollama (when [summaries] is on), the transcriber and SDRTrunk, and restarts
+# any of them that crashes or freezes (see "Auto-restart" in the README).
+# SDRTrunk's sdr-trunk.bat, e.g. 'E:\SDR\sdr-trunk\bin\sdr-trunk.bat'. Empty = wherever a running
+# SDRTrunk was started from.
+sdrtrunk = ""
+# Look at each program this often (seconds), and restart one after this many checks in a row fail.
+check_s = 30
+fail_checks = 4
+# Give a program this long to start (seconds) before checking it.
+startup_s = 180
+# A program restarted this many times in an hour is left alone for an hour, with one phone alert.
+max_restarts_per_hour = 4
+# Phone alert (Bark, from [alerts]) on each restart.
+alert = true
+
+[recordings]
+# Call audio in the data folder is deleted after this many days, so it doesn't fill the disk. Audio of
+# calls on an incident, and calls that sent a phone alert, is always kept. Only the sound is deleted:
+# the call and its transcript stay in the call log. 0 = don't delete by age.
+max_age_days = 7
+# When all call audio together is over this size, the oldest is deleted first (same calls kept as above).
+# 0 = no size limit.
+max_total_gb = 1.0
+# How often to check, in minutes.
+check_minutes = 60

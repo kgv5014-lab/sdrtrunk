@@ -8,4 +8,5 @@ if not exist places.csv copy places.example.csv places.csv >nul
 if not exist paging_tones.csv copy paging_tones.example.csv paging_tones.csv >nul
 call use-whisper-gpu.bat
 .venv\Scripts\python.exe -m sdrtrunk_transcriber --config config.toml
-pause
+rem start-everything.bat restarts it when it stops, so only wait for a key when started by hand.
+if not defined SDRTRUNK_WATCHDOG pause

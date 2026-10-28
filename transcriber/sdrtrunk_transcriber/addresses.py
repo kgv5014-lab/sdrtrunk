@@ -185,6 +185,8 @@ class Found:
     streets: list = field(default_factory=list)
     points: list = field(default_factory=list)   # [(lat, lon)] candidates already known offline
     towns: set = field(default_factory=set)
+    number: str | None = None         # the house number of an address
+    block: bool = False               # "1200 block of"
 
 
 class Projection:
@@ -467,7 +469,7 @@ class Gazetteer:
             heard_from = j - 1 - (1 if block and w[j - 1] == "hundred" else 0)
             query = f"{number} {street.name}, {town + ', ' if town else ''}Pennsylvania"
             return Found("address", " ".join(w[max(0, heard_from):m.end]), label, query, streets,
-                         towns={s.town_key for s in streets})
+                         towns={s.town_key for s in streets}, number=number, block=block)
         return None
 
     def _intersection(self, w, mentions, towns) -> Found | None:

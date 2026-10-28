@@ -57,7 +57,7 @@ Double-click **update-sdrtrunk-plus.bat** in the sdrtrunk code folder (on this P
 `E:\SDR-Stuff\FreshSDRTrunk\BUILD\sdrtrunk`). It waits until SDRTrunk and the transcriber are closed (type C
 to have it close them), gets the latest code from GitHub, builds SDRTrunk and copies the new transcriber
 files into `E:\SDR-Stuff\sdrtrunk-transcriber`. It never touches config.toml, vocabulary.txt, codes.csv,
-corrections.csv, places.csv, places-geo.json, paging_tones.csv or the data, ab-samples and blank-samples folders.
+corrections.csv, places.csv, places-geo.json, address-ranges.json, paging_tones.csv or the data, ab-samples and blank-samples folders.
 If the build fails, the old SDRTrunk is put back and the build log is in `update-log.txt` next to the code
 folder. The previous SDRTrunk stays in `sdrtrunk-previous-image` until the next update. For a different
 transcriber folder, run `update-sdrtrunk-plus.bat -TranscriberDir "D:\my-transcriber"`.
@@ -92,6 +92,10 @@ searches transcripts, and filters by talkgroup or radio ID.
 * `data\calls.db`: the call log (SQLite, with full-text search on transcripts)
 * `data\calls\YYYY\MM\DD\`: one MP3 per call
 * Tone-out pages from SDRTrunk's two-tone paging decoder are kept in the same `calls.db`
+
+Old call audio is deleted after 7 days, and the oldest goes first if all of it passes 1 GB (`[recordings]`
+in config.toml). Audio of calls on an incident or that sent a phone alert is kept. The call and its
+transcript stay in the log, and the player says "audio deleted".
 
 Deleting the `data` folder starts a fresh log. Calls that were still waiting when the service stopped
 are transcribed when it starts again.
@@ -163,7 +167,26 @@ What happens to each call:
    left alone, and a street in the talkgroup's own town wins a tie.
 
 The script also writes `places-geo.json` (road lines, landmark points, town outlines) for the incident
-map.
+map, then downloads house-number ranges for Northampton and Lehigh counties from the US Census and
+writes `address-ranges.json` (see below). If the Census site is down, the street list is still updated and
+`fetch-places.bat --addresses-only` fetches just the house numbers later.
+
+### Misheard addresses
+
+With `address-ranges.json` in place, every house address in a transcript is checked against the real
+house numbers on that street ("Ferry Street, Easton: 600 to 999"). When Whisper gets one slightly wrong:
+
+1. A number that exists somewhere on the street, or is within a few numbers of one, is left alone.
+2. Otherwise the usual Whisper slips are tried: "sixteen" for "sixty", an extra or missing digit, two
+   digits swapped. Then a similar-sounding street in the area that does have the number.
+3. The address is fixed only when exactly one answer fits best. A tie is settled by an incident already
+   on the map nearby; otherwise nothing changes.
+
+The call log shows "address fixed, heard as ..." on fixed calls, and Whisper's own words stay in
+`transcript_raw`. The map also uses the ranges to put a house address on the right part of its street
+without the online lookup. To see what it would change on calls you already have, run
+**check-addresses.bat** (last 30 days; `check-addresses.bat 90` for more); it changes nothing. Turn it off
+with `fix_addresses = false` under `[places]`.
 
 ## Incident map
 
@@ -407,6 +430,24 @@ Whisper). Your vocabulary.txt is never dropped for them. Settings are under `[hi
 `enabled = false` turns them off. To see whether they help, run **compare-hints.bat**: it runs the same
 calls without and with the learned hints and scores both against your fixes.
 
+### Self-check and careful retry
+
+Every transcript is checked for signs that Whisper got it wrong:
+
+- Whisper itself was unsure (the "low confidence" mark).
+- A street name that isn't in your street list (`places.csv`), such as "Northbampton Street".
+- A fire or EMS unit whose station isn't in `codes.csv`, such as "Engine 9711".
+- Words going round in a loop, or far too many or too few words for how long the call was.
+- When call summaries are on, the Ollama model also reads calls Whisper was only middling sure of and says
+  whether they look garbled. It only says yes or no; it never changes the text.
+
+A call that looks wrong is run through Whisper a second time with slower, more careful settings (a wider
+search and more tries). The version with fewer problems is kept. On the call log the call is then marked
+**rechecked** (the second try came out clean, with the first try shown underneath) or **still unsure** with
+what looked wrong, so you know which calls to listen to. Only flagged calls take the extra second or two.
+Settings are under `[self_check]` in config.toml; `enabled = false` turns it off, `retry = false` only
+marks the calls.
+
 ## Call summaries
 
 Ollama, a free program that runs AI language models on your own PC, can write a short summary for each
@@ -428,8 +469,8 @@ Setting it up, once:
 3. In `config.toml`, add the `[summaries]` section from `config.example.toml` and set `enabled = true`.
    Restart the transcriber. The log says "Summaries: using Ollama" after the first one.
 
-Run start-ollama.bat before start-transcriber.bat each time, for example from the batch file that opens
-everything. If Ollama isn't running, everything else works as before; the log says so once, and the
+Run start-ollama.bat before start-transcriber.bat each time, or use start-everything.bat (see
+"Auto-restart"), which does it for you. If Ollama isn't running, everything else works as before; the log says so once, and the
 summaries catch up within a minute of Ollama starting. On start the transcriber also summarizes the last
 24 hours of incidents that have none yet.
 
@@ -456,6 +497,33 @@ station, more often than any other, and at least `learn_min_seen` times, the pai
 tone-outs already logged get the name. When the service varies ("Fire 20", then "EMS 20") the name is
 "Station 20". Tones that start or end every fire call name a different station each time, so they stay
 unnamed. Fix or delete a learned line like any other; it is not learned again while it's in the file.
+
+## Auto-restart
+
+Double-click **start-everything.bat** instead of starting things one by one. It starts Ollama (when
+`[summaries]` is on), the transcriber and SDRTrunk, each in its own window, and then keeps watching them
+from its own window. Programs already running are left as they are and watched too.
+
+Every 30 seconds it checks each one:
+
+* **Ollama and the transcriber** must answer at their web address. An old transcriber still holding port
+  3000 is stopped before a new one starts.
+* **SDRTrunk** must be running and its window must not be "Not responding" (the same thing Task Manager
+  shows).
+
+After 4 failed checks in a row (2 minutes) the program is closed and started again, and a Bark alert says
+which one and why, e.g. "SDRTrunk restarted: It froze, so it was restarted at 3:12 AM." A program gets 3
+minutes to start before it is checked. One that needs more than 4 restarts in an hour is left alone for an
+hour with a "keeps failing" alert, so a real problem (an unplugged dongle, a bad setting) doesn't make it
+restart all night.
+
+To close SDRTrunk or the transcriber on purpose, close the **SDRTrunk watchdog** window first, or it
+starts them again. The programs keep running when the watchdog window is closed. What it did is in
+`watchdog.log` next to `config.toml`.
+
+It finds SDRTrunk by looking at the SDRTrunk that is running. If SDRTrunk isn't running when the watchdog
+starts, set `sdrtrunk` under `[watchdog]` in `config.toml` to its `bin\sdr-trunk.bat` (see
+`config.example.toml`), or start SDRTrunk yourself once. The other settings are there too.
 
 ## Accuracy tips
 

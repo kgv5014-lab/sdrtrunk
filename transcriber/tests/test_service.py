@@ -487,6 +487,30 @@ def test_streets_are_hinted_and_cleaned_up(make_client, tmp_path):
     assert "Larry Holmes Drive" in fake.prompts[0] and fake.prompts[0].endswith("Medic 2081")
 
 
+def test_misheard_house_number_is_snapped_to_a_real_address(make_client, tmp_path):
+    import json
+    from test_address_fix import GEO, census_zip
+    from sdrtrunk_transcriber import tiger
+
+    (tmp_path / "places-geo.json").write_text(json.dumps(GEO), encoding="utf-8")
+    ranges, _counts = tiger.build(tiger.read_zip(census_zip(tmp_path / "census.zip")), GEO)
+    (tmp_path / "address-ranges.json").write_text(json.dumps(ranges), encoding="utf-8")
+
+    class Radio(FakeBackend):
+        def transcribe(self, samples, prompt):
+            return Transcript("Engine 4 respond to 1700 Ferry Street.", -0.2)
+
+    client, _fake = make_client(backend=Radio())
+    with client:
+        post(client, sdrtrunk_body({**CALL, "talkgroupLabel": "Easton Fire"}, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        call = client.get("/api/calls").json()[0]
+
+    assert call["transcript"] == "Engine 4 respond to 700 Ferry Street."
+    assert call["transcript_raw"] == "Engine 4 respond to 1700 Ferry Street."
+    assert call["address_fix"] == '"1700 Ferry Street"'
+
+
 def test_gpu_picked_by_name_overrides_device_index(tmp_path, monkeypatch):
     from sdrtrunk_transcriber.config import load_config
     path = tmp_path / "config.toml"

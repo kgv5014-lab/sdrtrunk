@@ -37,6 +37,7 @@
   .page .title .unknown { color: var(--muted); font-weight: 400; }
   .edit { margin-left: auto; padding: 2px 10px; font-size: 12px; }
   .fixed { color: var(--accent); }
+  .first { color: var(--muted); font-size: 13px; margin-top: 2px; }
   textarea { width: 100%; margin-top: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; font: 15px/1.45 system-ui, sans-serif; resize: vertical; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
   .note { color: var(--muted); font-size: 12px; }
@@ -85,11 +86,17 @@ function render(call) {
   if (call.system_label) meta.append(el('span', '', call.system_label));
   if (call.frequency) meta.append(el('span', '', (call.frequency / 1e6).toFixed(4) + ' MHz'));
   if (call.duration_s) meta.append(el('span', '', call.duration_s.toFixed(1) + ' s'));
-  if (call.confidence !== null && call.confidence < -0.8) meta.append(el('span', 'low', 'low confidence'));
+  if (call.check_status === 'unsure') meta.append(el('span', 'low', 'still unsure: ' + (call.check_notes || 'looks garbled')));
+  else if (call.check_status !== 'rechecked' && call.confidence !== null && call.confidence < -0.8) meta.append(el('span', 'low', 'low confidence'));
+  if (call.check_status === 'rechecked') meta.append(el('span', 'fixed', 'rechecked'));
   if (call.corrected_at) meta.append(el('span', 'fixed', 'fixed by hand'));
-  const player = el('audio'); player.controls = true; player.preload = 'none';
-  player.src = 'api/calls/' + call.id + '/audio';
-  meta.append(player);
+  if (call.address_fix && !call.corrected_at) meta.append(el('span', 'fixed', 'address fixed, heard as ' + call.address_fix));
+  if (call.audio_deleted_at) meta.append(el('span', '', 'audio deleted'));
+  else {
+    const player = el('audio'); player.controls = true; player.preload = 'none';
+    player.src = 'api/calls/' + call.id + '/audio';
+    meta.append(player);
+  }
   if (['done', 'skipped', 'failed'].includes(call.status)) {
     const edit = el('button', 'edit', 'Edit');
     edit.addEventListener('click', () => startEdit(card, call));
@@ -103,6 +110,8 @@ function render(call) {
   else if (call.status === 'failed') { text = 'transcription failed: ' + (call.error || ''); cls += ' failed'; }
   else { text = call.status + '...'; cls += ' pending'; }
   card.append(el('div', cls, text));
+  // The self-check ran Whisper again and kept the second try; the first is shown for comparison.
+  if (call.first_transcript && call.status === 'done') card.append(el('div', 'first', 'first try: ' + call.first_transcript));
   if (call.summary) {
     const sum = el('div', 'summary');
     sum.append(el('span', 'ai', 'AI'), call.summary + (call.summary_tags && call.summary_tags.length ? ' · ' + call.summary_tags.join(', ') : ''));

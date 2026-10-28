@@ -9,6 +9,8 @@ API (three requests), works out which town each one is in, ranks roads by size a
     places.csv       one row per name and town; see places.py for the columns
     places-geo.json  road lines, landmark points and town outlines, for the incident map
 
+then downloads house-number ranges from the US Census and writes address-ranges.json (see tiger.py).
+
 Rows in an existing places.csv whose source isn't "osm" or "example" are hand-made and are kept.
 """
 
@@ -182,6 +184,15 @@ class Towns:
             self.towns.append({"name": name, "bbox": (min(lats), min(lons), max(lats), max(lons)),
                                "bands": bands, "segments": segments})
 
+    @classmethod
+    def from_outlines(cls, outlines: list[dict]) -> "Towns":
+        """Towns from the outlines saved in places-geo.json (see outlines())."""
+        return cls([{"tags": {"name": t["name"]},
+                     "members": [{"type": "way", "role": "outer",
+                                  "geometry": [{"lat": a[0], "lon": a[1]}, {"lat": b[0], "lon": b[1]}]}
+                                 for a, b in t.get("lines", [])]}
+                    for t in outlines if t.get("name")])
+
     def _band(self, lat: float) -> int:
         return math.floor(lat / self.BAND)
 
@@ -342,12 +353,24 @@ def main(argv=None):
     parser.add_argument("--geo", default="places-geo.json", help="map geometry to write")
     parser.add_argument("--url", help="Overpass API address (default: try the public servers in turn)")
     parser.add_argument("--cache", default="data/osm-cache", help="where downloads are kept for a day")
+    parser.add_argument("--ranges", default="address-ranges.json",
+                        help="house-number ranges to write from the US Census (\"\" to skip them)")
+    parser.add_argument("--addresses-only", action="store_true",
+                        help="only download the house-number ranges, using the places-geo.json already there")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     bbox = tuple(float(v) for v in args.bbox.split(",")) if args.bbox else DEFAULT_BBOX
     if len(bbox) != 4:
         parser.error("--bbox needs four numbers: south,west,north,east")
+
+    if args.addresses_only:
+        try:
+            geo = json.loads(Path(args.geo).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            log.error("Couldn't read %s (%s). Run fetch-places.bat without --addresses-only first.", args.geo, e)
+            return 1
+        return 0 if fetch_ranges(args, geo, bbox) else 1
 
     results = {}
     for name, query in queries(bbox).items():
@@ -371,7 +394,15 @@ def main(argv=None):
     log.info("Wrote %s: %d places in %d towns (%d hint candidates), kept %d hand-made rows",
              out, len(rows), towns, hints, len(kept))
     log.info("Wrote %s for the map", args.geo)
+    if args.ranges:
+        # The street list is done either way; a Census hiccup only leaves the house-number check as it was.
+        fetch_ranges(args, geo, bbox)
     return 0
+
+
+def fetch_ranges(args, geo: dict, bbox) -> bool:
+    from . import tiger
+    return tiger.fetch(geo, Path(args.ranges), Path(args.cache).parent / "census-cache", bbox=bbox)
 
 
 if __name__ == "__main__":

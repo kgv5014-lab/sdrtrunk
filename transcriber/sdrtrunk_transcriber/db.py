@@ -227,9 +227,21 @@ class Database:
         if "corrected_at" not in columns:
             # When the transcript was fixed by hand on the call log page (unix seconds), else NULL.
             self._conn.execute("ALTER TABLE calls ADD COLUMN corrected_at INTEGER")
+        if "address_fix" not in columns:
+            # What an address fixed by address_fix.py was heard as, else NULL.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN address_fix TEXT")
+        if "audio_deleted_at" not in columns:
+            # When old audio was deleted to save space (unix seconds), else NULL. The call stays logged.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN audio_deleted_at INTEGER")
         if "map_status" not in columns:
             # NULL: not looked at yet; none: no place heard; placed; unplaced: heard but not found.
             self._conn.execute("ALTER TABLE calls ADD COLUMN map_status TEXT")
+        if "check_status" not in columns:
+            # The self-check (selfcheck.py): ok, rechecked (a careful retry fixed it) or unsure, with
+            # what looked wrong, and the first try's transcript when the retry replaced it.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN check_status TEXT")
+            self._conn.execute("ALTER TABLE calls ADD COLUMN check_notes TEXT")
+            self._conn.execute("ALTER TABLE calls ADD COLUMN first_transcript TEXT")
         incident_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incidents)")}
         if "channel" not in incident_columns:
             self._conn.execute("ALTER TABLE incidents ADD COLUMN channel TEXT")
@@ -272,6 +284,30 @@ class Database:
         with self._lock:
             row = self._conn.execute("SELECT * FROM calls WHERE id = ?", (call_id,)).fetchone()
         return dict(row) if row else None
+
+    def audio_to_delete(self, before: int | None = None, keep_unplaced: bool = False) -> list[dict]:
+        """Calls whose audio may be deleted, oldest first: transcribed, not on an incident, not alerted.
+        With keep_unplaced, calls the map hasn't looked at yet are kept too, as they may join one."""
+        where = ["audio_deleted_at IS NULL", "status NOT IN ('queued', 'processing')",
+                 "id NOT IN (SELECT call_id FROM call_places WHERE incident_id IS NOT NULL)",
+                 "id NOT IN (SELECT call_id FROM alerts WHERE call_id IS NOT NULL)"]
+        params = []
+        if keep_unplaced:
+            where.append("map_status IS NOT NULL")
+        if before is not None:
+            where.append("call_time < ?")
+            params.append(before)
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT id, call_time, audio_path FROM calls WHERE {' AND '.join(where)} ORDER BY call_time, id",
+                params).fetchall()
+        return [dict(row) for row in rows]
+
+    def mark_audio_deleted(self, call_ids: list[int], when: int):
+        with self._lock:
+            self._conn.executemany("UPDATE calls SET audio_deleted_at = ? WHERE id = ?",
+                                   [(when, call_id) for call_id in call_ids])
+            self._conn.commit()
 
     def pending_ids(self) -> list[int]:
         """Calls left unfinished by a previous run, oldest first."""

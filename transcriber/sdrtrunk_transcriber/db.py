@@ -183,7 +183,9 @@ END;
 # Bumped when a change to the incident map means existing incidents should be rebuilt.
 # 2: EMS type, ALS/BLS, ten-codes no longer read as house numbers.
 # 3: incidents followed onto Tac channels, calls joined by channel and cross street.
-MAP_VERSION = 4
+# 4: police, fire and EMS dispatches to the same scene joined.
+# 5: who is talking (speakers.py): a unit's own words aren't a dispatch, and join by the unit talking.
+MAP_VERSION = 5
 
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",
@@ -242,6 +244,11 @@ class Database:
             self._conn.execute("ALTER TABLE calls ADD COLUMN check_status TEXT")
             self._conn.execute("ALTER TABLE calls ADD COLUMN check_notes TEXT")
             self._conn.execute("ALTER TABLE calls ADD COLUMN first_transcript TEXT")
+        if "speaker_kind" not in columns:
+            # Who is talking (speakers.py): dispatch, unit or NULL; the name shown; what decided it.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN speaker_kind TEXT")
+            self._conn.execute("ALTER TABLE calls ADD COLUMN speaker TEXT")
+            self._conn.execute("ALTER TABLE calls ADD COLUMN speaker_how TEXT")
         incident_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incidents)")}
         if "channel" not in incident_columns:
             self._conn.execute("ALTER TABLE incidents ADD COLUMN channel TEXT")
@@ -332,8 +339,8 @@ class Database:
             where.append("(talkgroup = ? OR talkgroup_label LIKE ?)")
             params.extend([talkgroup, f"%{talkgroup}%"])
         if source:
-            where.append("(source = ? OR talker_alias LIKE ?)")
-            params.extend([source, f"%{source}%"])
+            where.append("(source = ? OR talker_alias LIKE ? OR speaker LIKE ?)")
+            params.extend([source, f"%{source}%", source])
         if before_id:
             where.append("id < ?")
             params.append(before_id)
@@ -471,7 +478,8 @@ class Database:
             for incident in incidents:
                 rows = self._conn.execute(
                     "SELECT p.kind, p.heard, p.label, p.lat, p.lon, p.precision, c.id, c.call_time, c.talkgroup, "
-                    "c.talkgroup_label, c.talkgroup_group, c.talker_alias, c.source, c.transcript, c.duration_s "
+                    "c.talkgroup_label, c.talkgroup_group, c.talker_alias, c.source, c.speaker, c.speaker_kind, c.speaker_how, "
+                    "c.transcript, c.duration_s "
                     "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
                     "ORDER BY c.call_time", (incident["id"],)).fetchall()
                 incident["calls"] = [dict(row) for row in rows]
@@ -483,11 +491,11 @@ class Database:
         return dict(row) if row else None
 
     def incident_calls_brief(self, incident_id: int) -> list[dict]:
-        """Transcript, talker alias, talkgroup and time of each call in an incident, oldest first."""
+        """Transcript, talker alias, speaker, talkgroup and time of each call in an incident, oldest first."""
         with self._lock:
             rows = self._conn.execute(
-                "SELECT c.id, c.call_time, c.transcript, c.talker_alias, c.talkgroup, c.talkgroup_label, "
-                "c.talkgroup_group, p.precision, p.lat, p.lon, p.label "
+                "SELECT c.id, c.call_time, c.transcript, c.talker_alias, c.speaker, c.speaker_kind, c.speaker_how, "
+                "c.talkgroup, c.talkgroup_label, c.talkgroup_group, p.precision, p.lat, p.lon, p.label "
                 "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
                 "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
         return [dict(row) for row in rows]
@@ -616,7 +624,8 @@ class Database:
     def incident_calls_for_summary(self, incident_id: int) -> list[dict]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT DISTINCT c.id, c.call_time, c.transcript, c.talker_alias, c.talkgroup, c.talkgroup_label "
+                "SELECT DISTINCT c.id, c.call_time, c.transcript, c.talker_alias, c.speaker, c.speaker_kind, c.speaker_how, "
+                "c.talkgroup, c.talkgroup_label "
                 "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
                 "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
         return [dict(row) for row in rows]

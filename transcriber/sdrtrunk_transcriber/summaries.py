@@ -316,7 +316,7 @@ class Summarizer:
         prompt = CALL_PROMPT.format(
             talkgroup=call["talkgroup_label"] or call["talkgroup"] or "unknown talkgroup",
             clock=_clock(call["call_time"]),
-            who=f" from {call['talker_alias']}" if call["talker_alias"] else "",
+            who=f" from {_speaker(call)}" if _speaker(call) else "",
             transcript=call["transcript"],
         )
         started = time.perf_counter()
@@ -335,10 +335,22 @@ def _clock(t) -> str:
     return datetime.fromtimestamp(t).strftime("%H:%M")
 
 
+def _speaker(call: dict) -> str:
+    """Who said a call, so the model reads calls as a conversation: "Dispatch", "unit 1781", "a unit"."""
+    if call.get("talker_alias"):
+        return call["talker_alias"]
+    if call.get("speaker_kind") == "dispatch":
+        return "Dispatch"
+    if call.get("speaker_kind") == "unit":
+        name = call.get("speaker") or "Unit"
+        return "a unit" if name == "Unit" else name if not name[:1].isdigit() else f"unit {name}"
+    return ""
+
+
 def _call_line(call: dict) -> str:
     if call["call_time"] is None:
         return "(... earlier calls left out ...)"
-    who = f" ({call['talker_alias']})" if call["talker_alias"] else ""
+    who = f" ({_speaker(call)})" if _speaker(call) else ""
     talkgroup = call["talkgroup_label"] or call["talkgroup"] or ""
     return f"{_clock(call['call_time'])} {talkgroup}{who}: {call['transcript']}"
 

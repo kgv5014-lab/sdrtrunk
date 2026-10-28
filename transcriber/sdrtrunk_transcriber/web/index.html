@@ -38,6 +38,8 @@
   .edit { margin-left: auto; padding: 2px 10px; font-size: 12px; }
   .fixed { color: var(--accent); }
   .first { color: var(--muted); font-size: 13px; margin-top: 2px; }
+  .meta b.dispatch { color: var(--warn); }
+  .meta b.unit { color: var(--accent); }
   textarea { width: 100%; margin-top: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; font: 15px/1.45 system-ui, sans-serif; resize: vertical; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
   .note { color: var(--muted); font-size: 12px; }
@@ -53,7 +55,7 @@
   <a href="units">Units</a>
   <input id="q" type="search" placeholder="Search transcripts">
   <input id="talkgroup" type="search" placeholder="Talkgroup" size="12">
-  <input id="source" type="search" placeholder="Radio ID or alias" size="14">
+  <input id="source" type="search" placeholder="Radio ID, unit or Dispatch" size="18">
   <span id="status"></span>
 </header>
 <main>
@@ -80,8 +82,12 @@ function render(call) {
   const tg = el('span'); tg.append('TG ', el('b', '', call.talkgroup_label || call.talkgroup));
   if (call.talkgroup_label) tg.append(' (' + call.talkgroup + ')');
   meta.append(tg);
-  const src = el('span'); src.append('From ', el('b', '', call.talker_alias || call.source || 'unknown'));
-  if (call.talker_alias && call.source) src.append(' (' + call.source + ')');
+  // Who is talking: the talker alias, else Dispatch or the unit worked out from the radio ID or the words.
+  const radioId = call.source && call.source !== '0' ? call.source : '';
+  const who = call.talker_alias || (call.speaker_kind ? call.speaker : '');
+  const src = el('span'); src.append('From ', el('b', call.talker_alias ? '' : call.speaker_kind || '', who || radioId || 'unknown'));
+  if (who && radioId) src.append(' (' + radioId + ')');
+  if (!call.talker_alias && call.speaker_how) src.title = call.speaker_how === 'radio id' ? 'Known from the radio ID' : 'Guessed from how the call is worded';
   meta.append(src);
   if (call.system_label) meta.append(el('span', '', call.system_label));
   if (call.frequency) meta.append(el('span', '', (call.frequency / 1e6).toFixed(4) + ' MHz'));

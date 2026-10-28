@@ -2,7 +2,8 @@
 
 Each finished transcript is read for the call signs codes.csv knows ("1382", "20-11", police "2741")
 and for status words: dispatched, responding, on scene, transporting, at the hospital, available.
-Every unit named in the call takes that status. A call with no status words only updates when the
+When speakers.py knows which unit is talking ("1781 County, I'm on scene", or a radio ID it has heard
+give its call sign), only that unit takes the status. Otherwise every unit named in the call does. A call with no status words only updates when the
 unit was last heard. Nothing here is certain: it is what the radio said, as Whisper heard it.
 """
 
@@ -13,7 +14,7 @@ import time
 
 from .codes import CodeBook
 from .db import Database
-from .incidents import CLEARED, is_dispatch
+from .incidents import CLEARED, by_unit, is_dispatch
 
 log = logging.getLogger(__name__)
 
@@ -55,10 +56,10 @@ CREATE TABLE IF NOT EXISTS units (
 """
 
 
-def status_of(text: str | None) -> str | None:
+def status_of(text: str | None, unit_talking: bool = False) -> str | None:
     if not text:
         return None
-    if is_dispatch(text):
+    if is_dispatch(text) and not unit_talking:
         return "dispatched"
     for name, pattern in STATUSES[1:]:
         if pattern.search(text):
@@ -102,11 +103,11 @@ class UnitBoard:
             db._conn.executescript(SCHEMA)
             db._conn.commit()
 
-    def units_in(self, call: dict) -> list[dict]:
-        """The call signs codes.csv knows in a call: [{unit, shown, meaning}]."""
+    def units_in(self, call: dict, text: str | None = None) -> list[dict]:
+        """The call signs codes.csv knows in a call (or in text): [{unit, shown, meaning}]."""
         context = (call.get("talkgroup_label"), call.get("talkgroup_group"))
         found = {}
-        for item in self.codebook.annotate(call.get("transcript"), *context):
+        for item in self.codebook.annotate(call.get("transcript") if text is None else text, *context):
             code = item.get("code") or ""
             if item.get("kind") != "unit" or not re.fullmatch(r"\d{2}-?\d{1,2}", code):
                 continue
@@ -122,9 +123,12 @@ class UnitBoard:
     def process(self, call: dict):
         text = call.get("transcript") or ""
         units = self.units_in(call)
+        talking = self.units_in(call, call.get("speaker")) if by_unit(call) and call.get("speaker") else []
+        units += [u for u in talking if u["unit"] not in {n["unit"] for n in units}]
         if not units:
             return
-        status = status_of(text)
+        status = status_of(text, by_unit(call))
+        talking = {u["unit"] for u in talking}
         when = call["call_time"]
         talkgroup = call.get("talkgroup_label") or call.get("talkgroup") or ""
         with self._lock, self.db._lock:
@@ -140,6 +144,9 @@ class UnitBoard:
                     conn.execute("UPDATE units SET last_heard = ?, last_call_id = ?, talkgroup = ?, "
                                  "meaning = COALESCE(NULLIF(?, ''), meaning) WHERE unit = ?",
                                  (when, call["id"], talkgroup, unit["meaning"], unit["unit"]))
+                # "1781 County, 1782 is with me, on scene": the unit talking is on scene; 1782 was only named.
+                if talking and unit["unit"] not in talking:
+                    continue
                 # Calls can be transcribed out of order (fire and EMS first); an older call never
                 # overwrites a newer status.
                 if status and (row is None or row["status_time"] is None or when >= row["status_time"]):

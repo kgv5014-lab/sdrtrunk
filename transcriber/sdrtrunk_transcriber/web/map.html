@@ -253,7 +253,7 @@ function popup(incident) {
   incident.calls.forEach(c => {
     const call = el('div', 'call');
     call.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
-      (c.talker_alias ? ' · ' + c.talker_alias : '') + ' · ' + (PRECISION[c.precision] || c.precision)));
+      (c.talker_alias ? ' · ' + c.talker_alias : c.speaker_kind ? ' · ' + c.speaker : '') + ' · ' + (PRECISION[c.precision] || c.precision)));
     const text = highlighted(c.transcript, c.highlights);
     call.append(text);
     if (c.codes && c.codes.length) {

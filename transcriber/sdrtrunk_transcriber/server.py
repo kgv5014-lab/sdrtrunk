@@ -46,6 +46,7 @@ from .db import Database
 from .geocode import Geocoder
 from .incidents import MapWorker, highlights, services_of
 from .zones import ZoneWatch, read_zones
+from .speakers import SpeakerBook
 from .summaries import Summarizer, attach as attach_summary, incident_basis
 from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
@@ -125,6 +126,16 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             fixer = AddressFixer(gazetteer, address_book, near_incidents)
         worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections, hints, fixer)
         alerter = Alerter(config, db) if config.alerts.enabled else None
+        speakers = None
+        if config.speakers.enabled:
+            speakers = SpeakerBook(db, config.speakers.dispatch_talkgroups, config.speakers.police_talkgroups)
+            try:
+                # Before the map starts, so incidents rebuilt from older calls know who was talking.
+                labelled = speakers.backfill()
+                if labelled:
+                    log.info("Speakers: labelled %d older calls", labelled)
+            except Exception:
+                log.exception("Speakers: could not label older calls")
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:
             tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
@@ -164,6 +175,12 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             log.exception("Unit board: could not read recent calls")
 
         def done(call_id):
+            if speakers:
+                # First: the unit board, the map and the summaries read the label.
+                try:
+                    speakers.apply(call_id)
+                except Exception:
+                    log.exception("Speakers: call %s failed", call_id)
             if config.tones.enabled:
                 tone_finder.learn_if_due()
             try:
@@ -199,6 +216,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.traffic = traffic
         app.state.units = units
         app.state.signal = SignalWatch(config.signal, db, alerter) if config.signal.enabled else None
+        app.state.speakers = speakers
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
@@ -386,6 +404,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         original = call["transcript"] or ""
         learned = request.app.state.corrections.learn(original, text) if body.get("learn", True) else []
         db.update_call(call_id, transcript=text, corrected_at=int(time.time()), status="done", error=None)
+        if request.app.state.speakers:
+            request.app.state.speakers.apply(call_id, learn=False)
         # A fixed street name may put a call on the map that wasn't placed before.
         map_worker = request.app.state.map_worker
         if map_worker and call["map_status"] in ("none", "follow-up"):

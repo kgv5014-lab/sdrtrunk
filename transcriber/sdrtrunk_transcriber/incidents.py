@@ -159,7 +159,7 @@ def classify(calls: list[dict]) -> tuple[str | None, str | None]:
         nature, category = nature_of(call.get("transcript"))
         if nature:
             natures.append(nature)
-            if is_dispatch(call.get("transcript")):
+            if dispatch_call(call):
                 dispatched.append((nature, category))
         if category:
             categories.add(category)
@@ -290,6 +290,23 @@ def is_dispatch(text: str | None) -> bool:
     return bool(text and (DISPATCH.search(text) or life_support(text)))
 
 
+def by_unit(call: dict) -> bool:
+    """A call surely said by a unit (speakers.py): by its radio ID, or by the call sign it gave."""
+    return call.get("speaker_kind") == "unit" and (
+        call.get("speaker_how") == "radio id" or (call.get("speaker") or "Unit") != "Unit")
+
+
+def dispatch_call(call: dict) -> bool:
+    """is_dispatch, but not for a unit reading back where it was sent ("we'll respond to ...")."""
+    return not by_unit(call) and is_dispatch(call.get("transcript"))
+
+
+def talker(call: dict) -> str:
+    """Who said a call, for units_in: the talker alias, and the unit speakers.py found ("17-81" -> "1781")."""
+    unit = re.sub(r"(?<=\d)-(?=\d)", "", call.get("speaker") or "") if call.get("speaker_kind") == "unit" else ""
+    return f"{call.get('talker_alias') or ''} {unit}".strip()
+
+
 def _channel(m: re.Match) -> str:
     word = m.group(1).lower().replace(" ", "")
     return f"{CHANNEL_NAMES.get(word, 'Tac')} {m.group(2)}{(m.group(3) or '').upper()}"
@@ -319,7 +336,7 @@ def talkgroup_channel(label: str | None) -> str | None:
 def channel_of(calls: list[dict], followed=lambda channel: True) -> tuple[str | None, int | None]:
     """(channels, when) an incident is worked on: the channels its latest dispatch names ("Tac 2A, Tac 2"),
     else the latest call naming any, else the first followed channel (a Tac channel) one of its calls is on."""
-    named = [(", ".join(chs), c["call_time"], is_dispatch(c.get("transcript")))
+    named = [(", ".join(chs), c["call_time"], dispatch_call(c))
              for c in calls if (chs := channels_in(c.get("transcript")))]
     dispatched = [n for n in named if n[2]]
     if dispatched or named:
@@ -442,12 +459,12 @@ class MapWorker:
                 self.on_done(call, self.db.incident_of_call(call_id))
         finally:
             text = call["transcript"] or ""
-            if is_dispatch(text) or CLEARED.search(text):
+            if dispatch_call(call) or CLEARED.search(text):
                 # Sent to a new call, or done: units named here are free of their earlier incidents.
-                keep = self.db.incident_of_call(call_id) if is_dispatch(text) else None
-                for unit in units_in(text) | units_in(call["talker_alias"]):
+                keep = self.db.incident_of_call(call_id) if dispatch_call(call) else None
+                for unit in units_in(text) | units_in(talker(call)):
                     self._released[unit] = (call["call_time"], keep)
-            if is_dispatch(text):
+            if dispatch_call(call):
                 incident_id = self.db.incident_of_call(call_id)
                 for channel in channels_in(call["transcript"]):
                     self._claims[channel] = (call["call_time"], incident_id)
@@ -496,14 +513,16 @@ class MapWorker:
         channel it is on, then by a street of an incident it names. A new dispatch is a new call, even
         when its place can't be found, unless it sends another service to an incident on a street it names.
         Returns True when it joined one."""
-        if is_dispatch(call["transcript"]):
+        if dispatch_call(call):
             return self.follow_dispatch(call)
         return self.follow_up(call) or self.follow_channel(call) or self.follow_street(call)
 
     def follow_up(self, call: dict) -> bool:
         """Joins a call that names no place ("Engine 2011 on scene") to the recent incident a unit
-        it names, or its talker alias, already appears in. Returns True when it joined one."""
-        units = units_in(call["transcript"]) | units_in(call["talker_alias"])
+        it names, or the unit that said it, already appears in. Returns True when it joined one."""
+        if not (call["transcript"] or "").strip():
+            return False    # a radio keyed up with no words says nothing about where it is
+        units = units_in(call["transcript"]) | units_in(talker(call))
         if not units:
             return False
         t = call["call_time"]
@@ -513,7 +532,7 @@ class MapWorker:
                 continue
             seen: dict[str, int] = {}     # unit -> its latest call in this incident
             for other in self.db.incident_calls_brief(incident["id"]):
-                for unit in units_in(other["transcript"]) | units_in(other["talker_alias"]):
+                for unit in units_in(other["transcript"]) | units_in(talker(other)):
                     seen[unit] = other["call_time"]
             # A unit that went available, or was sent elsewhere, since is no longer at this incident.
             shared = {u for u in units & seen.keys() if not self._moved_on(u, seen[u], incident["id"])}
@@ -773,7 +792,7 @@ class MapWorker:
         t = call["call_time"]
         window = settings.incident_window_minutes * 60
         nearest, best = None, None
-        dispatch = is_dispatch(call["transcript"])
+        dispatch = dispatch_call(call)
         for incident in self.db.nearby_incidents(t - window, t + window):
             d = distance_m(*point, incident["lat"], incident["lon"])
             limit = settings.incident_radius_m

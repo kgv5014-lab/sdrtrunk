@@ -90,6 +90,7 @@ function render(call) {
   else if (call.check_status !== 'rechecked' && call.confidence !== null && call.confidence < -0.8) meta.append(el('span', 'low', 'low confidence'));
   if (call.check_status === 'rechecked') meta.append(el('span', 'fixed', 'rechecked'));
   if (call.corrected_at) meta.append(el('span', 'fixed', 'fixed by hand'));
+  if (call.address_fix && !call.corrected_at) meta.append(el('span', 'fixed', 'address fixed, heard as ' + call.address_fix));
   if (call.audio_deleted_at) meta.append(el('span', '', 'audio deleted'));
   else {
     const player = el('audio'); player.controls = true; player.preload = 'none';

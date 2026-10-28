@@ -198,6 +198,9 @@ class Database:
         if "corrected_at" not in columns:
             # When the transcript was fixed by hand on the call log page (unix seconds), else NULL.
             self._conn.execute("ALTER TABLE calls ADD COLUMN corrected_at INTEGER")
+        if "address_fix" not in columns:
+            # What an address fixed by address_fix.py was heard as, else NULL.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN address_fix TEXT")
         if "audio_deleted_at" not in columns:
             # When old audio was deleted to save space (unix seconds), else NULL. The call stays logged.
             self._conn.execute("ALTER TABLE calls ADD COLUMN audio_deleted_at INTEGER")

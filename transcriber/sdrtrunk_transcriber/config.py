@@ -157,6 +157,34 @@ class HintsConfig:
 
 
 @dataclass
+class SelfCheckConfig:
+    # Spot transcripts that look garbled and run Whisper again on them, slower and more carefully, keeping
+    # whichever version looks better (see selfcheck.py). The call log marks them "rechecked" or "unsure".
+    enabled: bool = True
+    # Whisper's own confidence below this counts as unsure (the call log's "low confidence").
+    low_confidence: float = -0.8
+    # A street name not in places.csv, and a fire or EMS unit whose station isn't in codes.csv.
+    streets: bool = True
+    units: bool = True
+    # Real radio speech is about 2-3 words a second.
+    max_words_per_second: float = 5.0
+    # Calls with at least this much speech (tones cut) but fewer words a second than below.
+    min_words_speech_s: float = 8.0
+    min_words_per_second: float = 0.3
+    # Ask the [summaries] Ollama model about calls the quick checks pass but Whisper was only middling
+    # sure of (confidence below ollama_below_confidence) with at least ollama_min_words words. Needs
+    # [summaries] enabled; Ollama down = quick checks only.
+    ollama: bool = True
+    ollama_below_confidence: float = -0.45
+    ollama_min_words: int = 8
+    ollama_timeout_s: float = 30.0
+    # The careful retry: a wider beam search and more temperature steps. Off = only mark the calls.
+    retry: bool = True
+    retry_beam_size: int = 10
+    retry_temperatures: list = field(default_factory=lambda: [0.0, 0.2, 0.4, 0.6, 0.8])
+
+
+@dataclass
 class MapConfig:
     # Possible incidents on a map at /map, from addresses heard in transcripts.
     enabled: bool = True
@@ -296,6 +324,7 @@ class Config:
     corrections: CorrectionsConfig = field(default_factory=CorrectionsConfig)
     places: PlacesConfig = field(default_factory=PlacesConfig)
     hints: HintsConfig = field(default_factory=HintsConfig)
+    self_check: SelfCheckConfig = field(default_factory=SelfCheckConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     aircraft: AircraftConfig = field(default_factory=AircraftConfig)

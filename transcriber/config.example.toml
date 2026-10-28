@@ -117,6 +117,23 @@ active_minutes = 60
 history_days = 30
 min_count = 3
 
+[self_check]
+# Spot transcripts that look garbled and run Whisper again on them, slower and more carefully, keeping the
+# better of the two. The call log marks them "rechecked" (the retry came out clean) or "still unsure".
+enabled = true
+# What counts as garbled: Whisper's confidence below this, a street that isn't in places.csv, a fire or EMS
+# unit whose station isn't in codes.csv, words going round in a loop, or far too many or too few words.
+low_confidence = -0.8
+streets = true
+units = true
+# Ask the Ollama model from [summaries] about calls Whisper was only middling sure of (needs [summaries]
+# enabled; when Ollama is off, only the checks above run). It never rewrites the text.
+ollama = true
+ollama_below_confidence = -0.45
+# The careful retry: a wider search and more tries. retry = false only marks the calls.
+retry = true
+retry_beam_size = 10
+
 [map]
 # Possible incidents on a map at http://localhost:3000/map, from addresses heard in transcripts.
 enabled = true

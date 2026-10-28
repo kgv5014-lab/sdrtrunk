@@ -201,6 +201,12 @@ class Database:
         if "map_status" not in columns:
             # NULL: not looked at yet; none: no place heard; placed; unplaced: heard but not found.
             self._conn.execute("ALTER TABLE calls ADD COLUMN map_status TEXT")
+        if "check_status" not in columns:
+            # The self-check (selfcheck.py): ok, rechecked (a careful retry fixed it) or unsure, with
+            # what looked wrong, and the first try's transcript when the retry replaced it.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN check_status TEXT")
+            self._conn.execute("ALTER TABLE calls ADD COLUMN check_notes TEXT")
+            self._conn.execute("ALTER TABLE calls ADD COLUMN first_transcript TEXT")
         incident_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incidents)")}
         if "channel" not in incident_columns:
             self._conn.execute("ALTER TABLE incidents ADD COLUMN channel TEXT")

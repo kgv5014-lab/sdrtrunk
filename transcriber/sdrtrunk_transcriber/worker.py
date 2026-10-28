@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import audio
+from . import audio, selfcheck
 from .backends import Backend
 from .codes import CodeBook, to_twelve_hour
 from .config import Config
@@ -84,6 +84,9 @@ class TranscriptionWorker:
         self.vocabulary = load_vocabulary(config.vocabulary_path)
         # LearnedHints (hints.py), or None.
         self.hints = hints
+        # Spots garbled transcripts for a careful second try (selfcheck.py), or None.
+        self.selfcheck = selfcheck.SelfCheck(config, self.placebook, self.codebook) \
+            if config.self_check.enabled else None
         # Called with the call id after each transcript is saved (the incident map listens here).
         self.on_done = None
         # Called with (call, samples) with the audio as uploaded, before cleaning (the tone finder).
@@ -188,20 +191,14 @@ class TranscriptionWorker:
         started = time.perf_counter()
         context = (call["talkgroup_label"], call["talkgroup_group"])
         terms = self.prompt_terms(*context, call=call)
-        result = self._backend.transcribe(samples, ", ".join(terms))
+        prompt = ", ".join(terms)
+        result = self._backend.transcribe(samples, prompt)
+        transcript, junk = self._finish(result, terms, call, context)
+        check = {}
+        if self.selfcheck:
+            result, transcript, junk, check = self._self_check(
+                call, samples, max(duration - tone_s, 0.0), prompt, terms, context, result, transcript, junk)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
-        transcript, junk = result.text, []
-        if self.config.transcription.junk_filter:
-            transcript, junk = remove_junk(transcript, result.confidence, terms,
-                                           self.config.transcription.stock_phrase_logprob,
-                                           self.config.transcription.english_only)
-        # Places first, so "route ten" becomes Route 10 before the codes see "ten".
-        transcript = self.placebook.normalize(transcript, *context)
-        transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))
-        # Ken's own fixes last: they were learned from the finished transcript.
-        transcript = self.corrections.normalize(transcript, call["talkgroup_label"])
-        if self.config.codes.twelve_hour:
-            transcript = to_twelve_hour(transcript)
 
         self.db.update_call(
             call_id,
@@ -215,9 +212,58 @@ class TranscriptionWorker:
             transcribe_ms=elapsed_ms,
             # Shown in place of "no speech found", so a tone-out doesn't look like a missed call.
             error=TONES_ONLY if not transcript and tone_s >= TONES_ONLY_MIN_S else None,
+            **check,
         )
         notes = ([f"{tone_s:.1f}s of tones cut"] if tone_s else []) + [f"{name} removed" for name in junk]
         log.info("Call %d TG %s (%.1fs%s) in %d ms: %s", call_id, call["talkgroup"], duration,
                  "".join(", " + note for note in notes), elapsed_ms, transcript or "(no speech)")
         if self.on_done:
             self.on_done(call_id)
+
+    def _self_check(self, call, samples, speech_s, prompt, terms, context, result, transcript, junk):
+        """Checks a transcript for signs it is garbled (selfcheck.py). When it looks wrong, Whisper runs
+        again more carefully and the better of the two is kept. Returns the kept result, transcript and
+        junk, and the check's columns for the call log."""
+        problems = self.selfcheck.problems(transcript, result.confidence, speech_s, *context)
+        if not problems:
+            reason = self.selfcheck.ask_ollama(transcript, result.confidence, call["talkgroup_label"])
+            problems = [reason] if reason else []
+        if not problems:
+            return result, transcript, junk, {"check_status": selfcheck.OK, "check_notes": None,
+                                              "first_transcript": None}
+        notes, first_transcript = "; ".join(problems), None
+        if self.config.self_check.retry and self._backend.careful_retry:
+            retry = self._backend.transcribe(samples, prompt, careful=True)
+            retry_text, retry_junk = self._finish(retry, terms, call, context)
+            retry_problems = self.selfcheck.problems(retry_text, retry.confidence, speech_s, *context)
+            if problems[0].startswith("AI:") and not retry_problems and retry_text != transcript:
+                reason = self.selfcheck.ask_ollama(retry_text, retry.confidence, call["talkgroup_label"])
+                retry_problems = [reason] if reason else []
+            log.info("Call %d self-check: %s; careful retry: %s", call["id"], notes,
+                     "; ".join(retry_problems) or "looks fine")
+            if selfcheck.better((transcript, result.confidence, problems),
+                                (retry_text, retry.confidence, retry_problems)):
+                first_transcript = transcript
+                result, transcript, junk, problems = retry, retry_text, retry_junk, retry_problems
+            notes = "; ".join(problems) or None
+        return result, transcript, junk, {
+            "check_status": selfcheck.UNSURE if problems else selfcheck.FIXED,
+            "check_notes": notes,
+            "first_transcript": first_transcript,
+        }
+
+    def _finish(self, result, terms: list[str], call: dict, context: tuple) -> tuple[str, list[str]]:
+        """Whisper's text cleaned up: junk removed, then places, codes and Ken's own fixes."""
+        transcript, junk = result.text, []
+        if self.config.transcription.junk_filter:
+            transcript, junk = remove_junk(transcript, result.confidence, terms,
+                                           self.config.transcription.stock_phrase_logprob,
+                                           self.config.transcription.english_only)
+        # Places first, so "route ten" becomes Route 10 before the codes see "ten".
+        transcript = self.placebook.normalize(transcript, *context)
+        transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))
+        # Ken's own fixes last: they were learned from the finished transcript.
+        transcript = self.corrections.normalize(transcript, call["talkgroup_label"])
+        if self.config.codes.twelve_hour:
+            transcript = to_twelve_hour(transcript)
+        return transcript, junk

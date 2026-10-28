@@ -121,10 +121,10 @@ class OllamaClient:
             self.keep_alive = keep_alive
         self.session = session or requests.Session()
 
-    def ask(self, prompt: str, schema: dict) -> dict:
+    def ask(self, prompt: str, schema: dict, system: str = SYSTEM) -> dict:
         response = self.session.post(f"{self.url}/api/chat", timeout=self.timeout_s, json={
             "model": self.model,
-            "messages": [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
             "format": schema,
             "stream": False,
             "keep_alive": self.keep_alive,

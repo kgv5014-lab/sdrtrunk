@@ -71,6 +71,9 @@ POLICE_CAR = re.compile(r"(?<![\d.,-])(\d{2})(\d{1,2})(?![\d-])(?!,?\s+(?:[A-Z][
                         r"place|pl|circle|north|south|east|west)\b)", re.IGNORECASE)
 # Words before a three-digit number that make it a road or house number, not a police car.
 ADDRESS_WORD_BEFORE = re.compile(r"(?:route|rt|on|at|of|to|out|in|from|near|by)\W*$", re.IGNORECASE)
+# A fire or EMS unit named with its number: "Engine 4511" (station 45, unit 11) or "Station 45".
+UNIT_NUMBER = re.compile(r"\b(engine|medic|ladder|tanker|truck|rescue|squad|ambulance|brush|tower|utility|"
+                         r"station|company)\s+(\d{2})(\d{2})?\b(?![\d:-])", re.IGNORECASE)
 WRITTEN_TIME = re.compile(r"(?<![\d:])([01]\d|2[0-3]):([0-5]\d)\b(?!:)")
 
 AGENCY_WORDS = {
@@ -353,6 +356,23 @@ class CodeBook:
                                                   "kind": "code"}))
 
         return [item for _, item in sorted(found, key=lambda pair: pair[0])]
+
+    def unknown_units(self, text: str | None, *context: str | None) -> list[str]:
+        """Fire and EMS units in a finished transcript whose station isn't in the list ("Engine 9711"),
+        or whose last two digits are no unit type, for the self-check. Police talkgroups are skipped."""
+        if not text:
+            return []
+        self.reload_if_changed()
+        if not self._stations or _agency(" ".join(c for c in context if c)) == "police":
+            return []
+        found = []
+        for match in UNIT_NUMBER.finditer(text):
+            station, unit = match.group(2), match.group(3)
+            if station not in self._stations:
+                found.append(match.group(0))
+            elif unit and self._suffixes and not any(s.low <= int(unit) <= s.high for s in self._suffixes):
+                found.append(match.group(0))
+        return found
 
     def _add_code(self, found, seen, position, key, shown, agency):
         entries = self._codes.get(key)

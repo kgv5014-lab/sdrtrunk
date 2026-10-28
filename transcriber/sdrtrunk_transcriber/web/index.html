@@ -87,6 +87,7 @@ function render(call) {
   if (call.duration_s) meta.append(el('span', '', call.duration_s.toFixed(1) + ' s'));
   if (call.confidence !== null && call.confidence < -0.8) meta.append(el('span', 'low', 'low confidence'));
   if (call.corrected_at) meta.append(el('span', 'fixed', 'fixed by hand'));
+  if (call.address_fix && !call.corrected_at) meta.append(el('span', 'fixed', 'address fixed, heard as ' + call.address_fix));
   const player = el('audio'); player.controls = true; player.preload = 'none';
   player.src = 'api/calls/' + call.id + '/audio';
   meta.append(player);

@@ -57,7 +57,7 @@ Double-click **update-sdrtrunk-plus.bat** in the sdrtrunk code folder (on this P
 `E:\SDR-Stuff\FreshSDRTrunk\BUILD\sdrtrunk`). It waits until SDRTrunk and the transcriber are closed (type C
 to have it close them), gets the latest code from GitHub, builds SDRTrunk and copies the new transcriber
 files into `E:\SDR-Stuff\sdrtrunk-transcriber`. It never touches config.toml, vocabulary.txt, codes.csv,
-corrections.csv, places.csv, places-geo.json, paging_tones.csv or the data, ab-samples and blank-samples folders.
+corrections.csv, places.csv, places-geo.json, address-ranges.json, paging_tones.csv or the data, ab-samples and blank-samples folders.
 If the build fails, the old SDRTrunk is put back and the build log is in `update-log.txt` next to the code
 folder. The previous SDRTrunk stays in `sdrtrunk-previous-image` until the next update. For a different
 transcriber folder, run `update-sdrtrunk-plus.bat -TranscriberDir "D:\my-transcriber"`.
@@ -163,7 +163,26 @@ What happens to each call:
    left alone, and a street in the talkgroup's own town wins a tie.
 
 The script also writes `places-geo.json` (road lines, landmark points, town outlines) for the incident
-map.
+map, then downloads house-number ranges for Northampton and Lehigh counties from the US Census and
+writes `address-ranges.json` (see below). If the Census site is down, the street list is still updated and
+`fetch-places.bat --addresses-only` fetches just the house numbers later.
+
+### Misheard addresses
+
+With `address-ranges.json` in place, every house address in a transcript is checked against the real
+house numbers on that street ("Ferry Street, Easton: 600 to 999"). When Whisper gets one slightly wrong:
+
+1. A number that exists somewhere on the street, or is within a few numbers of one, is left alone.
+2. Otherwise the usual Whisper slips are tried: "sixteen" for "sixty", an extra or missing digit, two
+   digits swapped. Then a similar-sounding street in the area that does have the number.
+3. The address is fixed only when exactly one answer fits best. A tie is settled by an incident already
+   on the map nearby; otherwise nothing changes.
+
+The call log shows "address fixed, heard as ..." on fixed calls, and Whisper's own words stay in
+`transcript_raw`. The map also uses the ranges to put a house address on the right part of its street
+without the online lookup. To see what it would change on calls you already have, run
+**check-addresses.bat** (last 30 days; `check-addresses.bat 90` for more); it changes nothing. Turn it off
+with `fix_addresses = false` under `[places]`.
 
 ## Incident map
 

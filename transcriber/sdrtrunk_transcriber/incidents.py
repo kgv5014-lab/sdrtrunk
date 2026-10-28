@@ -346,11 +346,14 @@ def distance_m(lat1, lon1, lat2, lon2) -> float:
 
 
 class MapWorker:
-    def __init__(self, config: Config, db: Database, gazetteer: Gazetteer, geocoder: Geocoder | None):
+    def __init__(self, config: Config, db: Database, gazetteer: Gazetteer, geocoder: Geocoder | None,
+                 addresses=None):
         self.config = config
         self.db = db
         self.gazetteer = gazetteer
         self.geocoder = geocoder
+        # House-number ranges (address_fix.AddressBook), or None.
+        self.addresses = addresses
         self._queue: "queue.Queue[int | None]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="incident-map", daemon=True)
         self._backlog_loaded = False
@@ -732,6 +735,17 @@ class MapWorker:
                 if any(distance_m(*point, i["lat"], i["lon"]) <= self.config.map.incident_radius_m for i in active):
                     return point, found.kind
             return None, found.kind
+
+        if found.kind == "address" and found.number and found.number.isdigit() and self.addresses:
+            # Offline from the Census house-number ranges: where the number falls along its street.
+            for street in found.streets:
+                point = self.addresses.locate(street.name, int(found.number), found.towns, found.block)
+                if point is None:
+                    continue
+                with_shapes = [s for s in found.streets if s.lines]
+                distance = self.gazetteer.distance_to(with_shapes, *point) if with_shapes else None
+                if distance is None or distance <= 250:
+                    return point, "address"
 
         if found.query and self.geocoder:
             result = self.geocoder.lookup(found.query)

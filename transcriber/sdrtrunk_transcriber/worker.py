@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import audio
+from .address_fix import heard_note
 from .backends import Backend
 from .codes import CodeBook, to_twelve_hour
 from .config import Config
@@ -68,7 +69,7 @@ def build_prompt(*term_lists: list[str]) -> str:
 class TranscriptionWorker:
     def __init__(self, config: Config, db: Database, backend_factory, codebook: CodeBook,
                  placebook: PlaceBook | None = None, corrections: CorrectionBook | None = None,
-                 hints=None):
+                 hints=None, address_fixer=None):
         self.config = config
         self.db = db
         self._backend_factory = backend_factory
@@ -84,6 +85,8 @@ class TranscriptionWorker:
         self.vocabulary = load_vocabulary(config.vocabulary_path)
         # LearnedHints (hints.py), or None.
         self.hints = hints
+        # AddressFixer (address_fix.py), or None.
+        self.address_fixer = address_fixer
         # Called with the call id after each transcript is saved (the incident map listens here).
         self.on_done = None
         # Called with (call, samples) with the audio as uploaded, before cleaning (the tone finder).
@@ -199,6 +202,14 @@ class TranscriptionWorker:
         transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))
         # Ken's own fixes last: they were learned from the finished transcript.
         transcript = self.corrections.normalize(transcript, call["talkgroup_label"])
+        address_fix = None
+        if self.address_fixer:
+            try:
+                transcript, heard = self.address_fixer.fix(transcript, " ".join(filter(None, context)),
+                                                           call["call_time"])
+                address_fix = heard_note(heard)
+            except Exception:
+                log.exception("Address check failed on call %d", call_id)
         if self.config.codes.twelve_hour:
             transcript = to_twelve_hour(transcript)
 
@@ -208,6 +219,7 @@ class TranscriptionWorker:
             duration_s=duration,
             transcript=transcript,
             transcript_raw=result.text,
+            address_fix=address_fix,
             confidence=result.confidence,
             backend=self._backend.name,
             model=self._backend.model,
@@ -215,7 +227,8 @@ class TranscriptionWorker:
             # Shown in place of "no speech found", so a tone-out doesn't look like a missed call.
             error=TONES_ONLY if not transcript and tone_s >= TONES_ONLY_MIN_S else None,
         )
-        notes = ([f"{tone_s:.1f}s of tones cut"] if tone_s else []) + [f"{name} removed" for name in junk]
+        notes = ([f"{tone_s:.1f}s of tones cut"] if tone_s else []) + [f"{name} removed" for name in junk] \
+            + ([f"address heard as {address_fix}"] if address_fix else [])
         log.info("Call %d TG %s (%.1fs%s) in %d ms: %s", call_id, call["talkgroup"], duration,
                  "".join(", " + note for note in notes), elapsed_ms, transcript or "(no speech)")
         if self.on_done:

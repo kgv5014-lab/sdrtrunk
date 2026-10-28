@@ -95,6 +95,9 @@ file = "corrections.csv"
 file = "places.csv"
 # Room for place names in Whisper's hint list, in characters. The whole hint list is about 800.
 prompt_chars = 400
+# Snap a misheard house number (or street) to a real address, using the house-number ranges that
+# fetch-places.bat downloads from the US Census into address-ranges.json. Nothing changes without that file.
+fix_addresses = true
 
 # Which towns' streets to hint for talkgroups whose name doesn't say the town. Talkgroups named after
 # a town ("Easton PD", "Bethlehem Fire") pick it up on their own. Keys match part of the talkgroup name.

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from sdrtrunk_transcriber import fetch_places
+from sdrtrunk_transcriber import fetch_places, tiger
 from sdrtrunk_transcriber.places import PlaceBook, core_name, route_number, spoken_ordinal
 from sdrtrunk_transcriber.worker import build_prompt
 
@@ -210,8 +210,14 @@ def test_main_writes_both_files_and_keeps_hand_made_rows(tmp_path, monkeypatch):
         return answers[name]
 
     monkeypatch.setattr(fetch_places, "overpass", fake_overpass)
+    def no_census(county, cache):
+        raise tiger.CensusError("Census site down")
+
+    monkeypatch.setattr(tiger, "download", no_census)
+    # A failed house-number download doesn't fail the street list.
     assert fetch_places.main(["--out", str(out), "--geo", str(tmp_path / "geo.json"),
-                              "--cache", str(tmp_path / "cache")]) == 0
+                              "--cache", str(tmp_path / "cache"), "--ranges", str(tmp_path / "ranges.json")]) == 0
+    assert not (tmp_path / "ranges.json").exists()
 
     with open(out, encoding="utf-8") as f:
         rows = list(csv.DictReader(f))

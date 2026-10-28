@@ -135,6 +135,10 @@ class PlacesConfig:
     # Talkgroup name (or part of it) -> municipalities whose streets to hint, e.g. {"County Fire" = [...]}.
     # Talkgroups whose name already contains a town ("Easton PD") don't need an entry.
     areas: dict = field(default_factory=dict)
+    # House-number ranges for every street (US Census), written by fetch-places.bat. With them, a house
+    # number (or street) Whisper got slightly wrong is snapped to a real address; see address_fix.py.
+    ranges_file: str = "address-ranges.json"
+    fix_addresses: bool = True
 
 
 @dataclass
@@ -306,6 +310,10 @@ class Config:
     @property
     def places_path(self) -> Path | None:
         return self._resolve(self.places.file) if self.places.file else None
+
+    @property
+    def ranges_path(self) -> Path | None:
+        return self._resolve(self.places.ranges_file) if self.places.ranges_file else None
 
     @property
     def geo_path(self) -> Path | None:

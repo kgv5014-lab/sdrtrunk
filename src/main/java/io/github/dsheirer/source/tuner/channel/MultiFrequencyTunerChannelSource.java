@@ -99,6 +99,14 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
     }
 
     /**
+     * Tuner channel source currently feeding this channel.
+     */
+    public TunerChannelSource getCurrentSource()
+    {
+        return mTunerChannelSource;
+    }
+
+    /**
      * Applies the channel decoder requested frequency correction.
      * @param correction requested by the downstream processors.
      */

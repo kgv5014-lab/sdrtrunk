@@ -381,6 +381,23 @@ What alerts:
   example `stations = ["Station 4", "Easton"]`. The same station again within two minutes is skipped.
 * Nothing older than `max_age_minutes`, so old calls mapped after a restart stay quiet.
 
+## Signal quality per dongle
+
+At the top of every hour SDRTrunk adds up how each dongle did and writes it in three places:
+
+- The SDRTrunk log, one line per dongle and one per channel, for example
+  `R820T 00000011: drift +0.42 ppm, channels off by 12 Hz, USB errors 0` and
+  `Control South 852.5500 MHz P25-1: 97.1% of 41,203 messages decoded, lost sync 3 s, signal -42.0 dB`.
+  Plain FM channels show their signal on calls and the background noise instead, since they have no error check.
+- `signal_quality.csv` in SDRTrunk's logs folder, one row per channel per hour, to open in Excel.
+- The **Last hour** column of SDRTrunk's Tuners tab, like `97% decoded, +0.42 ppm`.
+
+SDRTrunk also sends the numbers to this service (the same address two-tone pages go to, ending in
+`/api/signal`). Once a dongle has about six hours of history, a phone alert goes out when it gets worse than its
+own normal: fewer messages decoding, the control channel dropping out, a weaker signal, more noise, frequency
+drift, USB errors, or the dongle disappearing. Each problem alerts once, and again only if it clears and comes
+back. The limits are in `[signal]` in `config.toml`; `alert = false` keeps the numbers without alerts.
+
 ## Fixing transcripts
 
 Each call on the call log page has an **Edit** button. Type the right words and press Save. The words

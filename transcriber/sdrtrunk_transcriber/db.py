@@ -121,6 +121,35 @@ CREATE TABLE IF NOT EXISTS summaries (
     PRIMARY KEY (kind, ref_id)
 );
 
+CREATE TABLE IF NOT EXISTS signal_hours (
+    hour_start INTEGER NOT NULL,         -- unix seconds, start of the hour SDRTrunk counted
+    tuner TEXT NOT NULL,                 -- dongle, like "R820T 00000011"
+    status TEXT,                         -- Enabled, Error, Disabled, Removed
+    channel TEXT NOT NULL,               -- '' for a dongle with no channels that hour
+    decoder TEXT,
+    frequency INTEGER,
+    minutes INTEGER,                     -- how much of the hour the channel ran
+    messages_good INTEGER,
+    messages_bad INTEGER,
+    good_percent REAL,                   -- NULL with too few messages to judge
+    sync_lost_s REAL,                    -- control channels only
+    signal_db REAL,                      -- median channel power with a signal present
+    noise_db REAL,                       -- median channel power with only noise (analog channels)
+    ppm REAL,                            -- dongle frequency correction at the end of the hour
+    ppm_change REAL,
+    channel_error_hz INTEGER,
+    usb_errors INTEGER,
+    PRIMARY KEY (hour_start, tuner, channel)
+);
+
+CREATE TABLE IF NOT EXISTS signal_problems (
+    tuner TEXT NOT NULL,
+    channel TEXT NOT NULL,
+    problem TEXT NOT NULL,               -- decode, sync, signal, noise, drift, usb, error, missing
+    since INTEGER NOT NULL,              -- hour_start of the report that found it
+    PRIMARY KEY (tuner, channel, problem)
+);
+
 CREATE TABLE IF NOT EXISTS geocode_cache (
     query TEXT PRIMARY KEY,
     lat REAL,                            -- NULL when nothing was found
@@ -650,6 +679,54 @@ class Database:
                     "SELECT * FROM alerts WHERE time >= ? AND rowid > ? ORDER BY rowid DESC LIMIT ?",
                     (since, after[0] if after else 0, limit)).fetchall()[::-1]
         return [dict(row) for row in rows]
+
+    # ---- signal quality per dongle
+
+    SIGNAL_FIELDS = ("hour_start", "tuner", "status", "channel", "decoder", "frequency", "minutes", "messages_good",
+                     "messages_bad", "good_percent", "sync_lost_s", "signal_db", "noise_db", "ppm", "ppm_change",
+                     "channel_error_hz", "usb_errors")
+
+    def store_signal_hours(self, rows: list[dict], keep_before: int):
+        with self._lock:
+            self._conn.executemany(
+                f"INSERT OR REPLACE INTO signal_hours ({', '.join(self.SIGNAL_FIELDS)}) "
+                f"VALUES ({', '.join('?' for _ in self.SIGNAL_FIELDS)})",
+                [[row.get(n) for n in self.SIGNAL_FIELDS] for row in rows])
+            self._conn.execute("DELETE FROM signal_hours WHERE hour_start < ?", (keep_before,))
+            self._conn.commit()
+
+    def signal_hours(self, since: int, until: int | None = None) -> list[dict]:
+        """Hourly rows from since up to (not including) until, oldest first."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM signal_hours WHERE hour_start >= ? AND hour_start < ? ORDER BY hour_start, tuner, "
+                "channel", (since, until if until is not None else 2 ** 62)).fetchall()
+        return [dict(row) for row in rows]
+
+    def previous_signal_hour(self, before: int) -> int | None:
+        with self._lock:
+            row = self._conn.execute("SELECT MAX(hour_start) FROM signal_hours WHERE hour_start < ?",
+                                     (before,)).fetchone()
+        return row[0] if row else None
+
+    def signal_problems(self) -> set[tuple[str, str, str]]:
+        with self._lock:
+            rows = self._conn.execute("SELECT tuner, channel, problem FROM signal_problems").fetchall()
+        return {(row[0], row[1], row[2]) for row in rows}
+
+    def set_signal_problems(self, found: set[tuple[str, str, str]], tuners: set[str], since: int):
+        """Keeps the problems found for these dongles and forgets their others, so a cleared problem alerts again
+        if it comes back. Problems of dongles not in the report are left alone."""
+        with self._lock:
+            for tuner, channel, problem in self._conn.execute(
+                    "SELECT tuner, channel, problem FROM signal_problems").fetchall():
+                if tuner in tuners and (tuner, channel, problem) not in found:
+                    self._conn.execute("DELETE FROM signal_problems WHERE tuner = ? AND channel = ? AND problem = ?",
+                                       (tuner, channel, problem))
+            self._conn.executemany(
+                "INSERT OR IGNORE INTO signal_problems (tuner, channel, problem, since) VALUES (?, ?, ?, ?)",
+                [(*key, since) for key in found])
+            self._conn.commit()
 
     def status_counts(self) -> dict[str, int]:
         with self._lock:

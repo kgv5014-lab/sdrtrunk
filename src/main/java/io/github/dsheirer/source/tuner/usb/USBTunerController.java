@@ -32,6 +32,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.LinkedTransferQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.usb4java.Context;
@@ -49,6 +50,7 @@ import org.usb4java.TransferCallback;
  */
 public abstract class USBTunerController extends TunerController
 {
+    private final AtomicLong mUsbErrorCount = new AtomicLong();
     private Logger mLog = LoggerFactory.getLogger(USBTunerController.class);
     private static final int USB_INTERFACE = 0x0;  //Common value for all currently supported devices
     private static final int USB_CONFIGURATION = 0x1;  //Common value for all currently supported devices
@@ -109,6 +111,12 @@ public abstract class USBTunerController extends TunerController
      * Tuner type for this USB controller
      */
     public abstract TunerType getTunerType();
+
+    @Override
+    public long getUsbErrorCount()
+    {
+        return mUsbErrorCount.get();
+    }
 
     /**
      * Factory for converting received streaming sample data into native buffers, as provided by sub-class.
@@ -649,6 +657,7 @@ public abstract class USBTunerController extends TunerController
 
                 mErrorTransfers.add(transfer);
                 mTransferErrorCount++;
+                mUsbErrorCount.incrementAndGet();
             }
 
             if(mErrorTransfers.size() >= mAvailableTransfers.size())
@@ -717,10 +726,12 @@ public abstract class USBTunerController extends TunerController
 
             switch(transfer.status())
             {
-                case LibUsb.TRANSFER_COMPLETED:
                 case LibUsb.TRANSFER_STALL:
                 case LibUsb.TRANSFER_TIMED_OUT:
                 case LibUsb.TRANSFER_ERROR:
+                    mUsbErrorCount.incrementAndGet();
+                    //Fall through to deliver whatever samples arrived and resubmit
+                case LibUsb.TRANSFER_COMPLETED:
                 //Note: cancel flag can be set by libusb, independent of commanded cancel of transfers - we simply
                 //resubmit the transfer for continued use.
                 case LibUsb.TRANSFER_CANCELLED:

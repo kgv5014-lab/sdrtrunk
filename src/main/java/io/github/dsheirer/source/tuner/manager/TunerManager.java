@@ -37,6 +37,7 @@ import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.TunerChannelSource;
 import io.github.dsheirer.source.tuner.configuration.TunerConfiguration;
 import io.github.dsheirer.source.tuner.configuration.TunerConfigurationManager;
+import io.github.dsheirer.source.tuner.quality.SignalQualityMonitor;
 import io.github.dsheirer.source.tuner.recording.RecordingTunerConfiguration;
 import io.github.dsheirer.source.tuner.sdrplay.DiscoveredRspTuner;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayException;
@@ -73,6 +74,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     private final UserPreferences mUserPreferences;
     private final DiscoveredTunerModel mDiscoveredTunerModel;
     private final TunerConfigurationManager mTunerConfigurationManager;
+    private final SignalQualityMonitor mSignalQualityMonitor;
     private final HotplugEventSupport mHotplugEventSupport = new HotplugEventSupport();
     private final Context mLibUsbApplicationContext = new Context();
     private boolean mLibUsbInitialized = false;
@@ -87,6 +89,16 @@ public class TunerManager implements IDiscoveredTunerStatusListener
         mUserPreferences = userPreferences;
         mTunerConfigurationManager = new TunerConfigurationManager(userPreferences);
         mDiscoveredTunerModel = new DiscoveredTunerModel(mTunerConfigurationManager);
+        mSignalQualityMonitor = new SignalQualityMonitor(userPreferences, mDiscoveredTunerModel);
+        mDiscoveredTunerModel.setSignalQualityMonitor(mSignalQualityMonitor);
+    }
+
+    /**
+     * Hourly signal quality for each dongle
+     */
+    public SignalQualityMonitor getSignalQualityMonitor()
+    {
+        return mSignalQualityMonitor;
     }
 
     /**
@@ -111,6 +123,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
     public void start()
     {
         mLog.info("Discovering tuners ...");
+        mSignalQualityMonitor.start();
 
         boolean libUsbAvailable = false;
 
@@ -177,6 +190,8 @@ public class TunerManager implements IDiscoveredTunerStatusListener
      */
     public void stop()
     {
+        mSignalQualityMonitor.stop();
+
         //Stop all tuners
         mDiscoveredTunerModel.releaseDiscoveredTuners();
 
@@ -718,6 +733,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
 
                         if(source != null)
                         {
+                            mSignalQualityMonitor.sourceCreated(source, discoveredTuner.getTuner());
                             return source;
                         }
                     }
@@ -743,6 +759,7 @@ public class TunerManager implements IDiscoveredTunerStatusListener
                     {
                         source = discoveredTuner.getTuner().getChannelSourceManager().getSource(tunerChannel,
                                 channelSpecification, threadName);
+                        mSignalQualityMonitor.sourceCreated(source, discoveredTuner.getTuner());
                     }
                     catch(Exception e)
                     {

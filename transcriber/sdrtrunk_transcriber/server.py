@@ -10,6 +10,9 @@ when the reply is HTTP 200 and contains "Call imported successfully."
 SDRTrunk's two-tone paging decoder posts each tone-out page as JSON to /api/page:
 key, dateTime (unix seconds), toneA, toneB (null for a long tone), toneASeconds, label (station
 name from SDRTrunk's paging_tones.csv, or null), system, site, channel, frequency.
+
+At the top of each hour SDRTrunk posts each dongle's signal quality as JSON to /api/signal
+(see signal_quality.py).
 """
 
 import hmac
@@ -44,6 +47,7 @@ from .geocode import Geocoder
 from .incidents import MapWorker, highlights, services_of
 from .zones import ZoneWatch, read_zones
 from .summaries import Summarizer, attach as attach_summary, incident_basis
+from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
 from .tones import ToneFinder
 from .units import UnitBoard
@@ -194,6 +198,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.aircraft = aircraft
         app.state.traffic = traffic
         app.state.units = units
+        app.state.signal = SignalWatch(config.signal, db, alerter) if config.signal.enabled else None
         log.info("Listening for SDRTrunk uploads at http://%s:%d/api/call-upload",
                  config.server.host, config.server.port)
         yield
@@ -267,6 +272,38 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     app.post("/api/call-upload")(call_upload)
     app.post("/")(call_upload)
 
+    def _key_ok(request: Request, body: dict, what: str) -> bool:
+        # SDRTrunk on the same computer needs no key; anything else must send the upload key.
+        if config.server.api_key and not _is_loopback(request.client.host if request.client else None):
+            key = str(body.get("key") or "")
+            if not hmac.compare_digest(key.encode(), config.server.api_key.encode()):
+                log.warning("Rejected a %s with the wrong API key from %s", what, request.client.host)
+                return False
+        return True
+
+    @app.post("/api/signal")
+    async def signal_upload(request: Request):
+        try:
+            body = await request.json()
+        except ValueError:
+            return PlainTextResponse("Expected a JSON body", status_code=400)
+        if not isinstance(body, dict):
+            return PlainTextResponse("Expected a JSON object", status_code=400)
+        if not _key_ok(request, body, "signal report"):
+            return PlainTextResponse("Invalid API key", status_code=401)
+        watch = request.app.state.signal
+        if watch is None:
+            return {"stored": 0, "problems": [], "note": "[signal] enabled = false"}
+        try:
+            return watch.report(body)
+        except ValueError as e:
+            return PlainTextResponse(str(e), status_code=400)
+
+    @app.get("/api/signal")
+    def list_signal(request: Request, hours: float = 24):
+        """The hourly rows SDRTrunk sent, newest hours last."""
+        return request.app.state.db.signal_hours(int(time.time() - hours * 3600))
+
     @app.post("/api/page")
     async def page_upload(request: Request):
         try:
@@ -276,12 +313,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if not isinstance(body, dict):
             return PlainTextResponse("Expected a JSON object", status_code=400)
 
-        # SDRTrunk on the same computer needs no key; anything else must send the upload key.
-        if config.server.api_key and not _is_loopback(request.client.host if request.client else None):
-            key = str(body.get("key") or "")
-            if not hmac.compare_digest(key.encode(), config.server.api_key.encode()):
-                log.warning("Rejected a page with the wrong API key from %s", request.client.host)
-                return PlainTextResponse("Invalid API key", status_code=401)
+        if not _key_ok(request, body, "page"):
+            return PlainTextResponse("Invalid API key", status_code=401)
 
         tone_a = _number(body.get("toneA"))
         if tone_a is None or tone_a <= 0:

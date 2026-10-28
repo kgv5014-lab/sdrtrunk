@@ -243,6 +243,16 @@ class TrafficConfig:
 
 
 @dataclass
+class RecordingsConfig:
+    # Call audio older than this many days is deleted. 0 = keep it by age.
+    max_age_days: float = 7.0
+    # When all call audio together is over this size, the oldest is deleted first. 0 = no size limit.
+    max_total_gb: float = 1.0
+    # How often to check, in minutes.
+    check_minutes: float = 60.0
+
+
+@dataclass
 class AlertsConfig:
     # Phone alerts through the ntfy app, answered by this service itself (see the README).
     enabled: bool = False
@@ -331,6 +341,7 @@ class Config:
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
+    recordings: RecordingsConfig = field(default_factory=RecordingsConfig)
     base_dir: Path = Path(".")
 
     @property

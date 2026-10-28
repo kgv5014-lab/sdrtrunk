@@ -43,6 +43,7 @@ from .geocode import Geocoder
 from .incidents import MapWorker, highlights, services_of
 from .zones import ZoneWatch, read_zones
 from .summaries import Summarizer, attach as attach_summary, incident_basis
+from .recordings import RecordingCleanup
 from .tones import ToneFinder
 from .units import UnitBoard
 from .worker import TranscriptionWorker
@@ -168,6 +169,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             traffic.start()
         if summarizer:
             summarizer.start()
+        recordings = RecordingCleanup(config, db)
+        if recordings.enabled:
+            recordings.start()
         worker.start()
         app.state.db = db
         app.state.worker = worker
@@ -183,6 +187,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                  config.server.host, config.server.port)
         yield
         worker.stop()
+        recordings.stop()
         if aircraft:
             aircraft.stop()
         if traffic:
@@ -367,6 +372,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         call = request.app.state.db.get_call(call_id)
         if call is None:
             raise HTTPException(404)
+        if call.get("audio_deleted_at"):
+            raise HTTPException(410, "Audio deleted to save space")
         path = (data_path / call["audio_path"]).resolve()
         if not path.is_relative_to(data_path.resolve()) or not path.exists():
             raise HTTPException(404)

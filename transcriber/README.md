@@ -93,6 +93,10 @@ searches transcripts, and filters by talkgroup or radio ID.
 * `data\calls\YYYY\MM\DD\`: one MP3 per call
 * Tone-out pages from SDRTrunk's two-tone paging decoder are kept in the same `calls.db`
 
+Old call audio is deleted after 7 days, and the oldest goes first if all of it passes 1 GB (`[recordings]`
+in config.toml). Audio of calls on an incident or that sent a phone alert is kept. The call and its
+transcript stay in the log, and the player says "audio deleted".
+
 Deleting the `data` folder starts a fresh log. Calls that were still waiting when the service stopped
 are transcribed when it starts again.
 

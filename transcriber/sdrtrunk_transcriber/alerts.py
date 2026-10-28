@@ -67,6 +67,26 @@ def bark_encrypt(payload: dict, key: str, mode: str) -> tuple[str, str]:
     return base64.b64encode(sealed).decode(), iv
 
 
+def bark_push(settings, title: str, message: str, priority: int | None = 3, click: str | None = None,
+              session=None):
+    """Sends one push to the Bark app with the [alerts] settings, encrypted when a key is set."""
+    push = {"title": title, "body": message or title, "group": "SDRTrunk",
+            # Time-sensitive alerts show through Focus modes.
+            "level": "timeSensitive" if (priority or 3) >= 4 else "active"}
+    if click:
+        push["url"] = click
+    url = f"{settings.bark_server.rstrip('/')}/{settings.bark_key.strip()}"
+    try:
+        if settings.bark_encryption_key:
+            ciphertext, iv = bark_encrypt(push, settings.bark_encryption_key, settings.bark_encryption_mode)
+            push = {"ciphertext": ciphertext, "iv": iv}
+        reply = (session or requests).post(url, data=push, timeout=15)
+        reply.raise_for_status()
+    except Exception as e:
+        hint = "; run install.bat to add it" if isinstance(e, ImportError) else ""
+        log.warning("Phone alerts: sending to Bark failed (%s%s)", e, hint)
+
+
 def wakeup_topic(base_url: str, topic: str) -> str:
     """The name the ntfy iPhone app listens on for wake-ups for a topic on another server."""
     return hashlib.sha256(f"{base_url.rstrip('/')}/{topic}".encode()).hexdigest()
@@ -168,22 +188,7 @@ class Alerter:
         return self.to_ntfy(alert)
 
     def _bark(self, alert: dict):
-        push = {"title": alert["title"], "body": alert["message"] or alert["title"], "group": "SDRTrunk",
-                # Time-sensitive alerts show through Focus modes.
-                "level": "timeSensitive" if (alert["priority"] or 3) >= 4 else "active"}
-        if alert["click"]:
-            push["url"] = alert["click"]
-        url = f"{self.settings.bark_server.rstrip('/')}/{self.settings.bark_key.strip()}"
-        try:
-            if self.settings.bark_encryption_key:
-                ciphertext, iv = bark_encrypt(push, self.settings.bark_encryption_key,
-                                              self.settings.bark_encryption_mode)
-                push = {"ciphertext": ciphertext, "iv": iv}
-            reply = self.session.post(url, data=push, timeout=15)
-            reply.raise_for_status()
-        except Exception as e:
-            hint = "; run install.bat to add it" if isinstance(e, ImportError) else ""
-            log.warning("Phone alerts: sending to Bark failed (%s%s)", e, hint)
+        bark_push(self.settings, alert["title"], alert["message"], alert["priority"], alert["click"], self.session)
 
     def _wake(self, alert_id: str):
         url = f"{self.settings.wakeup_url.rstrip('/')}/{wakeup_topic(self.base_url, self.settings.topic)}"

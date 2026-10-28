@@ -411,8 +411,8 @@ Setting it up, once:
 3. In `config.toml`, add the `[summaries]` section from `config.example.toml` and set `enabled = true`.
    Restart the transcriber. The log says "Summaries: using Ollama" after the first one.
 
-Run start-ollama.bat before start-transcriber.bat each time, for example from the batch file that opens
-everything. If Ollama isn't running, everything else works as before; the log says so once, and the
+Run start-ollama.bat before start-transcriber.bat each time, or use start-everything.bat (see
+"Auto-restart"), which does it for you. If Ollama isn't running, everything else works as before; the log says so once, and the
 summaries catch up within a minute of Ollama starting. On start the transcriber also summarizes the last
 24 hours of incidents that have none yet.
 
@@ -439,6 +439,33 @@ station, more often than any other, and at least `learn_min_seen` times, the pai
 tone-outs already logged get the name. When the service varies ("Fire 20", then "EMS 20") the name is
 "Station 20". Tones that start or end every fire call name a different station each time, so they stay
 unnamed. Fix or delete a learned line like any other; it is not learned again while it's in the file.
+
+## Auto-restart
+
+Double-click **start-everything.bat** instead of starting things one by one. It starts Ollama (when
+`[summaries]` is on), the transcriber and SDRTrunk, each in its own window, and then keeps watching them
+from its own window. Programs already running are left as they are and watched too.
+
+Every 30 seconds it checks each one:
+
+* **Ollama and the transcriber** must answer at their web address. An old transcriber still holding port
+  3000 is stopped before a new one starts.
+* **SDRTrunk** must be running and its window must not be "Not responding" (the same thing Task Manager
+  shows).
+
+After 4 failed checks in a row (2 minutes) the program is closed and started again, and a Bark alert says
+which one and why, e.g. "SDRTrunk restarted: It froze, so it was restarted at 3:12 AM." A program gets 3
+minutes to start before it is checked. One that needs more than 4 restarts in an hour is left alone for an
+hour with a "keeps failing" alert, so a real problem (an unplugged dongle, a bad setting) doesn't make it
+restart all night.
+
+To close SDRTrunk or the transcriber on purpose, close the **SDRTrunk watchdog** window first, or it
+starts them again. The programs keep running when the watchdog window is closed. What it did is in
+`watchdog.log` next to `config.toml`.
+
+It finds SDRTrunk by looking at the SDRTrunk that is running. If SDRTrunk isn't running when the watchdog
+starts, set `sdrtrunk` under `[watchdog]` in `config.toml` to its `bin\sdr-trunk.bat` (see
+`config.example.toml`), or start SDRTrunk yourself once. The other settings are there too.
 
 ## Accuracy tips
 

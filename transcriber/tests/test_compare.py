@@ -35,3 +35,22 @@ def test_compare_scores_against_hand_fixes(tmp_path):
     assert summary["after_wer"] < summary["before_wer"]
     page = report(rows, summary, "fake")
     assert "words wrong: before" in page and "Nevin" in page
+
+
+def test_compare_hints_runs_with_and_without_learned_hints(tmp_path):
+    config = Config()
+    config.base_dir = tmp_path
+    backend = FixedBackend("Engine 2311 on location")
+    with TestClient(create_app(config, backend_factory=lambda _c: backend)) as client:
+        for _ in range(2):
+            post(client, sdrtrunk_body(CALL, make_mp3(3.0)))
+        assert client.app.state.worker.wait_idle()
+
+    prompts = []
+    original = backend.transcribe
+    backend.transcribe = lambda samples, prompt: prompts.append(prompt) or original(samples, prompt)
+    rows, summary = compare(config, backend, 10, hints=True)
+    assert summary["calls"] == 2 and summary["hints"]
+    # Engine 2311 was heard only twice before, under min_count, so both sides got the same prompt.
+    assert len(prompts) == 4 and prompts[0] == prompts[1]
+    assert "without learned hints" in report(rows, summary, "fake")

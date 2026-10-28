@@ -32,6 +32,7 @@ from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
 from .corrections import CorrectionBook
+from .hints import LearnedHints
 from .places import PlaceBook
 from .addresses import Gazetteer
 from .aircraft import AircraftWatch
@@ -104,7 +105,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
         corrections = CorrectionBook(config.corrections_path)
-        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections)
+        hints = LearnedHints(data_path / "calls.db", config.hints) if config.hints.enabled else None
+        worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections, hints)
         alerter = Alerter(config, db) if config.alerts.enabled else None
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:

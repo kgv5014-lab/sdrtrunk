@@ -390,6 +390,24 @@ Whisper). Your vocabulary.txt is never dropped for them. Settings are under `[hi
 `enabled = false` turns them off. To see whether they help, run **compare-hints.bat**: it runs the same
 calls without and with the learned hints and scores both against your fixes.
 
+### Self-check and careful retry
+
+Every transcript is checked for signs that Whisper got it wrong:
+
+- Whisper itself was unsure (the "low confidence" mark).
+- A street name that isn't in your street list (`places.csv`), such as "Northbampton Street".
+- A fire or EMS unit whose station isn't in `codes.csv`, such as "Engine 9711".
+- Words going round in a loop, or far too many or too few words for how long the call was.
+- When call summaries are on, the Ollama model also reads calls Whisper was only middling sure of and says
+  whether they look garbled. It only says yes or no; it never changes the text.
+
+A call that looks wrong is run through Whisper a second time with slower, more careful settings (a wider
+search and more tries). The version with fewer problems is kept. On the call log the call is then marked
+**rechecked** (the second try came out clean, with the first try shown underneath) or **still unsure** with
+what looked wrong, so you know which calls to listen to. Only flagged calls take the extra second or two.
+Settings are under `[self_check]` in config.toml; `enabled = false` turns it off, `retry = false` only
+marks the calls.
+
 ## Call summaries
 
 Ollama, a free program that runs AI language models on your own PC, can write a short summary for each

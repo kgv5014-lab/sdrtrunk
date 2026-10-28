@@ -265,6 +265,24 @@ class SummariesConfig:
 
 
 @dataclass
+class WatchdogConfig:
+    # start-everything.bat starts Ollama (when [summaries] is on), this service and SDRTrunk, and
+    # restarts any of them that crashes or freezes (see "Auto-restart" in the README).
+    # SDRTrunk's sdr-trunk.bat. Empty = the one a running SDRTrunk was started from.
+    sdrtrunk: str = ""
+    # Look at each program this often.
+    check_s: int = 30
+    # Restart after this many checks in a row find a program frozen or not answering.
+    fail_checks: int = 4
+    # Give a program this long to start before checking it (Whisper takes a while to load).
+    startup_s: int = 180
+    # A program restarted this many times within an hour is left alone for an hour, with one alert.
+    max_restarts_per_hour: int = 4
+    # Send a phone alert (Bark, from [alerts]) on each restart.
+    alert: bool = True
+
+
+@dataclass
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
@@ -281,6 +299,7 @@ class Config:
     aircraft: AircraftConfig = field(default_factory=AircraftConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
+    watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     base_dir: Path = Path(".")
 
     @property

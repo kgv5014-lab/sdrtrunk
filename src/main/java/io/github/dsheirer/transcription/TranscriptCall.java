@@ -30,6 +30,7 @@ import java.util.List;
  * @param talkgroupLabel talkgroup alias, may be null
  * @param source radio ID, may be null
  * @param talkerAlias talker alias, may be null
+ * @param speaker who the transcriber worked out is talking: "Dispatch", a unit's call sign or "Unit"; may be null
  * @param transcript transcript text, may be null while the call is queued
  * @param status queued, processing, done, skipped or failed
  * @param error reason for skipped or failed calls, may be null
@@ -37,7 +38,7 @@ import java.util.List;
  * @param codes labels for the radio codes, call signs and times found in the transcript
  */
 public record TranscriptCall(long id, long callTime, String talkgroup, String talkgroupLabel, String source,
-                             String talkerAlias, String transcript, String status, String error,
+                             String talkerAlias, String speaker, String transcript, String status, String error,
                              Double durationSeconds, List<CodeLabel> codes)
 {
     /**
@@ -59,13 +60,18 @@ public record TranscriptCall(long id, long callTime, String talkgroup, String ta
     }
 
     /**
-     * Talker alias when there is one, else the radio ID.
+     * Talker alias when there is one, else who the transcriber says is talking, with the radio ID when
+     * SDRTrunk had one (it sends 0 when it didn't).
      */
     public String sourceDisplay()
     {
-        if(talkerAlias != null && !talkerAlias.isBlank())
+        String radioId = source != null && !source.isBlank() && !source.equals("0") ? source : null;
+        String who = talkerAlias != null && !talkerAlias.isBlank() ? talkerAlias :
+            speaker != null && !speaker.isBlank() ? speaker : null;
+
+        if(who != null)
         {
-            return source != null && !source.isBlank() ? talkerAlias + " (" + source + ")" : talkerAlias;
+            return radioId != null ? who + " (" + radioId + ")" : who;
         }
 
         return source != null ? source : "";

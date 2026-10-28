@@ -137,6 +137,17 @@ ollama_below_confidence = -0.45
 retry = true
 retry_beam_size = 10
 
+[speakers]
+# Marks who is talking in each call: Dispatch, or a unit ("1781", "Medic 27"). SDRTrunk only sends the
+# radio ID of some talkers, so it's read from the radio ID when there is one (radio IDs learn their
+# call sign), else from how the call is worded. Calls with nothing to go on stay unmarked.
+enabled = true
+# Talkgroups (or part of their name) that only dispatch talks on.
+dispatch_talkgroups = ["Countywide"]
+# Police talkgroups: there a unit says its number first ("1770 County"), and the dispatcher says
+# County first. On fire and EMS talkgroups it's the other way around ("County, 2851, responding").
+police_talkgroups = ["PD", "Police", "Sheriff"]
+
 [map]
 # Possible incidents on a map at http://localhost:3000/map, from addresses heard in transcripts.
 enabled = true

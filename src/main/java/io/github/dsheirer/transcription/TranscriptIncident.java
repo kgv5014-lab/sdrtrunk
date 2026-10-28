@@ -76,7 +76,7 @@ public record TranscriptIncident(long id, long firstTime, long lastTime, double 
      * @param id call log id
      * @param callTime seconds since epoch
      * @param talkgroupLabel talkgroup alias, or the talkgroup value when there is no alias
-     * @param talkerAlias talker alias, may be null
+     * @param talkerAlias talker alias, else who the transcriber says is talking ("Dispatch", "1781"); may be null
      * @param transcript transcript text
      * @param precision how it was placed: address, intersection, landmark, street or follow-up
      */

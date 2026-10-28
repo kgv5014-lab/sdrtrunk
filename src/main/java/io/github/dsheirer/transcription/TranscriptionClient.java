@@ -177,7 +177,7 @@ public class TranscriptionClient
                         JsonObject call = item.getAsJsonObject();
                         String talkgroup = string(call, "talkgroup_label");
                         calls.add(new TranscriptIncident.Call(number(call, "id", 0L), number(call, "call_time", 0L),
-                            talkgroup != null ? talkgroup : string(call, "talkgroup"), string(call, "talker_alias"),
+                            talkgroup != null ? talkgroup : string(call, "talkgroup"), talker(call),
                             string(call, "transcript"), string(call, "precision")));
                     }
                 }
@@ -329,6 +329,7 @@ public class TranscriptionClient
                 string(call, "talkgroup_label"),
                 string(call, "source"),
                 string(call, "talker_alias"),
+                string(call, "speaker"),
                 string(call, "transcript"),
                 string(call, "status"),
                 string(call, "error"),
@@ -337,6 +338,15 @@ public class TranscriptionClient
         }
 
         return calls;
+    }
+
+    /**
+     * Talker alias, else who the transcriber says is talking ("Dispatch", "1781"), else null.
+     */
+    private static String talker(JsonObject call)
+    {
+        String alias = string(call, "talker_alias");
+        return alias != null && !alias.isBlank() ? alias : string(call, "speaker");
     }
 
     private static String string(JsonObject object, String name)

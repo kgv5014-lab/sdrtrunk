@@ -188,6 +188,28 @@ without the online lookup. To see what it would change on calls you already have
 **check-addresses.bat** (last 30 days; `check-addresses.bat 90` for more); it changes nothing. Turn it off
 with `fix_addresses = false` under `[places]`.
 
+## Who is talking
+
+Each call is marked **Dispatch** or with the unit that is talking ("1781", "Medic 27", or just "Unit")
+on the call log, the map, the Transcripts tab in SDRTrunk and in the summaries. Hover over it to see
+whether it came from the radio ID or was worked out from the words. The "Radio ID, unit or Dispatch"
+box on the call log finds calls by it.
+
+SDRTrunk only gets a radio ID for some talkers (on many talkgroups it sends 0), so the label comes from:
+
+- **The radio ID**, when there is one: it's a unit. The first time a radio says its call sign
+  ("1781 County, I'm clear") the transcriber remembers it, and that radio's later calls show 1781.
+- **How the call is worded.** On police talkgroups a unit says its number first ("1770 County") and the
+  dispatcher says County first ("County 1784 for your status"). On fire and EMS talkgroups it's the
+  other way around ("County, 2851, responding" is the unit). "2851 from 2857" is 2857 anywhere.
+  Addresses read twice, "year-old", "respond to", ALS/BLS and "show you on scene" sound like dispatch;
+  "I'm", "we're" and "show me" sound like a unit.
+
+Calls with nothing to go on are left unmarked rather than guessed. The incident map no longer takes a
+unit reading back its orders as a new dispatch, and a unit talking without saying its number joins the
+incident it is on. The unit board gives "on scene" to the unit that said it, not every unit named.
+Settings are under `[speakers]` in config.toml.
+
 ## Incident map
 
 <http://localhost:3000/map> shows possible incidents on a street map, built from the transcripts. It

@@ -50,6 +50,12 @@ public class TranscriptionClientTest
                     {"code": "10-23", "meaning": "Arrived on scene", "kind": "code"}]},
          {"id": 1, "call_time": 1792656800, "talkgroup": "2001", "talkgroup_label": null, "source": null,
           "talker_alias": null, "transcript": null, "duration_s": null, "status": "queued", "error": null,
+          "codes": []},
+         {"id": 3, "call_time": 1792656900, "talkgroup": "11007", "source": "0", "talker_alias": "",
+          "speaker": "Dispatch", "speaker_kind": "dispatch", "transcript": "County 1781.", "status": "done",
+          "codes": []},
+         {"id": 4, "call_time": 1792656901, "talkgroup": "11007", "source": "1117081", "talker_alias": null,
+          "speaker": "1781", "speaker_kind": "unit", "transcript": "1781 County, on scene.", "status": "done",
           "codes": []}]
         """;
 
@@ -58,7 +64,7 @@ public class TranscriptionClientTest
     {
         List<TranscriptCall> calls = TranscriptionClient.parseCalls(CALLS_JSON);
 
-        assertEquals(2, calls.size());
+        assertEquals(4, calls.size());
         TranscriptCall call = calls.get(0);
         assertEquals(2, call.id());
         assertEquals(1792656843L, call.callTime());
@@ -74,16 +80,20 @@ public class TranscriptionClientTest
         assertEquals("(queued...)", queued.transcriptDisplay());
         assertNull(queued.durationSeconds());
         assertEquals("", queued.codesDisplay());
+
+        //Who is talking when SDRTrunk has no talker alias (radio ID 0 means it had none)
+        assertEquals("Dispatch", calls.get(2).sourceDisplay());
+        assertEquals("1781 (1117081)", calls.get(3).sourceDisplay());
     }
 
     @Test
     public void describesCallsWithoutTranscripts()
     {
-        TranscriptCall skipped = new TranscriptCall(1, 0, "1", null, null, null, null, "skipped", "too short",
+        TranscriptCall skipped = new TranscriptCall(1, 0, "1", null, null, null, null, null, "skipped", "too short",
             null, List.of());
-        TranscriptCall failed = new TranscriptCall(1, 0, "1", null, null, null, null, "failed", "GPU error",
+        TranscriptCall failed = new TranscriptCall(1, 0, "1", null, null, null, null, null, "failed", "GPU error",
             null, List.of());
-        TranscriptCall silent = new TranscriptCall(1, 0, "1", null, null, null, "", "done", null, null, List.of());
+        TranscriptCall silent = new TranscriptCall(1, 0, "1", null, null, null, null, "", "done", null, null, List.of());
 
         assertEquals("(not transcribed: too short)", skipped.transcriptDisplay());
         assertEquals("(transcription failed: GPU error)", failed.transcriptDisplay());
@@ -127,7 +137,7 @@ public class TranscriptionClientTest
             String url = "http://127.0.0.1:" + server.getAddress().getPort();
             List<TranscriptCall> calls = new TranscriptionClient().fetchCalls(url, "ambulance", "", 50)
                 .get(10, TimeUnit.SECONDS);
-            assertEquals(2, calls.size());
+            assertEquals(4, calls.size());
             assertEquals("limit=50&q=ambulance&talkgroup=", query.get());
         }
         finally

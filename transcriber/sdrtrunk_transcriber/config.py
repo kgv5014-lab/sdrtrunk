@@ -189,6 +189,17 @@ class SelfCheckConfig:
 
 
 @dataclass
+class SpeakersConfig:
+    # Who is talking in each call, dispatch or a unit (see speakers.py). Off = no labels, and the map,
+    # unit board and summaries read calls as before.
+    enabled: bool = True
+    # Talkgroups (or part of their name) that only dispatch talks on.
+    dispatch_talkgroups: list = field(default_factory=lambda: ["Countywide"])
+    # Talkgroups (or part of their name) that are police: there a unit says its number before County.
+    police_talkgroups: list = field(default_factory=lambda: ["PD", "Police", "Sheriff"])
+
+
+@dataclass
 class MapConfig:
     # Possible incidents on a map at /map, from addresses heard in transcripts.
     enabled: bool = True
@@ -365,6 +376,7 @@ class Config:
     places: PlacesConfig = field(default_factory=PlacesConfig)
     hints: HintsConfig = field(default_factory=HintsConfig)
     self_check: SelfCheckConfig = field(default_factory=SelfCheckConfig)
+    speakers: SpeakersConfig = field(default_factory=SpeakersConfig)
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     aircraft: AircraftConfig = field(default_factory=AircraftConfig)

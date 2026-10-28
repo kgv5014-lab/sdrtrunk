@@ -29,6 +29,20 @@ TONE_MIN_S = 0.25
 # Silence left where a tone was, so the words either side don't run together.
 TONE_GAP_S = 0.25
 
+# Hiss reducer: 32 ms frames, 8 ms apart (square-root Hann windows in and out add back to flat).
+HISS_FRAME = 512
+HISS_HOP = 128
+HISS_WINDOW = np.sqrt(np.hanning(HISS_FRAME + 1)[:-1]).astype(np.float32)
+# Calls this far above their own background are left alone. Digital voice (P25, DMR) has true
+# silence between words and measures well above it; weak FM has steady hiss and measures below.
+HISS_SKIP_SNR_DB = 35.0
+# Most a sound is turned down. Gentle, since harder cuts leave a "watery" sound Whisper mishears.
+HISS_FLOOR_DB = -12.0
+# Background hiss level: this percentile of each pitch's power over the call, scaled up to the mean
+# (for noise, the 20th percentile of power sits at -ln(0.8) = 0.223 of its mean).
+HISS_PERCENTILE = 20
+HISS_BIAS = 1.0 / 0.223
+
 
 def decode(path: Path) -> np.ndarray:
     """Returns float32 samples in [-1, 1] at 16 kHz mono."""
@@ -82,6 +96,56 @@ def band_pass(samples: np.ndarray) -> np.ndarray:
     gain[falling] = 0.5 + 0.5 * np.cos(np.pi * (freqs[falling] - hi0) / (hi1 - hi0))
     gain[freqs >= hi1] = 0.0
     return np.fft.irfft(spectrum * gain, n=len(samples)).astype(np.float32)
+
+
+def _frames(samples: np.ndarray) -> np.ndarray:
+    padded = np.concatenate([np.zeros(HISS_FRAME, np.float32), samples, np.zeros(HISS_FRAME, np.float32)])
+    count = 1 + (len(padded) - HISS_FRAME) // HISS_HOP
+    index = np.arange(HISS_FRAME)[None, :] + HISS_HOP * np.arange(count)[:, None]
+    return padded[index] * HISS_WINDOW
+
+
+def _overlap_add(frames: np.ndarray, length: int) -> np.ndarray:
+    total = HISS_HOP * (len(frames) - 1) + HISS_FRAME
+    out = np.zeros(total, np.float32)
+    weight = np.zeros(total, np.float32)
+    frames = frames * HISS_WINDOW
+    for j in range(HISS_FRAME // HISS_HOP):
+        part = frames[:, j * HISS_HOP:(j + 1) * HISS_HOP].reshape(-1)
+        out[j * HISS_HOP:j * HISS_HOP + len(part)] += part
+        weight[j * HISS_HOP:j * HISS_HOP + len(part)] += np.tile(
+            HISS_WINDOW[j * HISS_HOP:(j + 1) * HISS_HOP] ** 2, len(frames))
+    out /= np.maximum(weight, 1e-6)
+    return out[HISS_FRAME:HISS_FRAME + length]
+
+
+def hiss_snr_db(power: np.ndarray, noise: np.ndarray) -> float:
+    """How far the loud parts of the call sit above the background, in dB."""
+    return _db(float(np.percentile(power.sum(axis=1), 90))) - _db(float(noise.sum()))
+
+
+def reduce_hiss(samples: np.ndarray) -> tuple[np.ndarray, bool]:
+    """Turns down the steady hiss of weak FM signals, pitch by pitch, while leaving speech alone.
+    Clean calls (all digital voice, strong FM) come back unchanged. Returns the samples and whether
+    anything was done."""
+    if len(samples) < WHISPER_RATE // 2:
+        return samples, False
+    samples = np.nan_to_num(samples.astype(np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    spectrum = np.fft.rfft(_frames(samples), axis=1)
+    power = np.abs(spectrum) ** 2
+    noise = np.percentile(power, HISS_PERCENTILE, axis=0) * HISS_BIAS + 1e-12
+    if hiss_snr_db(power, noise) >= HISS_SKIP_SNR_DB:
+        return samples, False
+    # Power averaged over 5 frames (40 ms) and 3 neighbouring pitches, so what's left of the hiss
+    # stays smooth instead of twittering.
+    smooth = np.zeros_like(power)
+    for shift in range(-2, 3):
+        smooth += np.roll(power, shift, axis=0)
+    smooth = (np.roll(smooth, 1, axis=1) + smooth + np.roll(smooth, -1, axis=1)) / 15.0
+    floor = 10.0 ** (HISS_FLOOR_DB / 10.0)
+    gain = np.sqrt(np.maximum(1.0 - noise / np.maximum(smooth, 1e-20), floor))
+    cleaned = np.fft.irfft(spectrum * gain, n=HISS_FRAME, axis=1)
+    return _overlap_add(cleaned, len(samples)), True
 
 
 def find_tones(samples: np.ndarray) -> list[tuple[int, int]]:
@@ -157,10 +221,13 @@ def normalize(samples: np.ndarray) -> np.ndarray:
     return out.astype(np.float32)
 
 
-def clean(samples: np.ndarray, remove_tones: bool = True) -> tuple[np.ndarray, float]:
-    """Prepares a call for Whisper: voice band only, steady tones cut out, speech at a standard level.
-    Returns the cleaned samples and how many seconds of tone were cut."""
+def clean(samples: np.ndarray, remove_tones: bool = True,
+          reduce_noise: bool = True) -> tuple[np.ndarray, float]:
+    """Prepares a call for Whisper: voice band only, FM hiss turned down, steady tones cut out, speech
+    at a standard level. Returns the cleaned samples and how many seconds of tone were cut."""
     filtered = band_pass(samples.astype(np.float32))
+    if reduce_noise:
+        filtered, _ = reduce_hiss(filtered)
     tone_s = 0.0
     if remove_tones:
         ranges = find_tones(filtered)

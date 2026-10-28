@@ -725,7 +725,8 @@ function feedCall(c) {
   card.append(text);
   if (c.summary) { const sum = el('div', 'summary'); sum.append(el('span', 'ai', 'AI'), c.summary); card.append(sum); }
   const row = el('div', 'row');
-  const play = el('button', '', 'Play');
+  const play = el('button', '', c.audio_deleted_at ? 'Audio deleted' : 'Play');
+  play.disabled = !!c.audio_deleted_at;
   play.onclick = () => {
     let audio = card.querySelector('audio');
     if (!audio) { audio = el('audio'); audio.controls = true; audio.src = 'api/calls/' + c.id + '/audio'; card.append(audio); }

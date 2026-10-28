@@ -60,6 +60,8 @@ def token_limit(duration_s: float, tokens_per_second: float) -> int | None:
 class Backend:
     name = "none"
     model = ""
+    # Takes careful=True for the self-check's slower second try.
+    careful_retry = False
 
     def transcribe(self, samples: np.ndarray, prompt: str) -> Transcript:
         raise NotImplementedError
@@ -112,6 +114,7 @@ def non_english_tokens(tokenizer) -> list[int] | None:
 
 class FasterWhisperBackend(Backend):
     name = "faster-whisper"
+    careful_retry = True
 
     def __init__(self, config: Config):
         from faster_whisper import WhisperModel
@@ -134,13 +137,16 @@ class FasterWhisperBackend(Backend):
         if tc.english_only and tc.block_other_scripts and (tc.language or "").lower().startswith("en"):
             self._suppress = non_english_tokens(getattr(self._model, "hf_tokenizer", None))
 
-    def transcribe(self, samples: np.ndarray, prompt: str) -> Transcript:
+    def transcribe(self, samples: np.ndarray, prompt: str, careful: bool = False) -> Transcript:
         tc = self.config.transcription
         fw = self.config.faster_whisper
+        sc = self.config.self_check
         segments, _info = self._model.transcribe(
             samples,
             language=tc.language or None,
-            beam_size=tc.beam_size,
+            beam_size=sc.retry_beam_size if careful else tc.beam_size,
+            # A careful try also keeps searching longer before settling on the best beam.
+            patience=2.0 if careful else 1.0,
             initial_prompt=prompt or None,
             # Each radio call stands alone; carrying text over spreads one bad guess.
             condition_on_previous_text=False,
@@ -150,7 +156,7 @@ class FasterWhisperBackend(Backend):
             no_speech_threshold=tc.no_speech_threshold,
             log_prob_threshold=tc.log_prob_threshold,
             suppress_tokens=self._suppress or [-1],
-            temperature=tc.temperatures or [0.0],
+            temperature=(sc.retry_temperatures if careful else tc.temperatures) or [0.0],
             max_new_tokens=token_limit(audio.duration_seconds(samples), tc.max_tokens_per_second),
         )
         return clean_segments(
@@ -163,6 +169,7 @@ class WhisperCppBackend(Backend):
     """Talks to whisper.cpp's bundled HTTP server (whisper-server)."""
 
     name = "whisper-cpp"
+    careful_retry = True
 
     def __init__(self, config: Config):
         self.config = config
@@ -170,12 +177,12 @@ class WhisperCppBackend(Backend):
         self.model = "whisper.cpp server"
         self._session = requests.Session()
 
-    def transcribe(self, samples: np.ndarray, prompt: str) -> Transcript:
+    def transcribe(self, samples: np.ndarray, prompt: str, careful: bool = False) -> Transcript:
         tc = self.config.transcription
         data = {
             "response_format": "verbose_json",
             "temperature": "0.0",
-            "beam_size": str(tc.beam_size),
+            "beam_size": str(self.config.self_check.retry_beam_size if careful else tc.beam_size),
             "no_speech_thold": str(tc.no_speech_threshold),
             # verbose_json otherwise runs an extra language-detection pass on every call.
             "no_language_probabilities": "true",

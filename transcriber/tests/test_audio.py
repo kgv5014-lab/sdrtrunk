@@ -80,3 +80,47 @@ def test_cleanup_can_keep_tones():
     cleaned, tone_s = audio.clean(np.concatenate([tone(853.2, 1.0), voice(2.0)]), remove_tones=False)
     assert tone_s == 0.0
     assert abs(len(cleaned) / RATE - 3.0) < 0.01
+
+
+def hiss(seconds, amplitude, seed=2):
+    """FM-style hiss: noise that gets stronger with pitch, kept to the voice band."""
+    rng = np.random.default_rng(seed)
+    n = int(seconds * RATE)
+    spectrum = np.fft.rfft(rng.normal(0, 1, n)) * np.clip(np.fft.rfftfreq(n, 1 / RATE) / 1000, 0.3, None)
+    noise = audio.band_pass(np.fft.irfft(spectrum, n).astype(np.float32))
+    return (amplitude * noise / np.sqrt(np.mean(noise ** 2))).astype(np.float32)
+
+
+def error_db(reference, samples):
+    return 10 * np.log10(np.sum((samples - reference) ** 2) / np.sum(reference ** 2))
+
+
+def test_clean_digital_voice_is_left_alone():
+    speech = audio.band_pass(voice(6.0))
+    out, applied = audio.reduce_hiss(speech)
+    assert not applied
+    assert np.array_equal(out, speech)
+
+
+def test_fm_hiss_is_turned_down():
+    speech = audio.band_pass(voice(6.0, amplitude=0.1))
+    noisy = speech + hiss(6.0, amplitude=0.05)
+    out, applied = audio.reduce_hiss(noisy)
+    assert applied
+    assert len(out) == len(noisy)
+    # At least 3 dB closer to the clean speech than before
+    assert error_db(speech, out) <= error_db(speech, noisy) - 3.0
+
+
+def test_hiss_reducer_survives_bad_samples():
+    noisy = audio.band_pass(voice(2.0)) + hiss(2.0, amplitude=0.05)
+    noisy[100] = np.nan
+    noisy[200] = np.inf
+    out, _ = audio.reduce_hiss(noisy)
+    assert np.all(np.isfinite(out))
+
+
+def test_short_call_is_not_touched_by_hiss_reducer():
+    noisy = hiss(0.3, amplitude=0.05)
+    out, applied = audio.reduce_hiss(noisy)
+    assert not applied and out is noisy

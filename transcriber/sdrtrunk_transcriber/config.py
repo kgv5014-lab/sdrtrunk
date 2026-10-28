@@ -60,6 +60,8 @@ class AudioConfig:
     clean: bool = True
     # Also cut out steady tones (paging tones, alert beeps); Whisper tends to invent words over them.
     remove_tones: bool = True
+    # Also turn down the steady hiss of weak FM channels. Clean calls, such as P25, are left as they are.
+    reduce_hiss: bool = True
 
 
 @dataclass

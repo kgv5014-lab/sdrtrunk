@@ -52,6 +52,9 @@ def prompt_terms(*term_lists: list[str]) -> list[str]:
     """The hint terms that fit in a Whisper prompt. Whisper only reads the last ~224 tokens of a
     prompt, so when there are too many the earliest terms are dropped."""
     terms = [t for terms in term_lists for t in terms]
+    # A term in two lists (a learned street that is also a big road) is kept where it is weighed most.
+    last = {t.lower(): i for i, t in enumerate(terms)}
+    terms = [t for i, t in enumerate(terms) if last[t.lower()] == i]
     while terms and len(", ".join(terms)) > PROMPT_LIMIT:
         terms.pop(0)
     return terms
@@ -64,7 +67,8 @@ def build_prompt(*term_lists: list[str]) -> str:
 
 class TranscriptionWorker:
     def __init__(self, config: Config, db: Database, backend_factory, codebook: CodeBook,
-                 placebook: PlaceBook | None = None, corrections: CorrectionBook | None = None):
+                 placebook: PlaceBook | None = None, corrections: CorrectionBook | None = None,
+                 hints=None):
         self.config = config
         self.db = db
         self._backend_factory = backend_factory
@@ -78,19 +82,23 @@ class TranscriptionWorker:
         self.placebook = placebook or PlaceBook(None)
         self.corrections = corrections or CorrectionBook(None)
         self.vocabulary = load_vocabulary(config.vocabulary_path)
+        # LearnedHints (hints.py), or None.
+        self.hints = hints
         # Called with the call id after each transcript is saved (the incident map listens here).
         self.on_done = None
         # Called with (call, samples) with the audio as uploaded, before cleaning (the tone finder).
         self.on_audio = None
 
-    def prompt_terms(self, *context: str | None) -> list[str]:
+    def prompt_terms(self, *context: str | None, call: dict | None = None) -> list[str]:
         # Places first (dropped first when it's too long), then codes, then words fixed on the call log
-        # page, then the user's own vocabulary, which Whisper weighs most as it comes last.
+        # page, then streets and units learned from the call log, then the user's own vocabulary, which
+        # Whisper weighs most as it comes last.
+        learned = self.hints.terms(call.get("talkgroup"), call.get("call_time")) if self.hints and call else []
         return prompt_terms(self.placebook.prompt_terms(*context), self.codebook.prompt_terms(),
-                            self.corrections.prompt_terms(), self.vocabulary)
+                            self.corrections.prompt_terms(), learned, self.vocabulary)
 
-    def prompt(self, *context: str | None) -> str:
-        return ", ".join(self.prompt_terms(*context))
+    def prompt(self, *context: str | None, call: dict | None = None) -> str:
+        return ", ".join(self.prompt_terms(*context, call=call))
 
     def start(self):
         for call_id in self.db.pending_ids():
@@ -178,7 +186,7 @@ class TranscriptionWorker:
 
         started = time.perf_counter()
         context = (call["talkgroup_label"], call["talkgroup_group"])
-        terms = self.prompt_terms(*context)
+        terms = self.prompt_terms(*context, call=call)
         result = self._backend.transcribe(samples, ", ".join(terms))
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         transcript, junk = result.text, []

@@ -6,6 +6,11 @@
 does now: audio cleanup, the junk filter and learned corrections. Calls fixed by hand on the call log
 page are always included, and each side is scored against the fix: the share of words it got wrong
 (lower is better). The report is written to data/compare-<time>.html. The service can keep running.
+
+    python -m sdrtrunk_transcriber.compare --hints
+
+compares only the hints learned from the call log (hints.py): "before" is the service without them,
+"after" with the ones each call would have had at its own time.
 """
 
 import argparse
@@ -22,6 +27,7 @@ from .codes import CodeBook
 from .config import Config, load_config
 from .corrections import CorrectionBook, _tokens, _words_only
 from .junk import remove_junk
+from .hints import LearnedHints
 from .places import PlaceBook
 from .worker import load_vocabulary, prompt_terms
 
@@ -68,12 +74,15 @@ class Runner:
         self.placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
         self.corrections = CorrectionBook(config.corrections_path)
         self.vocabulary = load_vocabulary(config.vocabulary_path)
+        self.hints = LearnedHints(config.data_path / "calls.db", config.hints)
 
-    def run(self, call: dict, samples, after: bool) -> tuple[str, float | None]:
+    def run(self, call: dict, samples, after: bool, learned: bool = False) -> tuple[str, float | None]:
         context = (call["talkgroup_label"], call["talkgroup_group"])
         lists = [self.placebook.prompt_terms(*context), self.codebook.prompt_terms()]
         if after:
             lists.append(self.corrections.prompt_terms())
+        if learned:
+            lists.append(self.hints.terms(call["talkgroup"], call["call_time"]))
         terms = prompt_terms(*lists, self.vocabulary)
         if after and self.config.audio.clean:
             samples, _tones = audio.clean(samples, self.config.audio.remove_tones)
@@ -89,16 +98,22 @@ class Runner:
         return text, result.confidence
 
 
-def compare(config: Config, backend, count: int) -> tuple[list[dict], dict]:
+def compare(config: Config, backend, count: int, hints: bool = False) -> tuple[list[dict], dict]:
     runner = Runner(config, backend)
+    if hints:
+        runner.hints.config.enabled = True
     rows = []
     for n, call in enumerate(pick_calls(config.data_path / "calls.db", count), 1):
         path = config.data_path / call["audio_path"]
         if not path.exists():
             continue
         samples = audio.decode(path)
-        before, before_conf = runner.run(call, samples, after=False)
-        after, after_conf = runner.run(call, samples, after=True)
+        if hints:
+            before, before_conf = runner.run(call, samples, after=True)
+            after, after_conf = runner.run(call, samples, after=True, learned=True)
+        else:
+            before, before_conf = runner.run(call, samples, after=False)
+            after, after_conf = runner.run(call, samples, after=True)
         row = {"call": call, "before": before, "after": after, "before_conf": before_conf,
                "after_conf": after_conf, "fixed": call.get("corrected_at") is not None}
         if row["fixed"]:
@@ -115,6 +130,7 @@ def compare(config: Config, backend, count: int) -> tuple[list[dict], dict]:
         "fixed": len(fixed),
         "before_wer": sum(r["before_wer"] for r in fixed) / len(fixed) if fixed else None,
         "after_wer": sum(r["after_wer"] for r in fixed) / len(fixed) if fixed else None,
+        "hints": hints,
     }
     return rows, summary
 
@@ -139,11 +155,16 @@ def report(rows: list[dict], summary: dict, model: str) -> str:
         f"<p>{summary['calls']} calls. The new way changed {summary['changed']} of them, and left "
         f"{summary['emptied']} empty (made-up text removed).</p>",
     ]
+    if summary.get("hints"):
+        out.append("<p>Before: the service without learned hints. After: with the streets and units each call "
+                   "would have been given from the calls before it.</p>")
     if summary["fixed"]:
+        learned_note = ("" if summary.get("hints") else
+                        " The after column includes the corrections learned from these "
+                        "same calls, so the score shows they work; new calls are the real test.")
         out.append(f"<p>On the {summary['fixed']} calls you fixed by hand, words wrong: before "
                    f"<b>{pct(summary['before_wer'])}</b>, after <b>{pct(summary['after_wer'])}</b> "
-                   f"(lower is better). The after column includes the corrections learned from these "
-                   f"same calls, so the score shows they work; new calls are the real test.</p>")
+                   f"(lower is better).{learned_note}</p>")
     else:
         out.append("<p>No calls have been fixed by hand yet. Fix a few with the Edit button on the call log "
                    "page and run this again to get a score.</p>")
@@ -174,6 +195,7 @@ def main():
     parser = argparse.ArgumentParser(prog="sdrtrunk_transcriber.compare")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     parser.add_argument("--calls", type=int, default=50, help="how many calls to compare (default 50)")
+    parser.add_argument("--hints", action="store_true", help="compare only the hints learned from the call log")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
 
@@ -186,7 +208,7 @@ def main():
     print("Loading Whisper...", flush=True)
     backend = create_backend(config)
     started = time.time()
-    rows, summary = compare(config, backend, args.calls)
+    rows, summary = compare(config, backend, args.calls, args.hints)
     path = config.data_path / f"compare-{datetime.now().strftime('%Y%m%d-%H%M')}.html"
     path.write_text(report(rows, summary, f"{backend.name} {backend.model}"), encoding="utf-8")
     print(f"Done in {time.time() - started:.0f} s. Report: {path.resolve()}")

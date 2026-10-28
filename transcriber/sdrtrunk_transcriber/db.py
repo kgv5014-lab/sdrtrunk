@@ -314,6 +314,27 @@ class Database:
         with self._lock:
             return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
 
+    def unnamed_pages(self, since: float, until: float) -> list[dict]:
+        """Tone-outs not on the station list, oldest first."""
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(
+                "SELECT * FROM pages WHERE label IS NULL AND page_time >= ? AND page_time < ? ORDER BY page_time",
+                (since, until)).fetchall()]
+
+    def name_pages(self, page_ids: list[int], label: str):
+        with self._lock:
+            self._conn.executemany("UPDATE pages SET label = ? WHERE id = ? AND label IS NULL",
+                                   [(label, i) for i in page_ids])
+            self._conn.commit()
+
+    def transcripts_between(self, start: float, end: float) -> list[dict]:
+        """Transcribed calls starting in [start, end), oldest first: what was said around a tone-out."""
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(
+                "SELECT id, call_time, duration_s, talkgroup, talkgroup_label, transcript FROM calls "
+                "WHERE call_time >= ? AND call_time < ? AND status = 'done' AND transcript IS NOT NULL "
+                "ORDER BY call_time", (start, end)).fetchall()]
+
     # ---- incident map
 
     def calls_to_map(self) -> list[int]:

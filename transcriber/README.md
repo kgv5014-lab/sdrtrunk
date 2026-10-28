@@ -51,6 +51,17 @@ Check Whisper on its own with any recording before wiring up SDRTrunk:
 * Whisper (about 2 GB with int8) fits easily on the 8 GB 1070 Ti, leaving the 1070 free for Ollama later.
 * SDRTrunk does not use the GPU, so decoding is not affected.
 
+## Updating SDRTrunk and the transcriber
+
+Double-click **update-sdrtrunk-plus.bat** in the sdrtrunk code folder (on this PC
+`E:\SDR-Stuff\FreshSDRTrunk\BUILD\sdrtrunk`). It waits until SDRTrunk and the transcriber are closed (type C
+to have it close them), gets the latest code from GitHub, builds SDRTrunk and copies the new transcriber
+files into `E:\SDR-Stuff\sdrtrunk-transcriber`. It never touches config.toml, vocabulary.txt, codes.csv,
+corrections.csv, places.csv, places-geo.json, paging_tones.csv or the data, ab-samples and blank-samples folders.
+If the build fails, the old SDRTrunk is put back and the build log is in `update-log.txt` next to the code
+folder. The previous SDRTrunk stays in `sdrtrunk-previous-image` until the next update. For a different
+transcriber folder, run `update-sdrtrunk-plus.bat -TranscriberDir "D:\my-transcriber"`.
+
 ## Point SDRTrunk at it
 
 1. In SDRTrunk open **Playlist Editor > Streaming**, add a **Rdio Scanner** stream and set:
@@ -362,6 +373,23 @@ To check whether changes help, run **compare-transcripts.bat**. It runs the 50 n
 call you fixed by hand, through Whisper both the old way (no cleanup) and the new way. Then it opens a
 side-by-side report that scores both against your fixes. The transcriber can keep running while it works.
 
+### Hints learned from your calls
+
+Whisper also gets street and unit names learned from the call log, so nothing needs to be kept up by hand:
+
+- **Going on now:** the streets, landmarks and units of incidents with a call on the map in the last hour.
+  A follow-up call like "2011 on location, Northampton Street" then comes out spelled the way dispatch
+  said it.
+- **Most heard:** the places found most often in each talkgroup's calls over the last 30 days, and the
+  unit call signs said most often (three times or more). These are better hints than the biggest roads,
+  many of which hardly ever come up on the radio.
+
+They take about 160 characters of the hint list. Whisper only reads about 600, so when the list is full
+the biggest-roads list and the 10-codes are dropped first (spoken codes are still written as 10-4 after
+Whisper). Your vocabulary.txt is never dropped for them. Settings are under `[hints]` in config.toml;
+`enabled = false` turns them off. To see whether they help, run **compare-hints.bat**: it runs the same
+calls without and with the learned hints and scores both against your fixes.
+
 ## Call summaries
 
 Ollama, a free program that runs AI language models on your own PC, can write a short summary for each
@@ -402,6 +430,15 @@ Name them in `paging_tones.csv` next to `config.toml` (same format as SDRTrunk's
 `tone_a,tone_b,name`). Unnamed tone-outs show their tones, e.g. "349.0 Hz + 832.5 Hz"; copy those numbers
 into the file with the name the dispatcher calls right after the tones. Changes apply without a
 restart. Settings are under `[tones]`; `talkgroups` limits the search to dispatch talkgroups.
+
+Unnamed tones also get named by themselves (`learn = true`). Every few minutes the transcriber looks at
+the last `learn_days` of unnamed tone-outs and at what dispatch said on that talkgroup from the tones
+until 90 seconds later ("EMS 27", "Fire 54", "Station 20", or a call sign like "Medic 2781"). When the
+same station was named after more than `learn_share` (half) of a tone pair's tone-outs that name a
+station, more often than any other, and at least `learn_min_seen` times, the pair is added to `paging_tones.csv` with a "# Learned" note above it, and its
+tone-outs already logged get the name. When the service varies ("Fire 20", then "EMS 20") the name is
+"Station 20". Tones that start or end every fire call name a different station each time, so they stay
+unnamed. Fix or delete a learned line like any other; it is not learned again while it's in the file.
 
 ## Accuracy tips
 

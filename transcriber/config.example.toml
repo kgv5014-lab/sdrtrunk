@@ -101,6 +101,19 @@ prompt_chars = 400
 [places.areas]
 # "County Fire" = ["Palmer Township", "Forks Township", "Wilson"]
 
+[hints]
+# Street and unit names Whisper learns from the call log: incidents from the last hour, and the names
+# each talkgroup says most. Nothing to keep up by hand. compare-hints.bat shows whether they help.
+enabled = true
+# Room for them in Whisper's hint list, in characters (the whole list is about 600). When the list is
+# full, the places list and codes are dropped first; vocabulary.txt stays.
+prompt_chars = 160
+# Incidents with a call this recent count as going on now.
+active_minutes = 60
+# How far back "most heard" looks, and how many times a name must be heard to count.
+history_days = 30
+min_count = 3
+
 [map]
 # Possible incidents on a map at http://localhost:3000/map, from addresses heard in transcripts.
 enabled = true
@@ -199,3 +212,8 @@ enabled = true
 file = "paging_tones.csv"
 # Only check calls whose talkgroup name or number contains one of these, e.g. ["Fire Dispatch"]. [] = all.
 talkgroups = []
+# Name unlisted tones by themselves from the station dispatch names right after them (see the README).
+learn = true
+learn_min_seen = 3
+learn_share = 0.5
+learn_days = 30

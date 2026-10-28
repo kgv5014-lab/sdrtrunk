@@ -253,3 +253,14 @@ startup_s = 180
 max_restarts_per_hour = 4
 # Phone alert (Bark, from [alerts]) on each restart.
 alert = true
+
+[recordings]
+# Call audio in the data folder is deleted after this many days, so it doesn't fill the disk. Audio of
+# calls on an incident, and calls that sent a phone alert, is always kept. Only the sound is deleted:
+# the call and its transcript stay in the call log. 0 = don't delete by age.
+max_age_days = 7
+# When all call audio together is over this size, the oldest is deleted first (same calls kept as above).
+# 0 = no size limit.
+max_total_gb = 1.0
+# How often to check, in minutes.
+check_minutes = 60

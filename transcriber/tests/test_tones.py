@@ -3,6 +3,7 @@
 import io
 import json
 import time
+from collections import Counter
 
 import av
 import numpy as np
@@ -130,3 +131,71 @@ def test_tones_in_an_uploaded_call_are_logged_named_and_alerted(tmp_path, monkey
     assert [m["title"] for m in sent] == ["Tone-out: Station 4"]
     # Whisper still got the call, with the tones cut out
     assert all(c["status"] == "done" for c in calls)
+
+
+def test_stations_named():
+    from sdrtrunk_transcriber.tones import stations_named
+    assert stations_named("EMS 27, Medic 2781 respond for a fall") == ({"EMS 27"}, {27})
+    assert stations_named("Station 20, Fire 20 Easton, Engine 2011") == ({"Station 20", "Fire 20"}, {20})
+    assert stations_named("E-M-S 10 at 13:46, 10-4") == ({"EMS 10"}, {10})
+
+
+def log_call(db, t, talkgroup, label, seconds, transcript):
+    call_id = db.insert_call({"call_time": int(t), "received_at": int(t), "talkgroup": talkgroup,
+                              "talkgroup_label": label, "audio_path": "x.mp3"})
+    db.update_call(call_id, duration_s=seconds, status="done", transcript=transcript)
+
+
+def test_unlisted_tones_are_named_after_the_station_dispatch_keeps_naming(tmp_path):
+    from sdrtrunk_transcriber.db import Database
+    from sdrtrunk_transcriber.tones import ToneFinder
+    config = Config()
+    config.base_dir = tmp_path
+    (tmp_path / "paging_tones.csv").write_bytes(b"tone_a,tone_b,name\r\n1593.8,1781.3,EMS 10\r\n")
+    db = Database(tmp_path / "calls.db")
+    now = time.time()
+    said = {
+        # A pair named the same station after most tone-outs (once twice in a row), one heard elsewhere.
+        (2468.8, 656.2): ["EMS 27, respond for a fall", "EMS 27 Medic 2781 respond", "Ems 27 for chest pain",
+                          "Station 13 respond"],
+        # The tone every fire call ends with: a different station each time.
+        (406.3, 437.5): ["Fire 54 respond", "Fire 50 respond", "Station 20 respond"],
+        # Fire and EMS from the same station.
+        (1093.7, 906.3): ["Fire 20 Easton respond", "EMS 20 respond", "Station 20 for an alarm"],
+        # Seen only twice.
+        (687.5, 937.5): ["Rescue 71 respond", "Rescue 71 respond"],
+        # Already on the list, logged before it was.
+        (1593.8, 1781.3): ["EMS 10"],
+    }
+    t = now - 20 * 86400
+    for (a, b), texts in said.items():
+        for text in texts:
+            t += 3600
+            for repeat in (0, 30):
+                db.insert_page({"page_time": t + repeat, "received_at": int(t), "tone_a": a * (1 + RNG.uniform(-0.004, 0.004)),
+                                "tone_b": b, "tone_a_seconds": 1.0, "channel": "Countywide"})
+            log_call(db, t - 2, "10000", "Countywide", 20.0, text)
+            # Another talkgroup at the same time doesn't count.
+            log_call(db, t + 5, "1203", "County Police", 5.0, "Station 99 Station 99")
+    finder = ToneFinder(config, db)
+    added = finder.learn(now)
+
+    assert sorted((b, name) for _, b, name in added) == [(656.2, "EMS 27"), (906.3, "Station 20")]
+    text = (tmp_path / "paging_tones.csv").read_bytes()
+    assert b",656.2,EMS 27\r\n" in text and b"# Learned " in text and b"\n" not in text.replace(b"\r\n", b"")
+    labels = Counter(p["label"] for p in db.pages(limit=1000))
+    assert labels == {"EMS 27": 8, "Station 20": 6, "EMS 10": 2, None: 10}
+    # Nothing new to learn the next time.
+    assert finder.learn(now) == []
+    assert finder.tone_list.name(2468.0, 656.0) == "EMS 27"
+
+
+def test_tone_outs_with_no_station_heard_do_not_count_against_a_name():
+    from sdrtrunk_transcriber.tones import pick_name
+    nothing = (set(), set())
+    heard = [({"EMS 49"}, {49})] * 8 + [({"Fire 42"}, {42})] * 4 + [({"Fire 45"}, {45})] * 3 + [nothing] * 27
+    assert pick_name(heard, 3, 0.5) == ("EMS 49", 8)
+    # Two stations named as often: unclear.
+    assert pick_name([({"EMS 50"}, {50})] * 6 + [({"EMS 4"}, {4})] * 6 + [nothing] * 5, 3, 0.5) is None
+    # Exactly half isn't enough.
+    assert pick_name([({"EMS 50"}, {50})] * 3 + [({"EMS 4"}, {4})] * 2 + [({"EMS 3"}, {3})], 3, 0.5) is None

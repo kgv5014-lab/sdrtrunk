@@ -562,6 +562,14 @@ public abstract class TunerController implements Tunable, ISourceEventProcessor,
     }
 
     /**
+     * USB transfer errors since the tuner started.  Only USB tuners count them.
+     */
+    public long getUsbErrorCount()
+    {
+        return 0;
+    }
+
+    /**
      * Indicates if this tuner controller has a non-zero measured frequency error value.
      */
     public boolean hasMeasuredFrequencyError()

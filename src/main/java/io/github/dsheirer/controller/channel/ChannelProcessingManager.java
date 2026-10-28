@@ -486,6 +486,9 @@ public class ChannelProcessingManager implements Listener<ChannelEvent>
         //Add recorders
         processingChain.addModules(RecorderFactory.getRecorders(mUserPreferences, channel));
 
+        //Count decode errors and signal levels for the hourly per-dongle signal quality report
+        processingChain.addModule(mTunerManager.getSignalQualityMonitor().createModule(channel, source));
+
         //Set the samples source
         processingChain.setSource(source);
 

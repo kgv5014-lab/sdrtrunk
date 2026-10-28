@@ -244,6 +244,32 @@ class AlertsConfig:
 
 
 @dataclass
+class SignalConfig:
+    # SDRTrunk sends each dongle's signal quality every hour (decode rate, lost sync, signal and noise levels,
+    # drift, USB errors). A phone alert goes out (needs [alerts] set up) when a dongle gets worse than its
+    # own normal, once per problem until it clears.
+    enabled: bool = True
+    alert: bool = True
+    # "Normal" is the median of the hours this far back. Needs this many hours of history first.
+    baseline_days: float = 7.0
+    min_history_hours: int = 6
+    # Alert when the share of messages that decode drops this many percentage points below normal.
+    decode_drop_points: float = 15.0
+    # Alert when a control channel loses sync for this many minutes in an hour (and 3x its normal).
+    sync_lost_minutes: float = 2.0
+    # Alert when the signal on calls is this many dB weaker than normal, or the noise this many dB higher.
+    signal_drop_db: float = 10.0
+    noise_rise_db: float = 10.0
+    # Alert when the dongle's frequency correction moves this much in an hour, or sits this far from normal.
+    ppm_jump: float = 1.0
+    ppm_drift: float = 2.0
+    # Alert at this many USB errors in an hour.
+    usb_errors: int = 5
+    # Hourly rows older than this are deleted.
+    keep_days: int = 90
+
+
+@dataclass
 class SummariesConfig:
     # Short summaries and tags for incidents and long calls, from a local Ollama model (see the README).
     enabled: bool = False
@@ -281,6 +307,7 @@ class Config:
     aircraft: AircraftConfig = field(default_factory=AircraftConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
+    signal: SignalConfig = field(default_factory=SignalConfig)
     base_dir: Path = Path(".")
 
     @property

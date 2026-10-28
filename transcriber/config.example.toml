@@ -217,3 +217,25 @@ learn = true
 learn_min_seen = 3
 learn_share = 0.5
 learn_days = 30
+
+[signal]
+# SDRTrunk sends each dongle's signal quality every hour: share of messages decoded, time the control channel
+# lost sync, signal and noise levels, frequency drift and USB errors. It also writes them to
+# signal_quality.csv in SDRTrunk's logs folder and shows the last hour in its Tuners tab.
+enabled = true
+# Phone alert (needs [alerts] set up) when a dongle gets worse than its own normal, once until it clears.
+alert = true
+# "Normal" is the median of the hours this far back, after at least min_history_hours of history.
+baseline_days = 7.0
+min_history_hours = 6
+# Alert when: decoding drops this many points, a control channel loses sync this many minutes in an hour,
+# the signal on calls is this many dB weaker or the noise this many dB higher, the frequency correction moves
+# ppm_jump in an hour or sits ppm_drift from normal, or there are this many USB errors in an hour.
+decode_drop_points = 15.0
+sync_lost_minutes = 2.0
+signal_drop_db = 10.0
+noise_rise_db = 10.0
+ppm_jump = 1.0
+ppm_drift = 2.0
+usb_errors = 5
+keep_days = 90

@@ -26,6 +26,7 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.DiscoveredUSBTuner;
 import io.github.dsheirer.source.tuner.manager.IDiscoveredTunerStatusListener;
 import io.github.dsheirer.source.tuner.manager.TunerStatus;
+import io.github.dsheirer.source.tuner.quality.SignalQualityMonitor;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner1;
 import io.github.dsheirer.source.tuner.sdrplay.rspDuo.DiscoveredRspDuoTuner2;
 import java.awt.EventQueue;
@@ -56,14 +57,16 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     public static final int COLUMN_TUNER_TYPE = 2;
     public static final int COLUMN_FREQUENCY = 3;
     public static final int COLUMN_CHANNEL_COUNT = 4;
+    public static final int COLUMN_LAST_HOUR = 5;
     private static final String MHZ = " MHz";
-    private static final String[] COLUMN_HEADERS = {"Status","Class", "Type", "Frequency", "Channels"};
+    private static final String[] COLUMN_HEADERS = {"Status","Class", "Type", "Frequency", "Channels", "Last hour"};
 
     private List<DiscoveredTuner> mDiscoveredTuners = new CopyOnWriteArrayList<>();
     private List<Listener<TunerEvent>> mTunerEventListeners = new ArrayList<>();
     private DecimalFormat mFrequencyFormat = new DecimalFormat("0.00000");
     private Lock mLock = new ReentrantLock();
     private TunerConfigurationManager mTunerConfigurationManager;
+    private SignalQualityMonitor mSignalQualityMonitor;
 
     /**
      * Constructs an instance
@@ -72,6 +75,14 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
     public DiscoveredTunerModel(TunerConfigurationManager tunerConfigurationManager)
     {
         mTunerConfigurationManager = tunerConfigurationManager;
+    }
+
+    /**
+     * Sets the monitor that fills the Last hour column.
+     */
+    public void setSignalQualityMonitor(SignalQualityMonitor signalQualityMonitor)
+    {
+        mSignalQualityMonitor = signalQualityMonitor;
     }
 
     /**
@@ -517,6 +528,15 @@ public class DiscoveredTunerModel extends AbstractTableModel implements Listener
                     {
                         int channelCount = discoveredTuner.getTuner().getChannelSourceManager().getTunerChannelCount();
                         return channelCount + " (" + (discoveredTuner.getTuner().getTunerController().isLockedSampleRate() ? "LOCKED)" : "UNLOCKED)");
+                    }
+                    else
+                    {
+                        return "";
+                    }
+                case COLUMN_LAST_HOUR:
+                    if(discoveredTuner.hasTuner() && mSignalQualityMonitor != null)
+                    {
+                        return mSignalQualityMonitor.getSummary(discoveredTuner.getTuner());
                     }
                     else
                     {

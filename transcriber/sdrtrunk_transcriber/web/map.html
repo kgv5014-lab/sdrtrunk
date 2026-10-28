@@ -64,6 +64,8 @@
   .pop .fix button, .pop .fix select, .pop .actions select { font-size: 12px; padding: 2px 6px; }
   .pop select { max-width: 100%; }
   .channel { color: var(--accent); font-weight: 600; }
+  .svc { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; color: #fff; border-radius: 8px; padding: 0 6px; margin-right: 3px; vertical-align: 1px; }
+  .svc.police { background: var(--police); } .svc.fire { background: var(--fire); } .svc.ems { background: var(--ems); }
   .types { display: flex; flex-wrap: wrap; gap: 4px; }
   .types label { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 14px; padding: 2px 9px 2px 6px; color: var(--fg); cursor: pointer; user-select: none; }
   .types label:has(input:not(:checked)) { opacity: 0.45; }
@@ -113,6 +115,7 @@
     <option value="2592000">Last 30 days</option>
   </select>
   <div class="types" id="types"></div>
+  <label title="Only incidents that more than one of police, fire and EMS were sent to"><input type="checkbox" id="multi"> Several services</label>
   <label><input type="checkbox" id="hidden"> Show removed</label>
   <button id="seen" hidden>Mark all seen</button>
   <span id="status"></span>
@@ -160,6 +163,7 @@ function markSeen(incident) {
 const PRECISION = { address: 'house address', intersection: 'intersection', landmark: 'landmark',
                     street: 'street only, approximate',
                     'follow-up': 'follow-up, same unit', channel: 'same Tac channel', 'same-street': 'names its street',
+                    'other-service': 'another service sent to its street',
                     manual: 'moved here by hand' };
 
 function el(tag, cls, text) {
@@ -193,6 +197,13 @@ function highlighted(text, spans) {
   return box;
 }
 
+// Small Police / Fire / EMS tags for the services working an incident.
+function services(incident) {
+  const box = el('span');
+  (incident.services || []).forEach(s => box.append(el('span', 'svc ' + s, NAMES[s])));
+  return box;
+}
+
 function describe(incident) {
   const box = el('span');
   const parts = [NAMES[incident.category], incident.nature].filter(Boolean);
@@ -222,6 +233,7 @@ function popup(incident) {
   const box = el('div', 'pop');
   box.append(el('div', 'where', incident.label || 'Unknown place'));
   if (incident.category || incident.nature) { const what = el('div'); what.append(describe(incident)); box.append(what); }
+  if ((incident.services || []).length) { const svc = el('div'); svc.append(services(incident)); box.append(svc); }
   if (incident.summary) box.append(summary(incident, true));
   const span = incident.first_time === incident.last_time ? time(incident.first_time)
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
@@ -336,7 +348,7 @@ function render(incidents) {
   items = {};
   const list = $('list');
   list.querySelectorAll('.item, .empty').forEach(n => n.remove());
-  const shown = incidents.filter(i => shownTypes.has(i.type || 'other'));
+  const shown = incidents.filter(i => shownTypes.has(i.type || 'other') && (!$('multi').checked || (i.services || []).length > 1));
   const fresh = incidents.filter(isNew);
   document.title = (fresh.length ? '(' + fresh.length + ') ' : '') + 'Incident map';
   $('seen').hidden = !fresh.length;
@@ -368,6 +380,7 @@ function render(incidents) {
     where.append(incident.label || 'Unknown place');
     item.append(where);
     const meta = el('div', 'muted', time(incident.last_time) + ' · ');
+    if ((incident.services || []).length > 1) meta.append(services(incident));
     if (incident.category || incident.nature) meta.append(describe(incident), ' · ');
     meta.append(incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's'));
     if (incident.channel) meta.append(' · ', el('span', 'channel', incident.channel));
@@ -793,6 +806,8 @@ $('range').value = stored('map.range', '86400');
 if (!$('range').value) $('range').value = '86400';
 $('range').addEventListener('change', () => { store('map.range', $('range').value); fitted = false; load(); });
 $('hidden').addEventListener('change', load);
+$('multi').checked = stored('map.multi', false);
+$('multi').addEventListener('change', () => { store('map.multi', $('multi').checked); render(lastIncidents); });
 </script>
 </body>
 </html>

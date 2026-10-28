@@ -33,6 +33,7 @@ GEO = {
     "ways": [
         way("Northampton Street", "Easton", line(40.6915, -75.230, 40.6915, -75.200), highway="primary"),
         way("North 3rd Street", "Easton", line(40.685, -75.2100, 40.700, -75.2100)),
+        way("Spring Garden Street", "Easton", line(40.685, -75.2135, 40.700, -75.2135)),   # 300 m west of 3rd
         way("Main Street", "Bethlehem", line(40.620, -75.390, 40.620, -75.370)),
         way("Center Street", "Bethlehem", line(40.610, -75.380, 40.630, -75.380)),
         way("Main Street", "Nazareth", line(40.740, -75.320, 40.740, -75.300)),
@@ -333,6 +334,7 @@ def test_calls_become_incidents_on_the_map(tmp_path):
         status = client.get("/api/map/status").json()
 
         fire = next(i for i in incidents if "Northampton" in i["label"])
+        assert fire["services"] == ["fire"]
         hidden = client.delete(f"/api/incidents/{fire['id']}")
         after = client.get("/api/incidents", params={"since": now - 3600}).json()
         with_hidden = client.get("/api/incidents", params={"since": now - 3600, "hidden": True}).json()

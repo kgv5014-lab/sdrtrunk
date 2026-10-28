@@ -4,7 +4,8 @@ import pytest
 
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.db import Database
-from sdrtrunk_transcriber.incidents import (MapWorker, channel_in, channels_in, is_dispatch, made_up, street_words,
+from sdrtrunk_transcriber.incidents import (MapWorker, call_services, channel_in, channels_in, is_dispatch, made_up,
+                                            natures_fit, services_of, street_words,
                                             talkgroup_channel)
 
 from test_incidents import gaz  # noqa: F401  (a fixture)
@@ -209,7 +210,7 @@ def test_a_new_dispatch_nearby_is_a_new_incident(tmp_path, gaz):
     # 300 m along Northampton Street, ten minutes later: close, but a different call.
     call(worker, "Respond 3rd and Northampton Street, Easton for a fire alarm", 600)
     assert len(worker.db.incidents()) == 1     # same intersection: still the same incident
-    call(worker, "Respond Northampton Street at Short Lane for an odor of gas", 700)
+    call(worker, "Respond Northampton and Spring Garden for an odor of gas", 700)
     call(worker, "Respond North 3rd and Northampton for chest pain, ALS", 3000)   # same place, much later
     assert len(worker.db.incidents()) == 2
 
@@ -293,3 +294,79 @@ def test_fixes_from_the_map_page(tmp_path):
         assert worker.db.get_incident(fall) is None
         listed = {c["id"]: c["incident_id"] for c in client.get("/api/calls").json()}
         assert listed[a] == fire and listed[b] is None
+
+
+def police(worker, transcript, offset):
+    db = worker.db
+    call_id = db.insert_call({"call_time": T + offset, "received_at": T + offset, "talkgroup": "200",
+                              "talkgroup_label": "County Police", "talkgroup_group": "County Police",
+                              "audio_path": "x.mp3"})
+    db.update_call(call_id, status="done", transcript=transcript)
+    worker.process(call_id)
+    return call_id
+
+
+@pytest.mark.parametrize("a,b,fit", [
+    ("Structure fire", "Breathing problem", True),
+    ("MVA", "Theft", True),
+    ("Weapons", "Unresponsive", True),
+    ("Theft", "Cardiac arrest", False),
+    ("Gas leak", "Unresponsive", True),
+    ("Gas leak", "Fall", False),
+    ("Fire alarm", "Overdose", False),
+    ("Fire alarm", "Structure fire", True),
+    (None, "Fall", True),
+])
+def test_natures_fit(a, b, fit):
+    assert natures_fit(a, b) == fit
+
+
+@pytest.mark.parametrize("label,group,text,services", [
+    ("County Police", "County Police", "Respond for a medical, EMS en route", {"police"}),
+    ("Countywide", "County Fire / EMS", "Medic 2081 respond, BLS, fall", {"ems"}),
+    ("Countywide", "County Fire / EMS", "Engine 2011 respond for a structure fire", {"fire"}),
+    ("Countywide", "County Fire / EMS", "Engine 2011 and Medic 2081 respond for an MVA", {"fire", "ems"}),
+    ("Countywide", "County Fire / EMS", "10-4", set()),
+])
+def test_call_services(label, group, text, services):
+    assert call_services({"talkgroup_label": label, "talkgroup_group": group, "transcript": text}) == services
+
+
+def test_police_and_ems_sent_to_the_same_scene_are_one_incident(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    police(worker, "Car 12 respond to North 3rd and Northampton for a fight, one party bleeding", 0)
+    # EMS words the place differently, 300 m away along Northampton Street.
+    call(worker, "Medic 2081 respond Northampton and Spring Garden, BLS, assault victim", 180)
+    [incident] = worker.db.incidents()
+    assert len(incident["calls"]) == 2
+    assert services_of(incident["calls"]) == ["police", "ems"]
+
+
+def test_a_second_dispatch_of_the_same_service_nearby_stays_apart(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    police(worker, "Car 12 respond to North 3rd and Northampton for a fight", 0)
+    police(worker, "Car 14 respond to Northampton and Spring Garden for a theft", 180)
+    assert len(worker.db.incidents()) == 2
+
+
+def test_another_service_for_an_unrelated_call_type_stays_apart(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    police(worker, "Car 12 respond to North 3rd and Northampton for a theft", 0)
+    call(worker, "Medic 2081 respond Northampton and Spring Garden, ALS, cardiac arrest", 180)
+    assert len(worker.db.incidents()) == 2
+
+
+def test_another_service_much_later_stays_apart(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    police(worker, "Car 12 respond to North 3rd and Northampton for a fight", 0)
+    call(worker, "Medic 2081 respond Northampton and Spring Garden, BLS, assault victim", 1800)
+    assert len(worker.db.incidents()) == 2
+
+
+def test_a_dispatch_the_map_cant_place_joins_by_street(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    call(worker, "Engine 2011 respond North 3rd and Northampton for a structure fire", 0)
+    police(worker, "Car 12 respond to Northampton Street for traffic control at the fire", 240)
+    [incident] = worker.db.incidents()
+    assert [c["precision"] for c in incident["calls"]] == ["intersection", "other-service"]
+    assert services_of(incident["calls"]) == ["police", "fire"]

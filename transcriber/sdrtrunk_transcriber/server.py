@@ -40,7 +40,7 @@ from .traffic import Traffic511
 from .config import Config
 from .db import Database
 from .geocode import Geocoder
-from .incidents import MapWorker, highlights
+from .incidents import MapWorker, highlights, services_of
 from .zones import ZoneWatch, read_zones
 from .summaries import Summarizer, attach as attach_summary, incident_basis
 from .tones import ToneFinder
@@ -439,6 +439,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 call["highlights"] = highlights(call["transcript"])
             # What the map colors and filters by: MVA first, since crashes go to every agency.
             incident["type"] = "mva" if incident["nature"] == "MVA" else incident["category"] or "other"
+            # Police, fire and EMS working it, from the talkgroups and words of its calls.
+            incident["services"] = services_of(incident["calls"])
             # Tone-outs just before the first call (pages carry no address, so this is by time only).
             incident["pages"] = db.pages(incident["first_time"] - 600, incident["first_time"] + 60, limit=10)
         if request.app.state.summarizer:

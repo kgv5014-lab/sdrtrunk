@@ -72,6 +72,18 @@ STREET_JOIN_S = 15 * 60
 # A new dispatch joins an incident only at the same place (this close) and while it is still busy.
 SAME_PLACE_M = 100
 REDISPATCH_S = 20 * 60
+# Police, fire and EMS are often each sent to one scene, and each dispatcher words the place a little
+# differently. A dispatch bringing a service an incident doesn't have yet joins it this soon after its
+# latest call: within incident_radius_m, or this far along the same street.
+OTHER_SERVICE_S = 15 * 60
+OTHER_SERVICE_STREET_M = 2000
+# Fire and police call types that EMS is also sent to; MVA goes with anything.
+FIRE_WITH_EMS = {"Structure fire", "Vehicle fire", "Outside fire", "Water rescue"}
+FIRE_WITH_SICK = {"Gas leak", "CO alarm"}       # someone ill from it
+SICK = {"Unresponsive", "Medical", "Breathing problem", "Cardiac arrest"}
+POLICE_WITH_EMS = {"Weapons", "Disturbance"}
+POLICE_WITH_FIRE = {"Structure fire", "Vehicle fire", "Wires or tree down", "Gas leak"}
+SERVICES = ("police", "fire", "ems")
 # The sample hint list vocabulary.example.txt used to have. Whisper read it back into many calls.
 OLD_SAMPLE_HINTS = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main Street"]
 # Tone-outs read out on Countywide end with the channel: "...Lower Saucon Communications, on TAC 2, 16:32".
@@ -86,6 +98,8 @@ ALL_CLEAR = re.compile(r"\ball (the |of the )?(units|apparatus)\b.{0,40}\b(avail
 
 UNIT = re.compile(r"\b(engine|medic|ems|e-m-s|a?ms|pms|mb\.?|ladder|truck|tanker|rescue|squad|ambulance|chief|"
                   r"brush|utility|qrs|tower|battalion|deputy|car|unit)[\s-]*#?\s*(\d{1,4}(?:[- ]\d{1,2}(?![\d-]))?)\b", re.IGNORECASE)
+# A fire unit, as opposed to an EMS one (EMS_UNIT) on a shared Fire / EMS talkgroup.
+FIRE_UNIT = re.compile(r"\b(engine|ladder|truck|tanker|tower|brush|squad|battalion|fire)[\s#-]*\d", re.IGNORECASE)
 BARE_CALL_SIGN = re.compile(r"(?<![\d:.-])\b(\d{4})\b(?![:.-]\d)")
 
 
@@ -188,6 +202,62 @@ def nature_of(text: str | None) -> tuple[str | None, str | None]:
         if text and pattern.search(text):
             return label, category
     return None, None
+
+
+def call_services(call: dict) -> set[str]:
+    """Which of police, fire and EMS a call is from: the talkgroup says, or on a shared "Fire / EMS"
+    talkgroup the call does (an ambulance or ALS/BLS is EMS, an engine or a fire call type is fire)."""
+    agency = talkgroup_agency(call.get("talkgroup_label"), call.get("talkgroup_group"))
+    if agency in SERVICES:
+        return {agency}
+    text = call.get("transcript") or ""
+    _, category = nature_of(text)
+    found = set()
+    if category == "ems" or life_support(text) or EMS_UNIT.search(text):
+        found.add("ems")
+    if category == "fire" or FIRE_UNIT.search(text):
+        found.add("fire")
+    if agency is None and category == "police":
+        found.add("police")
+    return found
+
+
+def services_of(calls: list[dict]) -> list[str]:
+    """The services working an incident, in the order police, fire, EMS."""
+    found = set().union(*(call_services(c) for c in calls)) if calls else set()
+    return [s for s in SERVICES if s in found]
+
+
+def natures_fit(a: str | None, b: str | None) -> bool:
+    """Whether two call types can be one incident worked by different services: a theft and a
+    cardiac arrest a block apart are two calls, a house fire and a breathing problem may be one."""
+    if not a or not b or a == b or "MVA" in (a, b):
+        return True
+    categories = {label: category for _, label, category in NATURES}
+    ca, cb = categories.get(a), categories.get(b)
+    if ca == cb:
+        return True     # "Fire alarm" became "Structure fire"; Whisper heard "Medical" as "Unresponsive"
+    kinds = {ca: a, cb: b}
+    if kinds.keys() == {"fire", "ems"}:
+        return kinds["fire"] in FIRE_WITH_EMS or (kinds["fire"] in FIRE_WITH_SICK and kinds["ems"] in SICK)
+    if kinds.keys() == {"police", "ems"}:
+        return kinds["police"] in POLICE_WITH_EMS
+    if kinds.keys() == {"police", "fire"}:
+        return kinds["fire"] in POLICE_WITH_FIRE
+    return False
+
+
+def town_of(label: str | None) -> str | None:
+    """The town of a place label: "125 Main St, Easton" -> "easton"."""
+    parts = (label or "").split(",")
+    return parts[-1].strip().lower() if len(parts) > 1 else None
+
+
+def same_street(a: str | None, b: str | None) -> str | None:
+    """A street two place labels share, in the same town, else None."""
+    if town_of(a) and town_of(b) and town_of(a) != town_of(b):
+        return None
+    return next((st for st in street_words(a) if st in street_words(b)), None)
 
 
 def made_up(text: str | None, vocabulary=()) -> bool:
@@ -420,10 +490,11 @@ class MapWorker:
 
     def join_without_place(self, call: dict) -> bool:
         """Joins a call that names no place to an incident: by a unit it names, then by the Tac
-        channel it is on, then by a street of an incident it names. A new dispatch is a new call, even when its place can't be found, so it joins none.
+        channel it is on, then by a street of an incident it names. A new dispatch is a new call, even
+        when its place can't be found, unless it sends another service to an incident on a street it names.
         Returns True when it joined one."""
         if is_dispatch(call["transcript"]):
-            return False
+            return self.follow_dispatch(call)
         return self.follow_up(call) or self.follow_channel(call) or self.follow_street(call)
 
     def follow_up(self, call: dict) -> bool:
@@ -491,6 +562,33 @@ class MapWorker:
             return False
         street = next(st for st in street_words(matches[0]["label"]) if f" {st} " in text)
         self._join(call, matches[0], "same-street", street, matches[0]["label"])
+        return True
+
+    def another_service(self, call: dict, incident: dict) -> bool:
+        """Whether a dispatch sends a service an incident doesn't have yet to it, soon after its latest
+        call, for a call type that goes with the incident's ("Medic 2081 respond for a burn" to a house fire)."""
+        t = call["call_time"]
+        if not -60 <= t - incident["last_time"] <= OTHER_SERVICE_S:
+            return False
+        if not natures_fit(nature_of(call["transcript"])[0], incident["nature"]):
+            return False
+        mine = call_services(call)
+        return bool(mine - set(services_of(self.db.incident_calls_brief(incident["id"]))))
+
+    def follow_dispatch(self, call: dict) -> bool:
+        """Joins a dispatch the map couldn't place to the one recent incident on a street it names that
+        it sends another service to."""
+        text = f" {' '.join(words(call['transcript'] or ''))} "
+        t = call["call_time"]
+        matches = []
+        for incident in self.db.nearby_incidents(t - OTHER_SERVICE_S, t + 60):
+            street = next((st for st in street_words(incident["label"]) if f" {st} " in text), None)
+            if street and self.another_service(call, incident):
+                matches.append((incident, street))
+        if len(matches) != 1:
+            return False
+        incident, street = matches[0]
+        self._join(call, incident, "other-service", street, incident["label"])
         return True
 
     def _followed(self, channel: str) -> bool:
@@ -664,9 +762,15 @@ class MapWorker:
         dispatch = is_dispatch(call["transcript"])
         for incident in self.db.nearby_incidents(t - window, t + window):
             d = distance_m(*point, incident["lat"], incident["lon"])
+            limit = settings.incident_radius_m
             if dispatch and (d > SAME_PLACE_M or t - incident["last_time"] > REDISPATCH_S):
-                continue    # a new dispatch to the next block, or to the same place much later, is a new call
-            if d <= settings.incident_radius_m and (best is None or d < best):
+                # A new dispatch to the next block, or to the same place much later, is a new call,
+                # unless it sends another service to this one.
+                if not self.another_service(call, incident):
+                    continue
+                if same_street(found.label, incident["label"]):
+                    limit = max(limit, OTHER_SERVICE_STREET_M)
+            if d <= limit and (best is None or d < best):
                 nearest, best = incident, d
 
         if nearest is None:

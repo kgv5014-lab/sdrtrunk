@@ -45,7 +45,8 @@ public class IncidentsTest
                      "talkgroup_label": null, "talker_alias": "ENGINE 41", "transcript": "Engine 41 on location"}],
           "pages": [{"id": 3, "page_time": 1792656813.25, "tone_a": 349.0, "tone_b": 832.5, "label": "Station 4 Engine"}],
           "summary": "Engine 41 sent to a structure fire at North 3rd and Northampton; on location.",
-          "summary_tags": ["working fire"], "summary_status": "active", "summary_current": true},
+          "summary_tags": ["working fire"], "summary_status": "active", "summary_current": true,
+          "services": ["police", "fire"]},
          {"id": 6, "first_time": 1792650000, "last_time": 1792650000, "lat": 40.68, "lon": -75.25,
           "label": "Route 22 & Freemansburg Avenue, Palmer Township", "category": null, "nature": "MVA",
           "hidden": 0, "type": "mva", "calls": [], "pages": []}]
@@ -70,12 +71,15 @@ public class IncidentsTest
         assertTrue(fire.summary().startsWith("Engine 41 sent"));
         assertEquals(List.of("working fire"), fire.summaryTags());
         assertEquals("active", fire.summaryStatus());
+        assertEquals(List.of("police", "fire"), fire.services());
+        assertEquals("Police · Fire", fire.servicesDisplay());
 
         TranscriptIncident crash = incidents.get(1);
         assertEquals("MVA", crash.typeDisplay());
         assertEquals("mva", crash.typeKey());
         assertEquals(null, crash.summary());
         assertEquals(List.of(), crash.summaryTags());
+        assertEquals("", crash.servicesDisplay());
         assertEquals("other", new TranscriptIncident(1, 0, 0, 0, 0, null, null, null, null, List.of(), List.of()).typeKey());
     }
 
@@ -85,6 +89,7 @@ public class IncidentsTest
         String text = IncidentsPanel.describe(TranscriptionClient.parseIncidents(INCIDENTS_JSON).get(0));
 
         assertTrue(text.startsWith("North 3rd Street & Northampton Street, Easton   Fire · Structure fire"), text);
+        assertTrue(text.contains("\nServices: Police · Fire"), text);
         assertTrue(text.contains("Tone out "), text);
         assertTrue(text.contains("Station 4 Engine"), text);
         assertTrue(text.contains("\nSummary (AI): Engine 41 sent to a structure fire"), text);

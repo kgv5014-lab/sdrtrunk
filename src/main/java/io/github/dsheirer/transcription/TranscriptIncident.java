@@ -40,12 +40,25 @@ import java.util.List;
  * @param summaryTags tags picked by the AI model, e.g. "injuries", "road blocked"
  * @param summaryStatus latest status the AI model read from the calls: active, under control, cleared, canceled
  *                      or unknown, may be null
+ * @param services police, fire and/or ems: the services working it, in that order
  */
 public record TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
                                  String label, String category, String nature, String type,
                                  List<Call> calls, List<Page> pages, String summary, List<String> summaryTags,
-                                 String summaryStatus)
+                                 String summaryStatus, List<String> services)
 {
+    /**
+     * An incident without the services working it.
+     */
+    public TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
+                              String label, String category, String nature, String type,
+                              List<Call> calls, List<Page> pages, String summary, List<String> summaryTags,
+                              String summaryStatus)
+    {
+        this(id, firstTime, lastTime, latitude, longitude, label, category, nature, type, calls, pages, summary,
+            summaryTags, summaryStatus, List.of());
+    }
+
     /**
      * An incident without an AI summary.
      */
@@ -104,6 +117,14 @@ public record TranscriptIncident(long id, long firstTime, long lastTime, double 
             case "mva" -> "MVA";
             default -> "Other";
         };
+    }
+
+    /**
+     * The services working it for display: "Police · Fire · EMS", empty when none are known.
+     */
+    public String servicesDisplay()
+    {
+        return String.join(" · ", services.stream().map(TranscriptIncident::typeName).toList());
     }
 
     /**

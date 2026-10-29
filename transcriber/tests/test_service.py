@@ -367,6 +367,27 @@ def test_token_limit_grows_with_the_call_up_to_one_window():
     assert backends.token_limit(10.0, 0) is None
 
 
+def test_fire_scan_calls_are_named_by_frequency(make_client):
+    client, _ = make_client()
+    with client:
+        post(client, sdrtrunk_body({**CALL, "talkgroup": "9000", "talkgroupLabel": "Fire Scan",
+                                    "frequency": "460375000"}, make_mp3(2.0)))
+        post(client, sdrtrunk_body(CALL, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        calls = client.get("/api/calls").json()
+
+    assert [c["talkgroup_label"] for c in calls] == ["Fire Dispatch", "Palmer FD"]
+
+
+def test_frequency_names_match_within_a_kilohertz():
+    from sdrtrunk_transcriber.config import ChannelsConfig
+    channels = ChannelsConfig()
+    assert channels.name_for(502_425_000) == "Nancy FD"
+    assert channels.name_for(453_300_500) == "Forks Fire"
+    assert channels.name_for(453_310_000) is None
+    assert channels.name_for(None) is None
+
+
 def test_tone_only_call_is_labelled_not_left_as_no_speech(make_client):
     class Silent(FakeBackend):
         def transcribe(self, samples, prompt):

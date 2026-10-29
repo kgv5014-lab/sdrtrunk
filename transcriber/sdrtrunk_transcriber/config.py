@@ -282,6 +282,27 @@ class RecordingsConfig:
 
 
 @dataclass
+class ChannelsConfig:
+    # Calls on these frequencies (MHz) are labelled with the name instead of their talkgroup's label. A
+    # scan list in SDRTrunk sends all its frequencies as one talkgroup (Fire Scan), so this tells the
+    # departments apart.
+    frequency_names: dict = field(default_factory=lambda: {
+        "502.425": "Nancy FD", "453.300": "Forks Fire", "460.375": "Palmer FD", "458.725": "Tatamy FD"})
+
+    def name_for(self, frequency_hz: int | None) -> str | None:
+        """The name for a call's frequency, within 1 kHz, or None."""
+        if not frequency_hz:
+            return None
+        for mhz, name in self.frequency_names.items():
+            try:
+                if abs(float(mhz) * 1_000_000 - frequency_hz) <= 1000:
+                    return str(name)
+            except ValueError:
+                continue
+        return None
+
+
+@dataclass
 class ListenConfig:
     # Live audio for the phone: the map's Listen button and the /listen page.
     enabled: bool = True
@@ -412,6 +433,7 @@ class Config:
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     recordings: RecordingsConfig = field(default_factory=RecordingsConfig)
     listen: ListenConfig = field(default_factory=ListenConfig)
+    channels: ChannelsConfig = field(default_factory=ChannelsConfig)
     base_dir: Path = Path(".")
 
     @property

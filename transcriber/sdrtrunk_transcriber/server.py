@@ -312,7 +312,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "system_id": _text(form, "system"),
             "system_label": _text(form, "systemLabel"),
             "talkgroup": talkgroup,
-            "talkgroup_label": _text(form, "talkgroupLabel"),
+            "talkgroup_label": config.channels.name_for(_int(_text(form, "frequency")))
+                               or _text(form, "talkgroupLabel"),
             "talkgroup_group": _text(form, "talkgroupGroup"),
             "source": source,
             "talker_alias": _text(form, "talkerAlias"),

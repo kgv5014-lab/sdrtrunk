@@ -409,12 +409,19 @@ class Database:
         with self._lock:
             return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
 
-    def unnamed_pages(self, since: float, until: float) -> list[dict]:
-        """Tone-outs not on the station list, oldest first."""
+    def pages_between(self, since: float, until: float) -> list[dict]:
+        """All tone-outs in [since, until), oldest first."""
         with self._lock:
             return [dict(row) for row in self._conn.execute(
-                "SELECT * FROM pages WHERE label IS NULL AND page_time >= ? AND page_time < ? ORDER BY page_time",
+                "SELECT * FROM pages WHERE page_time >= ? AND page_time < ? ORDER BY page_time",
                 (since, until)).fetchall()]
+
+    def rename_pages(self, page_ids: list[int], old: str, new: str):
+        """A learned name that turned out wrong: only the tone-outs that carry it."""
+        with self._lock:
+            self._conn.executemany("UPDATE pages SET label = ? WHERE id = ? AND label = ?",
+                                   [(new, i, old) for i in page_ids])
+            self._conn.commit()
 
     def name_pages(self, page_ids: list[int], label: str):
         with self._lock:

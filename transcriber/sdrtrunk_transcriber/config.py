@@ -77,7 +77,7 @@ class TonesConfig:
     talkgroups: list = field(default_factory=list)
     # Name unlisted tones by themselves: when dispatch names the same station after more than learn_share
     # of a tone pair's tone-outs that name one (last learn_days, at least learn_min_seen times), the pair
-    # is added to the station list.
+    # is added to the station list. Names it learned are checked again and corrected the same way.
     learn: bool = True
     learn_min_seen: int = 3
     learn_share: float = 0.5

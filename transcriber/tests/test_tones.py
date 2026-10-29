@@ -11,6 +11,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from sdrtrunk_transcriber import alerts
+from sdrtrunk_transcriber.codes import CodeBook
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.server import create_app
 from sdrtrunk_transcriber.tones import ToneList, find_pages
@@ -199,3 +200,58 @@ def test_tone_outs_with_no_station_heard_do_not_count_against_a_name():
     assert pick_name([({"EMS 50"}, {50})] * 6 + [({"EMS 4"}, {4})] * 6 + [nothing] * 5, 3, 0.5) is None
     # Exactly half isn't enough.
     assert pick_name([({"EMS 50"}, {50})] * 3 + [({"EMS 4"}, {4})] * 2 + [({"EMS 3"}, {3})], 3, 0.5) is None
+
+
+def test_stations_named_keeps_to_the_countys_stations():
+    from sdrtrunk_transcriber.tones import stations_named
+    stations = {17, 27, 62}
+    # "MS-6" is a garbled EMS 62: there is no station 6
+    assert stations_named("62, Tac 6, ALS, MS-6, Fire 17", stations) == ({"Fire 17"}, {17, 62})
+    assert stations_named("County, 62 committed, BLS", stations) == (set(), {62})
+    assert stations_named("4882, EMS, 27, BLS", stations) == ({"EMS 27"}, {27})
+    # Without the list any number counts, and a leading number isn't trusted
+    assert stations_named("62, Tac 6, MS-6") == ({"EMS 6"}, {6})
+
+
+def test_learned_names_are_corrected_as_more_tone_outs_come_in(tmp_path):
+    from sdrtrunk_transcriber.db import Database
+    from sdrtrunk_transcriber.tones import ToneFinder
+    config = Config()
+    config.base_dir = tmp_path
+    (tmp_path / "paging_tones.csv").write_bytes(
+        b"tone_a,tone_b,name\r\n"
+        b"1093.7,906.3,Station 20 Easton\r\n"
+        b"# Learned 2026-10-28: dispatch named EMS 6 after 3 of 5 tone-outs\r\n"
+        b"718.7,656.3,EMS 6\r\n"
+        b"# Learned 2026-10-28: dispatch named Fire 17 after 4 of 5 tone-outs\r\n"
+        b"2625.0,1187.5,Fire 17\r\n")
+    (tmp_path / "codes.csv").write_text("type,code,meaning\nstation,17,Bethlehem Twp\nstation,20,Easton\n"
+                                        "station,27,Palmer\nstation,62,Cetronia EMS\n", encoding="utf-8")
+    db = Database(tmp_path / "calls.db")
+    now = time.time()
+    said = {
+        (718.7, 656.3): ["62, Tac 6, ALS, MS-6", "EMS 62 committed", "62 and 6, BLS", "EMS 6 for a fall",
+                         "62, Ops 2, ALS"],
+        # The same station said another way isn't a correction
+        (2625.0, 1187.5): ["Fire 17, EMS 17", "Station 17", "EMS 17 respond", "Fire 17, EMS 17"],
+        # Typed in by hand: never changed
+        (1093.7, 906.3): ["EMS 27", "EMS 27", "EMS 27", "EMS 27"],
+    }
+    t = now - 10 * 86400
+    for (a, b), texts in said.items():
+        for text in texts:
+            t += 3600
+            page = db.insert_page({"page_time": t, "received_at": int(t), "tone_a": a, "tone_b": b,
+                                   "tone_a_seconds": 1.0, "channel": "Countywide"})
+            db.name_pages([page], {718.7: "EMS 6", 2625.0: "Fire 17"}.get(a, "Station 20 Easton"))
+            log_call(db, t + 3, "10000", "Countywide", 20.0, text)
+    finder = ToneFinder(config, db, codebook=CodeBook(tmp_path / "codes.csv"))
+
+    assert finder.learn(now) == [(718.7, 656.3, "Station 62")]
+    text = (tmp_path / "paging_tones.csv").read_bytes().decode()
+    assert "718.7,656.3,Station 62\r\n" in text and "(was EMS 6)" in text and "EMS 6\r\n" not in text
+    assert "2625.0,1187.5,Fire 17" in text and "Station 20 Easton" in text
+    labels = Counter(p["label"] for p in db.pages(limit=1000))
+    assert labels == {"Station 62": 5, "Fire 17": 4, "Station 20 Easton": 4}
+    # Settled: nothing changes the next time
+    assert finder.learn(now) == []

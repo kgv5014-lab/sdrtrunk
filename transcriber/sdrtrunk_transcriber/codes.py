@@ -21,6 +21,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .numbers import CALLING, kind_at, not_unit, read_numbers
+
 log = logging.getLogger(__name__)
 
 ONES = {
@@ -74,7 +76,11 @@ ADDRESS_WORD_BEFORE = re.compile(r"(?:route|rt|on|at|of|to|out|in|from|near|by)\
 # A fire or EMS unit named with its number: "Engine 4511" (station 45, unit 11) or "Station 45".
 UNIT_NUMBER = re.compile(r"\b(engine|medic|ladder|tanker|truck|rescue|squad|ambulance|brush|tower|utility|"
                          r"station|company)\s+(\d{2})(\d{2})?\b(?![\d:-])", re.IGNORECASE)
-WRITTEN_TIME = re.compile(r"(?<![\d:])([01]\d|2[0-3]):([0-5]\d)\b(?!:)")
+# "13:46", or "1:46 PM" and "11:16 PM" as the twelve-hour setting writes them.
+WRITTEN_TIME = re.compile(r"(?<![\d:])([01]?\d|2[0-3]):([0-5]\d)\b(?!:)(?:\s*([ap])\.?m\b\.?)?", re.IGNORECASE)
+# Kinds of numbers (numbers.py) that are never a time. A unit only when it calls or is called by County:
+# a number within minutes of the clock is more likely the time than a unit saying "1346, 10-8".
+NOT_A_TIME = ("address", "apartment", "year", "911")
 
 AGENCY_WORDS = {
     "police": ("police", " pd", "pd ", "law", "sheriff"),
@@ -114,9 +120,12 @@ class SuffixRange:
 def normalize_times(text: str, call_time: datetime | None, window_minutes: int) -> str:
     """Rewrites a four-digit 24-hour time ("1346", "13 46") as "13:46" when it is within
     window_minutes of when the call happened, which is how dispatch reads out the time.
-    Numbers after unit words (Engine 1346) or before street words (1346 Main St) are left alone."""
+    Numbers after unit words (Engine 1346), house numbers (1346 Main St, 1346, Butler), and units
+    calling or being called ("County, 1346", "1346 responding") are left alone."""
     if not text or call_time is None or window_minutes <= 0:
         return text
+    # Without the street list: "18:40, Harris" is more likely the time than a house number.
+    numbers = read_numbers(text)
     now = call_time.hour * 60 + call_time.minute
 
     def replace(match):
@@ -125,6 +134,10 @@ def normalize_times(text: str, call_time: datetime | None, window_minutes: int) 
         if min(diff, 24 * 60 - diff) > window_minutes:
             return match.group(0)
         if UNIT_WORD_BEFORE.search(text[:match.start()]) or STREET_WORD_AFTER.match(text[match.end():]):
+            return match.group(0)
+        number = next((n for n in numbers if n.start == match.start()), None)
+        kind, why = (number.kind, number.why) if number and number.kind else kind_at(text, match.start(), match.end())
+        if kind in NOT_A_TIME or (kind == "unit" and why == CALLING):
             return match.group(0)
         return f"{hour:02d}:{minute:02d}"
 
@@ -175,7 +188,10 @@ def normalize_dispatch_time(text: str, call_time: datetime | None, window_minute
     return text
 
 
-def twelve_hour(hour: int, minute: int) -> str:
+def twelve_hour(hour: int, minute: int, half: str | None = None) -> str:
+    """"13:46" -> "1:46 PM". With half ("a" or "p") the hour is already on the twelve-hour clock."""
+    if half:
+        return f"{hour % 12 or 12}:{minute:02d} {half.upper()}M"
     return f"{hour % 12 or 12}:{minute:02d} {'AM' if hour < 12 else 'PM'}"
 
 
@@ -189,9 +205,11 @@ def to_twelve_hour(text: str) -> str:
 
 
 class CodeBook:
-    def __init__(self, path: Path | None, time_window_minutes: int = 3):
+    def __init__(self, path: Path | None, time_window_minutes: int = 3, streets=None):
         self.path = path
         self.time_window_minutes = time_window_minutes
+        # PlaceBook.street_at, so "1360, Butler" is a house number and not a unit or a time.
+        self.streets = streets
         self._lock = threading.Lock()
         self._mtime = None
         self._codes: dict[str, list[Entry]] = {}
@@ -266,6 +284,11 @@ class CodeBook:
             log.error("Could not read %s: %s", self.path, e)
             return []
 
+    def station_numbers(self) -> set[int]:
+        """Fire and EMS station numbers in the list, for naming tone-outs."""
+        self.reload_if_changed()
+        return {int(code) for code in self._stations if code.isdigit()}
+
     def prompt_terms(self) -> list[str]:
         self.reload_if_changed()
         return list(self._prompt)
@@ -303,6 +326,7 @@ class CodeBook:
                                            self._codes)
         agency = _agency(" ".join(c for c in context if c))
         found, seen = [], set()
+        numbers = read_numbers(text, self.streets)
 
         for match in TEN_CODE.finditer(text):
             self._add_code(found, seen, match.start(), f"10-{int(match.group(1))}", match.group(0), agency)
@@ -311,17 +335,25 @@ class CodeBook:
 
         used = []
         for match in WRITTEN_TIME.finditer(text):
+            hour, minute, half = int(match.group(1)), int(match.group(2)), match.group(3)
+            if not half and len(match.group(1)) == 1:
+                continue    # "6:49" with no AM or PM: not how a time is written here
+            if half and not 1 <= hour <= 12:
+                continue
             used.append(match.span())
-            if match.group(0) not in seen:
-                seen.add(match.group(0))
-                found.append((match.start(), {"code": match.group(0), "kind": "time",
-                                              "meaning": twelve_hour(int(match.group(1)), int(match.group(2)))}))
+            shown = match.group(0) if half else f"{match.group(1)}:{match.group(2)}"
+            if shown not in seen:
+                seen.add(shown)
+                found.append((match.start(), {"code": shown, "kind": "time",
+                                              "meaning": twelve_hour(hour, minute, half and half.lower())}))
 
         if agency == "police" and self._police:
             for match in POLICE_CAR.finditer(text):
                 department = self._police.get(match.group(1))
                 car = int(match.group(2))
                 if len(match.group(0)) == 3 and ADDRESS_WORD_BEFORE.search(text[:match.start()]):
+                    continue
+                if not_unit(numbers, match.start(), match.end()):
                     continue
                 if department and car and match.group(0) not in seen and not _inside(match, used):
                     seen.add(match.group(0))
@@ -331,6 +363,8 @@ class CodeBook:
             for pattern in (CALL_SIGN, DASHED_CALL_SIGN):
                 for match in pattern.finditer(text):
                     if _inside(match, used) or (pattern is DASHED_CALL_SIGN and match.group(1) == "10"):
+                        continue
+                    if not_unit(numbers, match.start(), match.end()):
                         continue
                     station = self._stations.get(match.group(1))
                     unit = next((s.meaning for s in self._suffixes if s.low <= int(match.group(2)) <= s.high), None)

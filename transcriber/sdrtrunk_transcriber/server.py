@@ -144,8 +144,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         db = Database(data_path / "calls.db")
-        codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
+        codebook = CodeBook(config.codes_path, config.codes.time_window_minutes, placebook.street_at)
         corrections = CorrectionBook(config.corrections_path)
         hints = LearnedHints(data_path / "calls.db", config.hints) if config.hints.enabled else None
         gazetteer = Gazetteer(config.geo_path, config.places_path) \
@@ -173,7 +173,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 log.exception("Speakers: could not label older calls")
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:
-            tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
+            tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE, codebook)
         map_worker = None
         if config.map.enabled:
             geocoder = Geocoder(db, config.map.area, contact=config.map.contact_email) \

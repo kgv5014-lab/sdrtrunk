@@ -132,6 +132,7 @@ class PlaceBook:
         self._streets: dict[str, dict[str, Place]] = {}
         self._spoken: list[tuple[re.Pattern, str]] = []
         self._exits: set[str] = set()
+        self._stems: set[str] = set()
         self.reload_if_changed()
 
     def reload_if_changed(self):
@@ -182,6 +183,7 @@ class PlaceBook:
         spoken.sort(key=lambda pair: -len(pair[0].pattern))
         self._places, self._by_area, self._streets, self._spoken = places, by_area, streets, spoken
         self._exits = exits
+        self._stems = _street_stems(streets)
         log.info("Loaded %d places in %d municipalities from %s", len(places), len(by_area), self.path)
 
     def _read_rows(self) -> list[dict]:
@@ -248,6 +250,30 @@ class PlaceBook:
         if self._streets:
             text = self._fix_streets(text, set(self.areas_for(*context)))
         return text
+
+    def street_at(self, text: str, position: int) -> bool:
+        """True when a street in the list starts at position, with or without its street word: "Butler"
+        and "Butler Street" in "1360 Butler", "BethPike" glued. Tells a house number from a unit number."""
+        self.reload_if_changed()
+        if not self._stems:
+            return False
+        words = []
+        for word in WORD.finditer(text, position, position + 60):
+            if text[(words[-1].end() if words else position):word.start()].strip():
+                break   # punctuation ends the name
+            words.append(word)
+            if len(words) == 3:
+                break
+        if words and words[0].group(0).lower() in DIRECTIONS and len(words) > 1:
+            words = words[1:]
+        # Whisper capitalizes names; "2851, back in service" has no street in it.
+        if not words or not (words[0].group(0)[0].isupper() or words[0].group(0)[0].isdigit()):
+            return False
+        for count in range(len(words), 0, -1):
+            stem = " ".join(w.group(0).lower().rstrip(".") for w in words[:count])
+            if stem in self._stems or stem.replace(" ", "") in self._stems:
+                return True
+        return False
 
     def unknown_streets(self, text: str) -> list[str]:
         """Street names in a finished transcript that aren't in the list, such as "Northbampton Street",
@@ -329,6 +355,33 @@ class PlaceBook:
                 if best is None or score > best[0]:
                     best = (score, window[0][0], place.name)
         return (best[1], best[2]) if best else None
+
+
+# Street names that are also radio words, so "2851, County" or "2851, Engine" isn't an address.
+RADIO_WORDS = {"county", "engine", "medic", "ems", "fire", "station", "unit", "command", "ops", "tac", "copy",
+               "clear", "responding", "chief", "rescue", "ladder", "tanker", "truck", "squad", "car", "dispatch",
+               "go", "ahead", "available", "service", "scene", "en", "route", "ok", "okay", "yes", "no", "thank",
+               "thanks", "you", "i", "we", "and", "on", "at", "to", "the", "is", "for", "with", "be", "that",
+               "patient", "ambulance", "als", "bls", "police", "pd", "ten", "one", "two", "three", "four", "five",
+               "hospital", "cancel", "disregard", "negative", "affirmative", "roger", "standby", "hold", "hours",
+               "am", "pm", "battalion", "box", "alarm", "alert", "second", "tone", "tones", "radio", "phone",
+               "officer", "driver", "sergeant", "sarge", "lieutenant", "captain", "corporal", "trooper", "detective",
+               "supervisor", "crew", "team", "office", "operator", "partner", "tower", "brush", "utility"}
+DIRECTIONS = {"north", "south", "east", "west", "n", "s", "e", "w"}
+
+
+def _street_stems(streets: dict[str, dict[str, "Place"]]) -> set[str]:
+    """"butler street" gives "butler street", "butler" and "butlerstreet"."""
+    stems = set()
+    for suffix, names in streets.items():
+        for key in names:
+            stem = key[:-len(suffix) - 1].strip()
+            if stem.split(" ", 1)[0] in DIRECTIONS and " " in stem:
+                stem = stem.split(" ", 1)[1]
+            if len(stem) < 3 or stem in RADIO_WORDS or stem in GENERIC_WORDS or stem.isdigit():
+                continue
+            stems.update((key, stem, f"{stem}{suffix}".replace(" ", "")))
+    return stems
 
 
 def _words_before(text: str, end: int, floor: int) -> list[tuple[int, str]]:

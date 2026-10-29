@@ -23,6 +23,8 @@ import io.github.dsheirer.dsp.filter.iir.SinglePoleIirFilter;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceEvent;
 import java.time.Duration;
+import java.util.Arrays;
+import java.util.function.LongSupplier;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -36,6 +38,14 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(AdaptiveSquelch.class);
     private static final long AUTO_ADJUST_PERIOD_MS = Duration.ofSeconds(5).toMillis();
+    //With auto-track on, a squelch that stays open this long is taken to be open on noise (the threshold was set
+    //below the noise floor, so auto-track never gets a squelched reading to learn from) and is raised above it.
+    private static final long STUCK_OPEN_MS = Duration.ofSeconds(30).toMillis();
+    //Power readings (two per second) kept while open: the quiet ones among them are the noise floor.
+    private static final int STUCK_OPEN_READINGS = 60;
+    private static final float STUCK_OPEN_NOISE_PERCENTILE = 0.2f;
+    //Threshold set this far above the noise floor: 6 dB
+    private static final float STUCK_OPEN_BUFFER = 3.98f;
     private SinglePoleIirFilter mFilter;
     private float mPower = 0.0f;
     private boolean mSquelch;
@@ -48,6 +58,10 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
     private boolean mAutoTrackNoiseFloor;
     private long mLastAutoAdjustTimestamp;
     private Listener<SourceEvent> mSourceEventListener;
+    private final LongSupplier mClock;
+    private long mUnmutedSince;
+    private final float[] mOpenReadings = new float[STUCK_OPEN_READINGS];
+    private int mOpenReadingCount = 0;
 
     /**
      * Constructs an instance
@@ -64,10 +78,20 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
      */
     public AdaptiveSquelch(float alpha, float squelchThreshold, boolean autoTrack)
     {
+        this(alpha, squelchThreshold, autoTrack, System::currentTimeMillis);
+    }
+
+    /**
+     * Constructs an instance with a clock, for testing.
+     */
+    AdaptiveSquelch(float alpha, float squelchThreshold, boolean autoTrack, LongSupplier clock)
+    {
+        mClock = clock;
+        mUnmutedSince = clock.getAsLong();
         mFilter = new SinglePoleIirFilter(alpha);
         setSquelchThreshold(squelchThreshold);
         mAutoTrackNoiseFloor = autoTrack;
-        mLastAutoAdjustTimestamp = System.currentTimeMillis();
+        mLastAutoAdjustTimestamp = clock.getAsLong();
         mPowerLevelBroadcastThreshold = 25000; //Based on a default sample rate of 50 kHz, so 2x/second
     }
 
@@ -169,6 +193,12 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
     {
         mSquelch = squelch;
         mSquelchChanged = true;
+
+        if(!squelch)
+        {
+            mUnmutedSince = mClock.getAsLong();
+            mOpenReadingCount = 0;
+        }
     }
 
     /**
@@ -210,6 +240,10 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
             {
                 adjustSquelchThreshold();
             }
+            else
+            {
+                checkStuckOpen();
+            }
         }
     }
 
@@ -231,11 +265,40 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
 
             mNoiseFloor = mPower;
 
-            if((System.currentTimeMillis() - mLastAutoAdjustTimestamp) > AUTO_ADJUST_PERIOD_MS)
+            if((mClock.getAsLong() - mLastAutoAdjustTimestamp) > AUTO_ADJUST_PERIOD_MS)
             {
                 setSquelchThreshold(mNoiseFloor + mSquelchBuffer, false);
-                mLastAutoAdjustTimestamp = System.currentTimeMillis();
+                mLastAutoAdjustTimestamp = mClock.getAsLong();
             }
+        }
+    }
+
+    /**
+     * With auto-track on, raises the threshold above the noise floor when the squelch has been open for longer
+     * than any transmission, meaning the threshold sits below the noise.
+     */
+    private void checkStuckOpen()
+    {
+        if(!mAutoTrackNoiseFloor)
+        {
+            return;
+        }
+
+        mOpenReadings[mOpenReadingCount % STUCK_OPEN_READINGS] = mPower;
+        mOpenReadingCount++;
+
+        if((mClock.getAsLong() - mUnmutedSince) > STUCK_OPEN_MS && mOpenReadingCount >= STUCK_OPEN_READINGS / 2)
+        {
+            float[] readings = Arrays.copyOf(mOpenReadings, Math.min(mOpenReadingCount, STUCK_OPEN_READINGS));
+            Arrays.sort(readings);
+            float noise = readings[(int)(readings.length * STUCK_OPEN_NOISE_PERCENTILE)];
+            float threshold = noise * STUCK_OPEN_BUFFER;
+            mLog.info("Squelch open on noise for " + (STUCK_OPEN_MS / 1000) + " seconds - raising threshold from " +
+                String.format("%.1f", getSquelchThreshold()) + " to " + String.format("%.1f", toDb(threshold)) + " dB");
+            //Resetting the noise floor lets auto-track learn its buffer again once the squelch closes
+            setSquelchThreshold(threshold, true);
+            mUnmutedSince = mClock.getAsLong();
+            mOpenReadingCount = 0;
         }
     }
 

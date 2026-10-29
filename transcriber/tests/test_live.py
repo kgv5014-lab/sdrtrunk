@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+import time
 
 import av
 import numpy as np
@@ -100,7 +101,9 @@ def test_upload_reaches_a_listening_phone_and_the_talkgroup_list(make_client):
     client, _ = make_client(api_key="secret")
     with client:
         listener = client.app.state.live.join("phone", {"1203"})
-        assert post(client, sdrtrunk_body(CALL, make_mp3(2.0))).status_code == 200
+        # A call from just now: the talkgroup list only covers the last week, and CALL's date ages out.
+        call = {**CALL, "dateTime": str(int(time.time()))}
+        assert post(client, sdrtrunk_body(call, make_mp3(2.0))).status_code == 200
         talkgroups = client.get("/listen/talkgroups").json()
         page = client.get("/listen")
 

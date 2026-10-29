@@ -563,6 +563,8 @@ starts, set `sdrtrunk` under `[watchdog]` in `config.toml` to its `bin\sdr-trunk
   steady tones such as paging tones are cut out, and the speech is brought to a standard level so quiet
   channels transcribe as well as loud ones. The saved recording is not changed. The log line for a call
   says how many seconds of tones were cut.
+* Calls that are only a Morse-code station ID (many short beeps on one pitch, like Nancy FD's every
+  half hour) are not transcribed and are left out of the call log (`hide_station_ids` under `[audio]`).
 * A good vocabulary list helps more than any other setting with unit and street names.
 * Clean decoding matters most: transcripts are only as good as the audio SDRTrunk produces.
 

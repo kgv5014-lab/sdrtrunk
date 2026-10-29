@@ -124,3 +124,33 @@ def test_short_call_is_not_touched_by_hiss_reducer():
     noisy = hiss(0.3, amplitude=0.05)
     out, applied = audio.reduce_hiss(noisy)
     assert not applied and out is noisy
+
+
+def morse(text, wpm=18, freq=812.0, noise=0.02, seed=3):
+    """Morse code on one pitch with carrier hiss, like a station ID on an FM channel."""
+    codes = {"W": ".--", "N": "-.", "C": "-.-.", "1": ".----", "2": "..---", "3": "...--", "4": "....-"}
+    unit = 1.2 / wpm
+    pieces = [np.zeros(int(0.6 * RATE), dtype=np.float32)]
+    for letter in text:
+        for mark in codes[letter]:
+            pieces += [tone(freq, unit * (3 if mark == "-" else 1), 0.5), np.zeros(int(unit * RATE), np.float32)]
+        pieces.append(np.zeros(int(2 * unit * RATE), dtype=np.float32))
+    signal = np.concatenate(pieces)
+    return signal + np.random.default_rng(seed).normal(0, noise, len(signal)).astype(np.float32)
+
+
+def test_morse_station_id_is_found():
+    assert audio.is_morse_id(audio.band_pass(morse("WNC1234")))
+    assert audio.is_morse_id(audio.band_pass(morse("WNC1234", wpm=12, freq=1000.0)))
+
+
+def test_alert_beeps_pages_and_voice_are_not_morse():
+    beeps = np.concatenate([np.concatenate([tone(1000, 0.5), np.zeros(int(0.3 * RATE), np.float32)])] * 5)
+    page = np.concatenate([tone(853.2, 1.0), tone(1304.0, 3.0), voice(4.0)])
+    assert not audio.is_morse_id(audio.band_pass(beeps))
+    assert not audio.is_morse_id(audio.band_pass(page))
+    for seed in range(5):
+        assert not audio.is_morse_id(audio.band_pass(voice(6.0, seed=seed)))
+    # A few short chirps on a call (talk-permit tones) are far fewer beeps than an ID
+    chirps = np.concatenate([voice(1.0), tone(1000, 0.1), voice(1.0), tone(1000, 0.1), voice(1.0)])
+    assert not audio.is_morse_id(audio.band_pass(chirps))

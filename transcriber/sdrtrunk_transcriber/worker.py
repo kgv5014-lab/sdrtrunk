@@ -27,6 +27,8 @@ PROMPT_LIMIT = 600
 # A call with no words and at least this much tone (paging tones, alert beeps) is labelled tones only.
 TONES_ONLY_MIN_S = 1.0
 TONES_ONLY = "tones only"
+# Calls that are only a Morse-code station ID are skipped with this label and left out of the call log.
+STATION_ID = "station ID"
 LAST_RANK = 1_000_000
 # The sample terms that vocabulary.example.txt used to ship with. Left in place, Whisper echoes them
 # back on unclear audio ("10-4, Main Street, Battalion 1"), so they are ignored.
@@ -184,6 +186,11 @@ class TranscriptionWorker:
 
         if duration < self.config.transcription.min_duration_s:
             self.db.update_call(call_id, status="skipped", duration_s=duration, error="too short")
+            return
+
+        if self.config.audio.hide_station_ids and audio.is_morse_id(audio.band_pass(samples)):
+            self.db.update_call(call_id, status="skipped", duration_s=duration, error=STATION_ID)
+            log.info("Call %d TG %s (%.1fs): Morse station ID, hidden", call_id, call["talkgroup"], duration)
             return
 
         tone_s = 0.0

@@ -15,14 +15,19 @@ from sdrtrunk_transcriber.server import SUCCESS_REPLY, create_app
 BOUNDARY = "--sdrtrunk-sdrtrunk-sdrtrunk"
 
 
-def make_mp3(seconds: float, rate: int = 8000) -> bytes:
-    """An 8 kHz mono MP3 tone, like SDRTrunk's temporary stream recordings."""
+def make_mp3(seconds: float, rate: int = 8000, keying=None) -> bytes:
+    """An 8 kHz mono MP3 tone, like SDRTrunk's temporary stream recordings. keying, a function of
+    time in seconds, turns the tone on and off (Morse code)."""
     buffer = io.BytesIO()
     with av.open(buffer, "w", format="mp3") as container:
         stream = container.add_stream("libmp3lame", rate=rate, layout="mono")
         samples = int(seconds * rate)
         import numpy as np
-        tone = (0.3 * np.sin(2 * math.pi * 440 * np.arange(samples) / rate) * 32767).astype("<i2")
+        t = np.arange(samples) / rate
+        tone = 0.3 * np.sin(2 * math.pi * 440 * t)
+        if keying:
+            tone = tone * keying(t)
+        tone = (tone * 32767).astype("<i2")
         frame = av.AudioFrame.from_ndarray(tone.reshape(1, -1), format="s16", layout="mono")
         frame.sample_rate = rate
         for packet in stream.encode(frame):
@@ -358,6 +363,22 @@ def test_tone_only_call_is_labelled_not_left_as_no_speech(make_client):
     assert call["status"] == "done"
     assert call["transcript"] == ""
     assert call["error"] == "tones only"
+
+
+def test_morse_station_id_is_hidden_from_the_call_log(make_client):
+    client, fake = make_client()
+    with client:
+        # A dit (60 ms) then a gap every 180 ms, like Nancy FD's station ID
+        post(client, sdrtrunk_body(CALL, make_mp3(5.0, keying=lambda t: (t % 0.18) < 0.06)))
+        post(client, sdrtrunk_body(CALL, make_mp3(3.0)))
+        assert client.app.state.worker.wait_idle()
+        calls = client.get("/api/calls").json()
+        hidden = client.app.state.db.get_call(1)
+
+    assert len(calls) == 1 and calls[0]["id"] == 2
+    assert hidden["status"] == "skipped"
+    assert hidden["error"] == "station ID"
+    assert len(fake.prompts) == 1
 
 
 def test_codes_are_cleaned_up_and_labelled(make_client, tmp_path):

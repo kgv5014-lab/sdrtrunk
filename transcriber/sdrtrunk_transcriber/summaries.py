@@ -8,6 +8,7 @@ together. Summaries are kept in their own table and never change how calls are g
 import hashlib
 import json
 import logging
+import re
 import threading
 import time
 from datetime import datetime
@@ -38,6 +39,12 @@ INCIDENT_SCHEMA = {
     },
     "required": ["summary", "tags", "status"],
 }
+# A later pass also says what changed, for the incident's update notes.
+INCIDENT_UPDATE_SCHEMA = {
+    "type": "object",
+    "properties": {**INCIDENT_SCHEMA["properties"], "update": {"type": "string"}},
+    "required": ["summary", "tags", "status", "update"],
+}
 CALL_SCHEMA = {
     "type": "object",
     "properties": {
@@ -62,11 +69,33 @@ INCIDENT_PROMPT = (
     "fine). Set \"status\" from the latest calls: active, under control, cleared, canceled, or unknown."
 )
 
+INCIDENT_UPDATE_PROMPT = (
+    "These radio calls are about one incident{place}{what}.\n{pages}{helicopters}\n"
+    "Summary so far ({clock}): {previous} Status: {status}.\n\n"
+    "Calls (the ones marked NEW came after that summary):\n{calls}\n\n"
+    "Write \"summary\": one or two short sentences, at most {words} words, saying what happened, where, "
+    "which units responded and the latest status. Pick \"tags\" that the calls clearly support (none is "
+    "fine). Set \"status\" from the latest calls: active, under control, cleared, canceled, or unknown.\n"
+    "Write \"update\": if the NEW calls change the incident in an important way, one short line of at most "
+    "12 words saying what changed, for example \"Second alarm called.\", \"Fire knocked down.\", "
+    "\"Patient transported to St. Luke's Anderson.\", \"Entrapment, extrication under way.\", "
+    "\"Medevac requested.\", \"Road closed both directions.\", \"Units cleared.\" or \"Call canceled.\". "
+    "Only say what the NEW calls say. Leave \"update\" empty (\"\") when they are routine, like units "
+    "acknowledging, responding or asking to repeat."
+)
+
 CALL_PROMPT = (
     "One radio call on {talkgroup} at {clock}{who}:\n{transcript}\n\n"
     "Write \"summary\": one short sentence, at most 20 words, saying what this call is about. "
     "Pick \"tags\" that the call clearly supports (none is fine)."
 )
+
+# Update notes the model sometimes writes when nothing really changed.
+NOTHING_NEW = re.compile(r"^\W*(none|n/?a|no (new|further|significant|important|major)\b|nothing\b|"
+                         r"(units? )?(continue|continues|continuing|remain|remains|still)\b|same\b)", re.I)
+UPDATE_WORDS = 15
+# When the model leaves the note empty but the status moved on, this says so.
+STATUS_NOTES = {"under control": "Under control.", "cleared": "Units cleared.", "canceled": "Call canceled."}
 
 # How long to wait before trying again after Ollama could not be reached or had no model yet.
 RETRY_S = 60
@@ -279,6 +308,9 @@ class Summarizer:
         stored = self.db.get_summary("incident", incident_id)
         if stored and stored["basis"] == basis:
             return
+        # Calls after the last summary are new; the first summary has nothing to compare with.
+        last_seen = stored.get("last_call_id") if stored and stored["summary"] else None
+        new_ids = {c["id"] for c in calls if last_seen is not None and c["id"] > last_seen}
         # A long incident: the first calls (the dispatch) and the latest ones matter most.
         limit = self.settings.max_calls
         if len(calls) > limit:
@@ -286,15 +318,29 @@ class Summarizer:
         else:
             keep = calls
         pages = self.db.pages(incident["first_time"] - 600, incident["first_time"] + 60, limit=5)
-        prompt = INCIDENT_PROMPT.format(
+        values = dict(
             place=f" at {incident['label']}" if incident["label"] else "",
             what=f" (sorted as: {incident['nature']})" if incident["nature"] else "",
             pages="\n".join(f"Tone-out {_clock(p['page_time'])}: {p['label']}" for p in pages if p["label"]),
-            calls="\n".join(_call_line(c) for c in keep),
             words=self.settings.incident_words,
         )
+        if new_ids:
+            # Medevac landings near it (the ADS-B receiver), so "patient flown out" can be told.
+            from .aircraft import incident_helicopters  # aircraft -> incidents -> worker -> here
+            landings = incident_helicopters(self.db, [incident_id], self.config.aircraft.learn_landings)
+            prompt = INCIDENT_UPDATE_PROMPT.format(
+                **values,
+                helicopters="".join(f"\n{h['text']} near the scene." for h in landings.get(incident_id, [])
+                                    if h["kind"] == "medevac"),
+                clock=_clock(stored["made_at"]), previous=stored["summary"], status=stored["status"] or "unknown",
+                calls="\n".join(("NEW " if c.get("id") in new_ids else "") + _call_line(c) for c in keep),
+            )
+            schema = INCIDENT_UPDATE_SCHEMA
+        else:
+            prompt = INCIDENT_PROMPT.format(**values, calls="\n".join(_call_line(c) for c in keep))
+            schema = INCIDENT_SCHEMA
         started = time.perf_counter()
-        answer = self.client.ask(prompt, INCIDENT_SCHEMA)
+        answer = self.client.ask(prompt, schema)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         status = answer.get("status") if answer.get("status") in STATUSES else "unknown"
         self.db.store_summary({
@@ -302,8 +348,17 @@ class Summarizer:
             "summary": clip_words(answer.get("summary", ""), self.settings.incident_words),
             "tags": ",".join(clean_tags(answer.get("tags"))), "status": status,
             "model": self.settings.model, "made_at": int(time.time()), "ms": elapsed_ms,
+            "last_call_id": max(c["id"] for c in calls),
         })
         log.info("Summaries: incident %d in %d ms: %s", incident_id, elapsed_ms, answer.get("summary"))
+        if new_ids:
+            note = update_note(answer.get("update"), status, stored["status"],
+                               self.db.incident_updates([incident_id]).get(incident_id, []))
+            if note:
+                newest = max(c["call_time"] for c in calls if c["id"] in new_ids)
+                self.db.add_incident_update({"incident_id": incident_id, "time": newest, "note": note,
+                                             "status": status, "made_at": int(time.time())})
+                log.info("Summaries: incident %d update: %s", incident_id, note)
 
     def summarize_call(self, call_id: int):
         call = self.db.get_call(call_id)
@@ -329,6 +384,30 @@ class Summarizer:
             "model": self.settings.model, "made_at": int(time.time()), "ms": elapsed_ms,
         })
         log.info("Summaries: call %d in %d ms: %s", call_id, elapsed_ms, answer.get("summary"))
+
+
+def update_note(text, status: str, previous_status: str | None, earlier: list[dict]) -> str | None:
+    """The note to keep from the model's "update", or None: routine traffic and repeats are dropped. When it
+    wrote nothing but the incident went under control, cleared or canceled, that is the note."""
+    note = " ".join(str(text or "").split()).strip(" -")
+    if NOTHING_NEW.match(note) or len(note) < 4:
+        note = ""
+    if not note and status != previous_status:
+        note = STATUS_NOTES.get(status, "")
+    if not note:
+        return None
+    note = clip_words(note, UPDATE_WORDS)
+    note = note[0].upper() + note[1:]
+    if not note.endswith((".", "!", "?", "…")):
+        note += "."
+    if any(_same(note, e["note"]) for e in earlier[-3:]):
+        return None
+    return note
+
+
+def _same(a: str, b: str) -> bool:
+    words = lambda t: re.sub(r"[^a-z0-9 ]", "", t.lower()).split()
+    return words(a) == words(b)
 
 
 def _clock(t) -> str:
@@ -365,3 +444,8 @@ def attach(summaries: dict, item: dict, basis: str | None = None):
     item["summary_tags"] = [t for t in (stored["tags"] or "").split(",") if t]
     item["summary_status"] = stored["status"]
     item["summary_current"] = basis is None or stored["basis"] == basis
+
+
+def attach_updates(updates: dict, incident: dict):
+    """Adds "updates", the incident's change notes oldest first, for the API."""
+    incident["updates"] = [{"time": u["time"], "note": u["note"]} for u in updates.get(incident["id"], [])]

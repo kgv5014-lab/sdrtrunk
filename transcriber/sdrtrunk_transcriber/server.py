@@ -50,7 +50,7 @@ from .geocode import Geocoder
 from .incidents import MapWorker, highlights, services_of
 from .zones import ZoneWatch, read_zones
 from .speakers import SpeakerBook
-from .summaries import Summarizer, attach as attach_summary, incident_basis
+from .summaries import Summarizer, attach as attach_summary, attach_updates, incident_basis
 from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
 from .tones import ToneFinder
@@ -595,7 +595,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             incident["helicopters"] = helicopters.get(incident["id"], [])
         if request.app.state.summarizer:
             summaries = db.summaries("incident", [incident["id"] for incident in incidents])
+            # What changed along the way ("Second alarm called"), written with each later summary.
+            updates = db.incident_updates([incident["id"] for incident in incidents])
             for incident in incidents:
+                attach_updates(updates, incident)
                 calls = sorted({c["id"]: c for c in incident["calls"] if c["transcript"]}.values(),
                                key=lambda c: (c["call_time"], c["id"]))
                 attach_summary(summaries, incident, incident_basis(calls))

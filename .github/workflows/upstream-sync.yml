@@ -1,0 +1,67 @@
+# Weekly check for new fixes in the original SDRTrunk (DSheirer/sdrtrunk).
+# If they merge cleanly with SDRTrunk Plus, opens a pull request to master.
+# If they clash with our changes, the run fails and lists the clashing files.
+name: Check original SDRTrunk for updates
+
+on:
+  schedule:
+    - cron: '0 12 * * 1'   # Mondays, 12:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    if: github.repository == 'kgv5014-lab/sdrtrunk'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      BRANCH: upstream-sync
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: master
+          fetch-depth: 0
+
+      - name: Fetch original SDRTrunk
+        run: |
+          git remote add upstream https://github.com/DSheirer/sdrtrunk.git
+          git fetch upstream master
+          NEW=$(git rev-list --count HEAD..upstream/master)
+          echo "NEW=$NEW" >> "$GITHUB_ENV"
+          echo "New updates in the original SDRTrunk: $NEW" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Merge
+        if: env.NEW != '0'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          if ! git merge --no-ff --no-edit upstream/master; then
+            {
+              echo "### The new updates clash with SDRTrunk Plus changes"
+              echo "Ask Claude to merge the original SDRTrunk by hand. Clashing files:"
+              git diff --name-only --diff-filter=U | sed 's/^/- /'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          git push --force origin "$BRANCH"
+
+      - name: Open pull request
+        if: env.NEW != '0'
+        run: |
+          if [ -n "$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            echo "Pull request already open; updated it." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo "Updates from the original SDRTrunk that merge cleanly with SDRTrunk Plus:"
+            echo
+            git log --no-merges --format='- %s' master..upstream/master
+            echo
+            echo "After merging, run update-sdrtrunk-plus.bat to install."
+          } > body.md
+          gh pr create --base master --head "$BRANCH" \
+            --title "Bring in $NEW new updates from the original SDRTrunk" --body-file body.md

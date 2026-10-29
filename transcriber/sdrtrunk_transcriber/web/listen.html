@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Listen live</title>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --warn: #b26a00; --live: #d33c2f; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --warn: #f0a640; --live: #ff6b5e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.45 system-ui, sans-serif; }
+  header { border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+  h1 { font-size: 16px; margin: 0; }
+  h2 { font-size: 13px; color: var(--muted); margin: 18px 0 8px; font-weight: 600; }
+  a { color: var(--accent); }
+  main { max-width: 560px; margin: 0 auto; padding: 12px 16px 40px; }
+  button { background: var(--card); color: var(--accent); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
+  #play { width: 100%; padding: 16px; font-size: 18px; font-weight: 600; background: var(--accent); color: #fff; border: 0; border-radius: 12px; }
+  #play.on { background: var(--live); }
+  .now { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 12px; min-height: 48px; }
+  .now b { font-size: 17px; }
+  .muted { color: var(--muted); font-size: 13px; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--live); margin-right: 6px; animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) { .dot { animation: none; } }
+  .tgs { display: flex; flex-direction: column; gap: 2px; }
+  .tgs label { display: flex; gap: 10px; align-items: center; padding: 8px 4px; border-bottom: 1px solid var(--line); }
+  .tgs input { width: 20px; height: 20px; }
+  .tgs span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  ul { padding-left: 20px; margin: 4px 0; }
+  .link { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 10px; }
+  .link code { overflow-wrap: anywhere; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Listen live</h1>
+  <a href="map" class="private" hidden>Map</a>
+  <a href="./" class="private" hidden>Call log</a>
+</header>
+<main>
+  <button id="play">▶ Listen</button>
+  <div class="now" id="now"><span class="muted">Pick talkgroups below, then press Listen. Each call plays a few seconds after it ends, and keeps playing with the phone locked.</span></div>
+
+  <h2>Talkgroups</h2>
+  <div class="row"><button id="all">All</button><button id="none">None</button></div>
+  <div class="tgs" id="tgs"><span class="muted">Loading…</span></div>
+
+  <h2>Just played</h2>
+  <ul id="recent"><li class="muted">Nothing yet</li></ul>
+
+  <section id="secret" hidden>
+    <h2>Link for when NordVPN is on</h2>
+    <div class="link">
+      <div id="secret-text" class="muted"></div>
+      <div class="row" style="margin-top:6px"><button id="copy">Copy link</button><button id="rotate">Make a new link</button></div>
+      <div class="muted" style="margin-top:6px">Anyone with this link can listen, but can't see the map, transcripts or settings. Make a new link if it gets out; the old one stops working.</div>
+    </div>
+  </section>
+</main>
+<audio id="player" preload="none"></audio>
+<script>
+const $ = id => document.getElementById(id);
+const key = new URLSearchParams(location.search).get("key") || "";
+const withKey = (path, params = {}) => {
+  const q = new URLSearchParams(params);
+  if (key) q.set("key", key);
+  const s = q.toString();
+  return s ? `${path}?${s}` : path;
+};
+const store = {
+  get(name, fallback) { try { const v = localStorage.getItem(name); return v === null ? fallback : JSON.parse(v); } catch { return fallback; } },
+  set(name, value) { try { localStorage.setItem(name, JSON.stringify(value)); } catch {} },
+};
+const listenerId = Math.random().toString(36).slice(2, 12);
+const player = $("player");
+let talkgroups = [];
+let chosen = new Set(store.get("listen-tgs", []));
+let playing = false, poll = null;
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const clock = t => t ? new Date(t * 1000).toLocaleTimeString([], {hour: "numeric", minute: "2-digit", second: "2-digit"}) : "";
+
+async function loadTalkgroups() {
+  const r = await fetch(withKey("listen/talkgroups"));
+  if (!r.ok) { $("tgs").innerHTML = `<span class="muted">Could not load talkgroups (${r.status}).</span>`; return; }
+  talkgroups = await r.json();
+  if (!store.get("listen-tgs", null)) chosen = new Set(talkgroups.map(t => t.talkgroup));
+  $("tgs").innerHTML = talkgroups.length ? talkgroups.map(t => `<label><input type="checkbox" value="${esc(t.talkgroup)}" ${chosen.has(t.talkgroup) ? "checked" : ""}>
+      <span>${esc(t.label || t.talkgroup)}<br><span class="muted">${t.calls} call${t.calls === 1 ? "" : "s"} this week · last ${clock(t.last_call)}</span></span></label>`).join("")
+    : `<span class="muted">No calls in the last week yet.</span>`;
+}
+
+$("tgs").addEventListener("change", e => {
+  if (e.target.checked) chosen.add(e.target.value); else chosen.delete(e.target.value);
+  saveAndRetune();
+});
+$("all").onclick = () => { chosen = new Set(talkgroups.map(t => t.talkgroup)); loadTalkgroups(); saveAndRetune(); };
+$("none").onclick = () => { chosen = new Set(); loadTalkgroups(); saveAndRetune(); };
+
+let retune = null;
+function saveAndRetune() {
+  store.set("listen-tgs", [...chosen]);
+  if (!playing) return;
+  clearTimeout(retune);
+  retune = setTimeout(start, 600);
+}
+
+function streamUrl() {
+  // Every talkgroup ticked = all, including ones that show up later.
+  const all = talkgroups.length && talkgroups.every(t => chosen.has(t.talkgroup));
+  return withKey("listen/stream.mp3", {id: listenerId, tg: all ? "" : [...chosen].join(",") || "none", t: Date.now()});
+}
+
+function start() {
+  playing = true;
+  player.src = streamUrl();
+  player.play().catch(err => { $("now").innerHTML = `<span class="muted">Couldn't start: ${esc(err.message)}. Press Listen again.</span>`; stop(); });
+  $("play").textContent = "■ Stop";
+  $("play").classList.add("on");
+  clearInterval(poll);
+  poll = setInterval(refresh, 2000);
+  refresh();
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.setActionHandler("pause", stop);
+    navigator.mediaSession.setActionHandler("stop", stop);
+    navigator.mediaSession.setActionHandler("play", start);
+  }
+}
+
+function stop() {
+  playing = false;
+  player.pause();
+  player.removeAttribute("src");
+  player.load();
+  $("play").textContent = "▶ Listen";
+  $("play").classList.remove("on");
+  clearInterval(poll);
+  $("now").innerHTML = `<span class="muted">Stopped.</span>`;
+}
+
+$("play").onclick = () => playing ? stop() : start();
+
+// The stream should never end. If the phone drops it (lost signal, Wi-Fi to cellular), reconnect.
+let retries = 0;
+player.addEventListener("error", () => { if (playing && retries++ < 20) setTimeout(start, 2000); });
+player.addEventListener("ended", () => { if (playing) setTimeout(start, 1000); });
+player.addEventListener("playing", () => { retries = 0; });
+
+async function refresh() {
+  let now;
+  try { now = await (await fetch(withKey("listen/now", {id: listenerId}))).json(); } catch { return; }
+  const p = now.playing;
+  $("now").innerHTML = p
+    ? `<span class="dot"></span><b>${esc(p.label)}</b> <span class="muted">${clock(p.call_time)} · ${p.seconds}s${now.waiting ? ` · ${now.waiting} more waiting` : ""}</span>`
+    : `<span class="dot"></span><span class="muted">Live. Waiting for the next call…</span>`;
+  $("recent").innerHTML = now.recent.length
+    ? now.recent.map(c => `<li>${esc(c.label)} <span class="muted">${clock(c.call_time)} · ${c.seconds}s</span></li>`).join("")
+    : `<li class="muted">Nothing yet</li>`;
+  if ("mediaSession" in navigator) {
+    navigator.mediaSession.metadata = new MediaMetadata({title: p ? p.label : "Listening live", artist: "SDRTrunk"});
+  }
+}
+
+// Only on the private page (Tailscale or this PC): the map links and the secret link for the public page.
+async function loadSecret() {
+  if (key) return;
+  const r = await fetch("api/listen/link").catch(() => null);
+  if (!r || !r.ok) return;
+  document.querySelectorAll(".private").forEach(el => el.hidden = false);
+  showSecret(await r.json());
+}
+function showSecret(link) {
+  // Opened over Tailscale: the Funnel link is this same address on port 8443 (see setup-listen-link.bat).
+  if (!link.url && link.port && location.hostname.endsWith(".ts.net")) {
+    link.url = `https://${location.hostname}:8443/listen?key=${encodeURIComponent(link.key)}`;
+  }
+  $("secret").hidden = false;
+  $("secret-text").innerHTML = link.url
+    ? `<code>${esc(link.url)}</code>`
+    : `Not set up yet. Run setup-listen-link.bat on the PC once, then reload this page.`;
+  $("copy").hidden = !link.url;
+  $("copy").onclick = () => navigator.clipboard.writeText(link.url).then(() => $("copy").textContent = "Copied");
+}
+$("rotate").onclick = async () => {
+  if (!confirm("Make a new link? The old one stops working right away.")) return;
+  const r = await fetch("api/listen/new-link", {method: "POST"});
+  if (r.ok) showSecret(await r.json());
+};
+
+loadTalkgroups();
+loadSecret();
+</script>
+</body>
+</html>

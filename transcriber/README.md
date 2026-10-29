@@ -324,6 +324,27 @@ enabled = true
 
 Cameras are only shown live: PennDOT doesn't allow recording them, so nothing is saved. Data is © PennDOT.
 
+## Listen live on your phone
+
+The map's **🔊 Listen** button (or `/listen`) plays new calls as one live audio stream, like a radio app,
+so it keeps playing with the phone locked. Tick the talkgroups you want; each call plays a few seconds
+after it ends. The page remembers your picks.
+
+Two ways to reach it from the iPhone:
+
+- **Over Tailscale** (private): with the Tailscale app on, open the map and press Listen.
+- **With NordVPN on** (the iPhone runs one VPN at a time): run `setup-listen-link.bat` once on the PC.
+  It uses Tailscale Funnel to put only a listen-only copy of the page on the internet, at port 8443.
+  Open the Listen page once over Tailscale (or on the PC) and copy the secret link under
+  "Link for when NordVPN is on", then save it on the phone's home screen. Without the secret, the
+  public address shows nothing, and it never shows the map, transcripts or settings. "Make a new
+  link" replaces the secret if the link gets out. To turn the public link off:
+  `tailscale funnel --https=8443 off`.
+
+Keeping Tailscale up on the PC alongside NordVPN: in the Tailscale menu turn on **Run unattended**, so it
+starts with Windows. If Tailscale drops while NordVPN connects, add Tailscale under NordVPN's
+**Split tunneling** settings. Settings are under `[listen]` in config.toml.
+
 ## Fire and EMS tone-outs
 
 SDRTrunk's Two-Tone Paging decoder (turn it on under a channel's Additional Decoders) sends each tone-out

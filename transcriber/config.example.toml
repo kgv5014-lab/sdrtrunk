@@ -300,3 +300,12 @@ max_age_days = 7
 max_total_gb = 1.0
 # How often to check, in minutes.
 check_minutes = 60
+
+[listen]
+# Live audio: the map's Listen button plays new calls on your phone, and keeps playing with it locked.
+enabled = true
+# A listen-only copy of the page for Tailscale Funnel (setup-listen-link.bat), on 127.0.0.1 only. Every
+# request needs the secret key in data\listen-key.txt. 0 = off.
+public_port = 3001
+# The public address shown with the secret link. Empty: the Tailscale address plus port 8443.
+public_url = ""

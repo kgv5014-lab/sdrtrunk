@@ -54,7 +54,11 @@ def main():
     import uvicorn
     from .server import create_app
 
-    uvicorn.run(create_app(config), host=config.server.host, port=config.server.port, log_level="info")
+    app = create_app(config)
+    if config.listen.enabled and config.listen.public_port:
+        from .live import start_public
+        start_public(app, config.data_path, config.listen.public_port)
+    uvicorn.run(app, host=config.server.host, port=config.server.port, log_level="info")
 
 
 def test_file(config, path: Path) -> int:

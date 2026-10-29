@@ -268,6 +268,18 @@ class RecordingsConfig:
 
 
 @dataclass
+class ListenConfig:
+    # Live audio for the phone: the map's Listen button and the /listen page.
+    enabled: bool = True
+    # A second, listen-only copy of the page for Tailscale Funnel, on 127.0.0.1 only. Every request
+    # needs the secret key in data/listen-key.txt. 0 = off.
+    public_port: int = 3001
+    # The Funnel address, shown with the secret link on the private listen page. Empty: worked out from
+    # the Tailscale address the page was opened on, with port 8443.
+    public_url: str = ""
+
+
+@dataclass
 class AlertsConfig:
     # Phone alerts through the ntfy app, answered by this service itself (see the README).
     enabled: bool = False
@@ -385,6 +397,7 @@ class Config:
     signal: SignalConfig = field(default_factory=SignalConfig)
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     recordings: RecordingsConfig = field(default_factory=RecordingsConfig)
+    listen: ListenConfig = field(default_factory=ListenConfig)
     base_dir: Path = Path(".")
 
     @property

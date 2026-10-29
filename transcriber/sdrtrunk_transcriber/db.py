@@ -506,6 +506,15 @@ class Database:
                                      "ORDER BY id LIMIT 1", (call_id,)).fetchone()
         return row["incident_id"] if row else None
 
+    def recent_talkgroups(self, since: int) -> list[dict]:
+        """Talkgroups heard since then, busiest first, for the listen page's picker."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT talkgroup, MAX(talkgroup_label) AS label, MAX(talkgroup_group) AS grp, COUNT(*) AS calls, "
+                "MAX(call_time) AS last_call FROM calls WHERE call_time >= ? GROUP BY talkgroup "
+                "ORDER BY calls DESC", (since,)).fetchall()
+        return [dict(r) for r in rows]
+
     def last_call_on(self, talkgroup: str, before: int, call_id: int) -> dict | None:
         """The call on a talkgroup just before this one, with the incident it is in, if any."""
         with self._lock:

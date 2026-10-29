@@ -58,6 +58,18 @@ reduce_hiss = true
 # hour. They are not transcribed and don't show in the call log or search.
 hide_station_ids = true
 
+
+[air_transcripts]
+# Airport and helicopter talkgroups (by number or name). Their calls get aviation hints for Whisper
+# (phonetic alphabet, runway, squawk, altimeter, Allentown Tower) and aviation cleanup ("November 8, 1, 2
+# Lima Foxtrot" -> N812LF, "heading 1, 7, 0" -> heading 170), instead of the county streets, units and
+# 10-codes, which Whisper was writing into pilot talk.
+talkgroups = ["9101", "9102", "9103", "9104"]
+# Optional: your own air hints, one per line (airline call signs you hear often).
+vocabulary_file = "air-vocabulary.txt"
+# Bring each speaker in a call to the same level: a plane overhead is often 15 dB louder than the tower.
+level_speakers = true
+
 [faster_whisper]
 model = "large-v3-turbo"
 device = "cuda"

@@ -481,6 +481,23 @@ own normal: fewer messages decoding, the control channel dropping out, a weaker 
 drift, USB errors, or the dongle disappearing. Each problem alerts once, and again only if it clears and comes
 back. The limits are in `[signal]` in `config.toml`; `alert = false` keeps the numbers without alerts.
 
+## Airport and helicopter calls
+
+Calls on the `[air_transcripts]` talkgroups (ABE Approach, Tower, Air Emergency, Helicopters by default)
+are transcribed with aviation hints instead of the county ones: the phonetic alphabet, runway, squawk,
+altimeter, niner, Allentown Tower and common call signs. The county cleanup (streets, unit numbers,
+10-codes, dispatch times) is skipped for them, and aviation cleanup is used instead: tail numbers read in
+the phonetic alphabet become compact ("November 8, 1, 2 Lima Foxtrot" -> N812LF), numbers read digit by
+digit after runway, heading, squawk, altimeter, wind, ILS or RNAV are joined ("runway 2, 4" -> runway 24),
+and a few mishearings are fixed ("Fox Street" -> Foxtrot, "squad 3353" -> squawk 3353).
+
+Pilots overhead are much louder than the tower. Each speaker in a call is brought to the same level before
+Whisper hears it (`level_speakers`), and SDRTrunk itself now sets AM audio by how hard the voice modulates
+the carrier rather than by signal strength, so live listening is even too.
+
+To add your own air hints (airline call signs you hear a lot), put one per line in `air-vocabulary.txt`
+next to `config.toml` and restart the transcriber.
+
 ## Fixing transcripts
 
 Each call on the call log page has an **Edit** button. Type the right words and press Save. The words

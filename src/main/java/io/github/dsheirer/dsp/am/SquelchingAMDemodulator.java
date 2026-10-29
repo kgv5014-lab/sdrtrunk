@@ -32,10 +32,19 @@ import io.github.dsheirer.source.SourceEvent;
 public class SquelchingAMDemodulator implements ISquelchingDemodulator, Listener<SourceEvent>
 {
     private static final float ZERO = 0.0f;
+    //Carrier level tracker time constant.  Long enough to ignore the voice (300 Hz and up) riding on the carrier,
+    //short enough to follow a new station keying up.
+    private static final float CARRIER_SECONDS = 0.020f;
+    //Audio level for a 100% modulated signal, whatever the carrier strength
+    private static final float MODULATION_GAIN = 0.5f;
+    private static final int DEFAULT_SAMPLE_RATE = 25000;
     private final IMagnitudeCalculator mMagnitudeCalculator = MagnitudeFactory.getMagnitudeCalculator();
     private final IAmDemodulator mAmDemodulator;
+    private final float mGain;
     private final AdaptiveSquelch mAdaptiveSquelch;
     private boolean mSquelchChanged = false;
+    private float mCarrierAlpha = carrierAlpha(DEFAULT_SAMPLE_RATE);
+    private float mCarrier = 0.0f;
 
     /**
      * Constructs an instance
@@ -47,6 +56,7 @@ public class SquelchingAMDemodulator implements ISquelchingDemodulator, Listener
      */
     public SquelchingAMDemodulator(float gain, float alpha, float squelchThreshold, boolean squelchAutoTrack)
     {
+        mGain = gain;
         mAmDemodulator = AmDemodulatorFactory.getAmDemodulator(gain);
         mAdaptiveSquelch = new AdaptiveSquelch(alpha, squelchThreshold, squelchAutoTrack);
     }
@@ -58,6 +68,12 @@ public class SquelchingAMDemodulator implements ISquelchingDemodulator, Listener
     public void setSampleRate(int sampleRate)
     {
         mAdaptiveSquelch.setSampleRate(sampleRate);
+        mCarrierAlpha = carrierAlpha(sampleRate);
+    }
+
+    private static float carrierAlpha(int sampleRate)
+    {
+        return 1.0f - (float)Math.exp(-1.0 / (CARRIER_SECONDS * Math.max(sampleRate, 1)));
     }
 
     /**
@@ -82,8 +98,30 @@ public class SquelchingAMDemodulator implements ISquelchingDemodulator, Listener
         float[] magnitude = mMagnitudeCalculator.calculate(i, q);
         float[] demodulated = mAmDemodulator.demodulateMagnitude(magnitude);
 
+        //Audio is the envelope's swing around the carrier, divided by the carrier level.  That is the modulation
+        //depth, so an aircraft overhead and a distant tower come out equally loud, instead of differing by the
+        //20-30 dB between their signal strengths.  The divisor never drops below the carrier level at the squelch
+        //threshold, so background noise is not turned up to full volume.
+        float floor = (float)Math.pow(10.0, mAdaptiveSquelch.getSquelchThreshold() / 20.0) * mGain;
+
         for(int x = 0; x < i.length; x++)
         {
+            float envelope = demodulated[x];
+
+            if(!Float.isFinite(envelope))
+            {
+                envelope = mCarrier;
+            }
+
+            mCarrier += (envelope - mCarrier) * mCarrierAlpha;
+
+            if(!Float.isFinite(mCarrier))
+            {
+                mCarrier = 0.0f;
+            }
+
+            demodulated[x] = MODULATION_GAIN * (envelope - mCarrier) / Math.max(mCarrier, floor);
+
             mAdaptiveSquelch.process(magnitude[x]);
 
             if(!(mAdaptiveSquelch.isUnmuted()))

@@ -46,17 +46,20 @@
   .note a { color: var(--accent); cursor: pointer; margin-left: 4px; }
   #more { display: block; margin: 16px auto; }
   #more[hidden] { display: none; }
+  /* The shared, view-only map for friends (share.py): no editing, settings or admin pages. */
+  html[data-guest] .admin { display: none !important; }
 </style>
 </head>
 <body>
 <header>
   <h1>Call log</h1>
   <a href="map">Incident map</a>
-  <a href="units">Units</a>
+  <a href="units" class="admin">Units</a>
+  <a href="listen" hidden id="listen-link">🔊 Listen</a>
   <input id="q" type="search" placeholder="Search transcripts">
   <input id="talkgroup" type="search" placeholder="Talkgroup" size="12">
   <input id="source" type="search" placeholder="Radio ID, unit or Dispatch" size="18">
-  <span id="status"></span>
+  <span id="status" class="admin"></span>
 </header>
 <main>
   <div id="calls"></div>
@@ -64,6 +67,9 @@
 </main>
 <script>
 const $ = id => document.getElementById(id);
+// Opened from the friends' link (share.py): view only, so no Edit, Move, Remove or Mark seen.
+const GUEST = !!document.documentElement.dataset.guest;
+if (GUEST) $('listen-link').hidden = false;
 let oldestId = null;
 let timer = null;
 
@@ -103,7 +109,7 @@ function render(call) {
     player.src = 'api/calls/' + call.id + '/audio';
     meta.append(player);
   }
-  if (['done', 'skipped', 'failed'].includes(call.status)) {
+  if (!GUEST && ['done', 'skipped', 'failed'].includes(call.status)) {
     const edit = el('button', 'edit', 'Edit');
     edit.addEventListener('click', () => startEdit(card, call));
     meta.append(edit);
@@ -244,6 +250,7 @@ async function load(append) {
 }
 
 async function refreshStatus() {
+  if (GUEST) return;
   try {
     const s = await (await fetch('api/status')).json();
     const c = s.calls;

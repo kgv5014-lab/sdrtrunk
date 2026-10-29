@@ -107,13 +107,15 @@
   @keyframes pulse { 0% { stroke-width: 2; stroke-opacity: 1; } 100% { stroke-width: 18; stroke-opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .pulse { animation: none; stroke-width: 5; } }
   .notice { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; }
+  /* The shared, view-only map for friends (share.py): no editing, settings or admin pages. */
+  html[data-guest] .admin { display: none !important; }
 </style>
 </head>
 <body>
 <header>
   <h1>Incident map</h1>
   <a href="./">Call log</a>
-  <a href="units">Units</a>
+  <a href="units" class="admin">Units</a>
   <a href="listen" title="Play live calls on this phone or computer">🔊 Listen</a>
   <select id="range" title="Time range">
     <option value="3600">Last hour</option>
@@ -125,8 +127,8 @@
   </select>
   <div class="types" id="types"></div>
   <label title="Only incidents that more than one of police, fire and EMS were sent to"><input type="checkbox" id="multi"> Several services</label>
-  <label><input type="checkbox" id="hidden"> Show removed</label>
-  <button id="seen" hidden>Mark all seen</button>
+  <label class="admin"><input type="checkbox" id="hidden"> Show removed</label>
+  <button id="seen" class="admin" hidden>Mark all seen</button>
   <span id="status"></span>
 </header>
 <div class="tabs" id="tabs">
@@ -139,6 +141,8 @@
 </div>
 <script>
 const $ = id => document.getElementById(id);
+// Opened from the friends' link (share.py): view only, so no Edit, Move, Remove or Mark seen.
+const GUEST = !!document.documentElement.dataset.guest;
 const COLORS = () => {
   const s = getComputedStyle(document.documentElement);
   return { fire: s.getPropertyValue('--fire'), ems: s.getPropertyValue('--ems'),
@@ -271,14 +275,17 @@ function popup(incident) {
     }
     const audio = el('audio'); audio.controls = true; audio.preload = 'none'; audio.src = 'api/calls/' + c.id + '/audio';
     call.append(audio);
-    const fix = fixCall(incident, c);
-    const edit = el('button', '', 'Edit');
-    edit.title = 'Fix the words; replaced words are fixed in later calls too';
-    edit.onclick = () => editTranscript(call, text, c, () => { needsReload = true; });
-    fix.prepend(edit);
-    call.append(fix);
+    if (!GUEST) {
+      const fix = fixCall(incident, c);
+      const edit = el('button', '', 'Edit');
+      edit.title = 'Fix the words; replaced words are fixed in later calls too';
+      edit.onclick = () => editTranscript(call, text, c, () => { needsReload = true; });
+      fix.prepend(edit);
+      call.append(fix);
+    }
     box.append(call);
   });
+  if (GUEST) return box;
   const actions = el('div', 'actions');
   const btn = el('button', '', incident.hidden ? 'Put back on the map' : 'Remove from map');
   btn.onclick = async () => {
@@ -774,7 +781,7 @@ function feedCall(c) {
     audio.play();
   };
   row.append(play);
-  if (['done', 'skipped', 'failed'].includes(c.status)) {
+  if (!GUEST && ['done', 'skipped', 'failed'].includes(c.status)) {
     const edit = el('button', '', 'Edit');
     edit.onclick = () => editTranscript(card, card.querySelector('.text'), c, () => { needsReload = true; });
     row.append(edit);
@@ -835,7 +842,7 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
   L.tileLayer((s && s.tiles_url) || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
   }).addTo(map);
-  const watchingAircraft = await loadAircraft();
+  const watchingAircraft = GUEST ? false : await loadAircraft();
   const watchingTraffic = await loadTraffic();
   if (watchingTraffic) addTrafficControl();
   await load();

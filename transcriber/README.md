@@ -349,13 +349,41 @@ Two ways to reach it from the iPhone:
   It uses Tailscale Funnel to put only a listen-only copy of the page on the internet, at port 8443.
   Open the Listen page once over Tailscale (or on the PC) and copy the secret link under
   "Link for when NordVPN is on", then save it on the phone's home screen. Without the secret, the
-  public address shows nothing, and it never shows the map, transcripts or settings. "Make a new
+  public address shows nothing, and the secret alone never shows the map, transcripts or settings. "Make a new
   link" replaces the secret if the link gets out. To turn the public link off:
   `tailscale funnel --https=8443 off`.
 
 Keeping Tailscale up on the PC alongside NordVPN: in the Tailscale menu turn on **Run unattended**, so it
 starts with Windows. If Tailscale drops while NordVPN connects, add Tailscale under NordVPN's
 **Split tunneling** settings. Settings are under `[listen]` in config.toml.
+
+## Share the map with friends
+
+Friends can see the incident map, the call log, call audio and live audio with a link and a
+password, without Tailscale. They can only look: no Edit, Move, Remove, Mark seen, helicopters,
+units board, settings or status.
+
+1. Run `setup-listen-link.bat` once, if you haven't (it turns on the public HTTPS address).
+2. Run `setup-share-link.bat`. Type a password (10 characters or more), or press Enter to get a
+   strong one made for you. It prints the link to send your friends. The link is also shown on the
+   Listen page (on the PC or over Tailscale) under "Map link for friends".
+3. Friends open the link, type the password once, and stay signed in on that phone for 30 days.
+
+How it's kept safe:
+
+- Only the listen-only copy of the transcriber (127.0.0.1:3001) is on the internet, over HTTPS
+  through Tailscale Funnel. The map lives under a long random address (`/g/<32 random characters>/`);
+  every other address, including the real admin pages, answers "Not Found". Nothing shows at all
+  until a password is set.
+- The password is kept only as a scrambled scrypt hash in `data\share-password.txt`.
+- Wrong passwords: an address is locked out for 15 minutes after 5 tries (longer each time), and
+  after 30 wrong tries in an hour from anywhere, logins pause for 15 minutes. Friends already signed
+  in aren't affected.
+- Guests can only read. Changes of any kind are refused.
+
+To change the password, run `setup-share-link.bat` again. To turn sharing off, run `stop-sharing.bat`:
+the old link and password stop working and everyone is signed out. (The listen link keeps working;
+`tailscale funnel --https=8443 off` turns off both.)
 
 ## Fire and EMS tone-outs
 

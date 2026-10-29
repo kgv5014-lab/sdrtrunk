@@ -334,6 +334,11 @@ max_total_gb = 1.0
 # How often to check, in minutes.
 check_minutes = 60
 
+[channels]
+# Calls on these frequencies (MHz) get this name instead of their talkgroup's label. SDRTrunk's Fire
+# Scan sends all four fire channels as one talkgroup, so this shows which department is talking.
+frequency_names = { "502.425" = "Nancy FD", "453.300" = "Forks Fire", "460.375" = "Palmer FD", "458.725" = "Tatamy FD" }
+
 [listen]
 # Live audio: the map's Listen button plays new calls on your phone, and keeps playing with it locked.
 enabled = true

@@ -225,5 +225,9 @@ public class SignalPowerView extends JPanel
     {
         mProcessingChain = processingChain;
         reset();
+        //The squelch controls are enabled by the decoder's answer.  Without asking, they stay unavailable until
+        //the threshold happens to change.
+        broadcast(SourceEvent.requestCurrentSquelchThreshold());
+        broadcast(SourceEvent.requestCurrentSquelchAutoTrack());
     }
 }

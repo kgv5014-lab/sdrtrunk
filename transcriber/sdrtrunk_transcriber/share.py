@@ -51,7 +51,7 @@ WRONG_DELAY_S = 1.0
 
 # The pages guests can open, and the main service's addresses those pages read (GET only).
 PAGES = {"": "index.html", "map": "map.html", "listen": "listen.html"}
-GUEST_API = re.compile(r"^/(api/calls|api/calls/\d+/audio|api/pages|api/incidents|api/map/status|api/traffic"
+GUEST_API = re.compile(r"^/(api/calls|api/calls/\d+/audio|api/pages|api/incidents|api/map/status|api/map/mileposts|api/traffic"
                        r"|api/traffic/cameras/\d+/image|listen/talkgroups|listen/stream\.mp3|listen/now)$")
 # Query values guests may not set: removed incidents stay hidden.
 DROP_PARAMS = {"hidden"}

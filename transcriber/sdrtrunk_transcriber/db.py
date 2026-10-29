@@ -223,7 +223,8 @@ END;
 # 3: incidents followed onto Tac channels, calls joined by channel and cross street.
 # 4: police, fire and EMS dispatches to the same scene joined.
 # 5: who is talking (speakers.py): a unit's own words aren't a dispatch, and join by the unit talking.
-MAP_VERSION = 5
+# 6: highway mile markers ("337.5 Route 22 East") placed (mileposts.py).
+MAP_VERSION = 6
 
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",

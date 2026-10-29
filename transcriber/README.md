@@ -325,6 +325,18 @@ alert_landing = true
 
 The service reads the receiver, so the map works the same from your phone over Tailscale.
 
+### Highway mile markers
+
+Calls given by mile marker are pinned at that marker, on the side of the highway the call names:
+"337.5 Route 22 East", "78 westbound, mile marker 72.4", "33 southbound, 5.8". Whisper's slips are
+read too: "3-3-4-1, Route 22" is 334.1 and "Route 27.4, 22" is 327.4. "Starting mileage" on transports
+is ignored. This covers US 22, PA 33, I-78 and the Turnpike's Northeast Extension (I-476) inside the
+map's area (see `--bbox` in fetch-places), with nothing to download: the markers are measured along the
+highways in places-geo.json from each interchange's mile number (I-78 from PennDOT's own marker points).
+
+Zoomed in, the map labels every mile ("22 · 334"). Turn the labels off with **🛣️ Mile markers** in the
+layer list at the top right.
+
 ### PennDOT traffic and cameras
 
 The map can show PennDOT's crashes, road closures and roadwork from the public 511PA website (no sign-up),

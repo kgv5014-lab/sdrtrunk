@@ -86,6 +86,7 @@
   .item .latest .when { color: var(--muted); margin-right: 5px; }
   .item .summary { font-size: 13px; }
   .stags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 3px; }
+  .mile { font: 600 10px/1 system-ui, sans-serif; color: #fff; background: #1f6f43; border: 1px solid #fff; border-radius: 3px; padding: 1px 3px; white-space: nowrap; text-align: center; box-shadow: 0 0 2px rgba(0,0,0,.5); }
   .heli { font-size: 20px; line-height: 20px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
   .heli.medical { filter: drop-shadow(0 0 3px #d33c2f); }
   .heli.police { filter: drop-shadow(0 0 3px #2a6fdb); }
@@ -178,7 +179,7 @@ function markSeen(incident) {
   document.title = (fresh ? '(' + fresh + ') ' : '') + 'Incident map';
   $('seen').hidden = !fresh;
 }
-const PRECISION = { address: 'house address', intersection: 'intersection', landmark: 'landmark',
+const PRECISION = { address: 'house address', intersection: 'intersection', milepost: 'highway mile marker', landmark: 'landmark',
                     street: 'street only, approximate',
                     'follow-up': 'follow-up, same unit', channel: 'same Tac channel', 'same-street': 'names its street',
                     'other-service': 'another service sent to its street',
@@ -655,10 +656,41 @@ async function loadTraffic() {
   return true;
 }
 
-function addTrafficControl() {
-  const overlays = { '⚠️ PennDOT crashes &amp; closures': roadLayer, '🚧 PennDOT roadwork': roadworkLayer, '📷 Traffic cameras': cameraLayer };
-  const keys = { '⚠️ PennDOT crashes &amp; closures': 'road', '🚧 PennDOT roadwork': 'roadwork', '📷 Traffic cameras': 'cameras' };
-  const on = stored('map.trafficLayers', { road: true, roadwork: false, cameras: true });
+// ---- Highway mile markers (mileposts.py), shown once zoomed in far enough to read them
+const mileLayer = L.layerGroup();
+const mileShown = L.layerGroup().addTo(map);
+let mileMarkers = [];
+const MILE_ZOOM = 13;
+
+async function loadMileposts() {
+  try { mileMarkers = (await (await fetch('api/map/mileposts')).json()).markers || []; } catch (e) { mileMarkers = []; }
+  return mileMarkers.length > 0;
+}
+
+function drawMileposts() {
+  mileShown.clearLayers();
+  if (!map.hasLayer(mileLayer) || map.getZoom() < MILE_ZOOM) return;
+  const view = map.getBounds().pad(0.2);
+  // Every mile up close, every other mile a step further out.
+  const every = map.getZoom() >= 14 ? 1 : 2;
+  mileMarkers.forEach(m => {
+    if (Math.round(m.mile) % every || !view.contains([m.lat, m.lon])) return;
+    const short = m.route.replace('Route ', '');
+    const icon = L.divIcon({ className: '', html: '<div class="mile">' + short + ' · ' + Math.round(m.mile) + '</div>', iconSize: null });
+    L.marker([m.lat, m.lon], { icon, interactive: false, keyboard: false }).addTo(mileShown);
+  });
+}
+map.on('zoomend moveend overlayadd overlayremove', drawMileposts);
+
+function addTrafficControl(traffic, miles) {
+  const overlays = {}, keys = {};
+  if (traffic) {
+    Object.assign(overlays, { '⚠️ PennDOT crashes &amp; closures': roadLayer, '🚧 PennDOT roadwork': roadworkLayer, '📷 Traffic cameras': cameraLayer });
+    Object.assign(keys, { '⚠️ PennDOT crashes &amp; closures': 'road', '🚧 PennDOT roadwork': 'roadwork', '📷 Traffic cameras': 'cameras' });
+  }
+  if (miles) { overlays['🛣️ Mile markers'] = mileLayer; keys['🛣️ Mile markers'] = 'miles'; }
+  if (!Object.keys(overlays).length) return;
+  const on = Object.assign({ road: true, roadwork: false, cameras: true, miles: true }, stored('map.trafficLayers', {}));
   Object.entries(overlays).forEach(([name, l]) => { if (on[keys[name]]) l.addTo(map); });
   // On a phone the open list covers part of the map, so it folds into a button there.
   L.control.layers(null, overlays, { collapsed: window.matchMedia('(max-width: 1100px)').matches }).addTo(map);
@@ -863,7 +895,8 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
   }).addTo(map);
   const watchingAircraft = GUEST ? false : await loadAircraft();
   const watchingTraffic = await loadTraffic();
-  if (watchingTraffic) addTrafficControl();
+  addTrafficControl(watchingTraffic, await loadMileposts());
+  drawMileposts();
   await load();
   // Opened from the unit board: map#incident-12
   const linked = /^#incident-(\d+)$/.exec(location.hash);

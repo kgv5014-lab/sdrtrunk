@@ -118,8 +118,20 @@ CREATE TABLE IF NOT EXISTS summaries (
     model TEXT,
     made_at INTEGER NOT NULL,
     ms INTEGER,                          -- how long the model took
+    last_call_id INTEGER,                -- incidents: newest call it read, so later calls count as new
     PRIMARY KEY (kind, ref_id)
 );
+
+-- Short notes the model writes when an incident changes ("Second alarm called", "Patient transported").
+CREATE TABLE IF NOT EXISTS incident_updates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    incident_id INTEGER NOT NULL,
+    time INTEGER NOT NULL,               -- the newest call it is about
+    note TEXT NOT NULL,
+    status TEXT,
+    made_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS incident_updates_incident ON incident_updates(incident_id);
 
 CREATE TABLE IF NOT EXISTS signal_hours (
     hour_start INTEGER NOT NULL,         -- unix seconds, start of the hour SDRTrunk counted
@@ -279,6 +291,9 @@ class Database:
         if "radio_name" not in helicopter_columns:
             self._conn.execute("ALTER TABLE helicopters ADD COLUMN radio_name TEXT")
             self._conn.execute("ALTER TABLE helicopters ADD COLUMN radio_calls INTEGER NOT NULL DEFAULT 0")
+        summary_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(summaries)")}
+        if "last_call_id" not in summary_columns:
+            self._conn.execute("ALTER TABLE summaries ADD COLUMN last_call_id INTEGER")
         incident_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incidents)")}
         if "channel" not in incident_columns:
             self._conn.execute("ALTER TABLE incidents ADD COLUMN channel TEXT")
@@ -291,6 +306,7 @@ class Database:
             self._conn.execute("DELETE FROM call_places")
             self._conn.execute("DELETE FROM incidents")
             self._conn.execute("DELETE FROM summaries WHERE kind = 'incident'")
+            self._conn.execute("DELETE FROM incident_updates")
             self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
             self._conn.execute(f"PRAGMA user_version = {MAP_VERSION}")
 
@@ -415,12 +431,19 @@ class Database:
         with self._lock:
             return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
 
-    def unnamed_pages(self, since: float, until: float) -> list[dict]:
-        """Tone-outs not on the station list, oldest first."""
+    def pages_between(self, since: float, until: float) -> list[dict]:
+        """All tone-outs in [since, until), oldest first."""
         with self._lock:
             return [dict(row) for row in self._conn.execute(
-                "SELECT * FROM pages WHERE label IS NULL AND page_time >= ? AND page_time < ? ORDER BY page_time",
+                "SELECT * FROM pages WHERE page_time >= ? AND page_time < ? ORDER BY page_time",
                 (since, until)).fetchall()]
+
+    def rename_pages(self, page_ids: list[int], old: str, new: str):
+        """A learned name that turned out wrong: only the tone-outs that carry it."""
+        with self._lock:
+            self._conn.executemany("UPDATE pages SET label = ? WHERE id = ? AND label = ?",
+                                   [(new, i, old) for i in page_ids])
+            self._conn.commit()
 
     def name_pages(self, page_ids: list[int], label: str):
         with self._lock:
@@ -601,6 +624,7 @@ class Database:
             self._conn.execute("DELETE FROM incidents")
             # Incident ids are handed out again; their summaries are written afresh.
             self._conn.execute("DELETE FROM summaries WHERE kind = 'incident'")
+            self._conn.execute("DELETE FROM incident_updates")
             self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
             self._conn.commit()
 
@@ -625,7 +649,8 @@ class Database:
 
     # ---- summaries
 
-    SUMMARY_FIELDS = ("kind", "ref_id", "basis", "summary", "tags", "status", "model", "made_at", "ms")
+    SUMMARY_FIELDS = ("kind", "ref_id", "basis", "summary", "tags", "status", "model", "made_at", "ms",
+                      "last_call_id")
 
     def store_summary(self, summary: dict):
         with self._lock:
@@ -657,7 +682,30 @@ class Database:
     def delete_summary(self, kind: str, ref_id: int):
         with self._lock:
             self._conn.execute("DELETE FROM summaries WHERE kind = ? AND ref_id = ?", (kind, ref_id))
+            if kind == "incident":
+                self._conn.execute("DELETE FROM incident_updates WHERE incident_id = ?", (ref_id,))
             self._conn.commit()
+
+    def add_incident_update(self, update: dict):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO incident_updates (incident_id, time, note, status, made_at) VALUES (?, ?, ?, ?, ?)",
+                [update.get(n) for n in ("incident_id", "time", "note", "status", "made_at")])
+            self._conn.commit()
+
+    def incident_updates(self, incident_ids: list[int]) -> dict[int, list[dict]]:
+        """Update notes of these incidents, oldest first, by incident id."""
+        found: dict[int, list[dict]] = {}
+        ids = list(incident_ids)
+        with self._lock:
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                rows = self._conn.execute(
+                    f"SELECT incident_id, time, note, status FROM incident_updates "
+                    f"WHERE incident_id IN ({', '.join('?' for _ in chunk)}) ORDER BY time, id", chunk).fetchall()
+                for row in rows:
+                    found.setdefault(row["incident_id"], []).append(dict(row))
+        return found
 
     def incident_calls_for_summary(self, incident_id: int) -> list[dict]:
         with self._lock:

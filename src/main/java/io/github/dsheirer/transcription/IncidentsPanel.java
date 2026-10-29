@@ -389,6 +389,11 @@ public class IncidentsPanel extends JPanel
             }
         }
 
+        for(TranscriptIncident.Update update : incident.updates())
+        {
+            sb.append("\nUpdate ").append(formatClock(update.time())).append(": ").append(update.note());
+        }
+
         for(TranscriptIncident.Page page : incident.pages())
         {
             sb.append("\nTone out ").append(formatClock(page.pageTime())).append(": ")

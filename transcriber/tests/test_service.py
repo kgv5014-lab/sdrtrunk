@@ -139,6 +139,25 @@ def test_bare_host_path_also_accepts_uploads(make_client):
     assert SUCCESS_REPLY in response.text
 
 
+def test_unchanged_call_list_is_not_sent_again_and_text_is_gzipped(make_client):
+    client, _ = make_client()
+    with client:
+        for _ in range(8):
+            post(client, sdrtrunk_body(CALL, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        first = client.get("/api/calls")
+        again = client.get("/api/calls", headers={"If-None-Match": first.headers["etag"]})
+        post(client, sdrtrunk_body(CALL, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        changed = client.get("/api/calls", headers={"If-None-Match": first.headers["etag"]})
+        audio = client.get(f"/api/calls/{first.json()[0]['id']}/audio", headers={"Accept-Encoding": "gzip"})
+
+    assert first.status_code == 200 and first.headers["content-encoding"] == "gzip"
+    assert again.status_code == 304 and again.content == b""
+    assert changed.status_code == 200 and len(changed.json()) == 9
+    assert audio.status_code == 200 and "content-encoding" not in audio.headers
+
+
 def test_wrong_api_key_is_rejected(make_client):
     client, _ = make_client(api_key="right")
     with client:

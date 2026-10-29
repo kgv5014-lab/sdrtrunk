@@ -15,6 +15,7 @@ At the top of each hour SDRTrunk posts each dongle's signal quality as JSON to /
 (see signal_quality.py).
 """
 
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -27,8 +28,10 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Response
 from starlette.datastructures import UploadFile
+from starlette.middleware.gzip import GZipMiddleware
 
 from . import audio
 from .alerts import Alerter
@@ -89,6 +92,38 @@ def _clip(value, length: int = 200) -> str | None:
         return None
     value = str(value).strip()
     return value[:length] or None
+
+
+def _json_unless_unchanged(request: Request, data) -> Response:
+    """JSON with an ETag, or an empty 304 when the page already has this exact reply.
+
+    The map and calls pages poll every few seconds; over a phone's data plan, sending the same
+    hundreds of kilobytes again each time is what makes them slow.
+    """
+    body = json.dumps(jsonable_encoder(data), separators=(",", ":"), ensure_ascii=False).encode()
+    etag = '"' + hashlib.sha1(body).hexdigest()[:20] + '"'
+    headers = {"ETag": etag, "Cache-Control": "no-cache"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=headers)
+    return Response(body, media_type="application/json", headers=headers)
+
+
+class _CompressText:
+    """Gzips the pages and JSON replies, but not call audio or camera pictures.
+
+    Those are already compressed, and Safari plays audio with range requests that gzip would break.
+    """
+
+    def __init__(self, app):
+        self.app = app
+        self.gzip = GZipMiddleware(app, minimum_size=1000)
+
+    async def __call__(self, scope, receive, send):
+        path = scope.get("path", "") if scope["type"] == "http" else ""
+        if scope["type"] == "http" and not path.endswith(("/audio", "/image")):
+            await self.gzip(scope, receive, send)
+        else:
+            await self.app(scope, receive, send)
 
 
 def _is_loopback(host: str | None) -> bool:
@@ -235,6 +270,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         db.close()
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
+    app.add_middleware(_CompressText)
 
     async def call_upload(request: Request):
         form = await request.form()
@@ -382,7 +418,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             summaries = request.app.state.db.summaries("call", [call["id"] for call in calls])
             for call in calls:
                 attach_summary(summaries, call)
-        return calls
+        return _json_unless_unchanged(request, calls)
 
     @app.post("/api/calls/{call_id}/transcript")
     async def correct_transcript(request: Request, call_id: int):
@@ -520,7 +556,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 calls = sorted({c["id"]: c for c in incident["calls"] if c["transcript"]}.values(),
                                key=lambda c: (c["call_time"], c["id"]))
                 attach_summary(summaries, incident, incident_basis(calls))
-        return incidents
+        return _json_unless_unchanged(request, incidents)
 
     @app.delete("/api/incidents/{incident_id}")
     def hide_incident(request: Request, incident_id: int):

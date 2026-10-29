@@ -319,6 +319,7 @@ check_minutes = 60
 enabled = true
 # A listen-only copy of the page for Tailscale Funnel (setup-listen-link.bat), on 127.0.0.1 only. Every
 # request needs the secret key in data\listen-key.txt. 0 = off.
+# The map link for friends (setup-share-link.bat) is on this same port, behind a password.
 public_port = 3001
 # The public address shown with the secret link. Empty: the Tailscale address plus port 8443.
 public_url = ""

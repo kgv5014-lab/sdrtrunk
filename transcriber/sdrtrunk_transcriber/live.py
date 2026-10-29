@@ -260,11 +260,17 @@ def create_public_app(main_app: FastAPI, data_path: Path) -> FastAPI:
 
 
 def start_public(main_app: FastAPI, data_path: Path, port: int):
-    """Runs the public listen app on 127.0.0.1:port in the background (Tailscale Funnel points here)."""
+    """Runs the public listen app on 127.0.0.1:port in the background (Tailscale Funnel points here).
+
+    The read-only guest view for friends (share.py) is on the same port, once a password is set.
+    """
     import uvicorn
 
+    from .share import ShareGate
+
     read_key(data_path)
-    server = uvicorn.Server(uvicorn.Config(create_public_app(main_app, data_path), host="127.0.0.1",
+    app = ShareGate(create_public_app(main_app, data_path), main_app, data_path)
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1",
                                            port=port, log_level="warning", lifespan="off"))
     threading.Thread(target=server.run, name="listen-public", daemon=True).start()
     log.info("Live audio: listen-only page on http://127.0.0.1:%d/listen (needs the key in %s)",

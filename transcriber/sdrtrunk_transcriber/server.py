@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from starlette.datastructures import UploadFile
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import audio, live
+from . import audio, live, share
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -491,8 +491,12 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             """The secret link for the public listen page (this route is never on the public port)."""
             key = live.read_key(data_path)
             base = config.listen.public_url.rstrip("/")
+            # The friends' map link (share.py), once setup-share-link.bat has set a password.
+            share_path = f"/g/{share.read_path(data_path)}/map" if share.is_on(data_path) else None
             return {"key": key, "port": config.listen.public_port,
-                    "url": f"{base}/listen?key={key}" if base and config.listen.public_port else None}
+                    "url": f"{base}/listen?key={key}" if base and config.listen.public_port else None,
+                    "share_path": share_path,
+                    "share_url": f"{base}{share_path}" if base and share_path else None}
 
         @app.post("/api/listen/new-link")
         def new_listen_link():

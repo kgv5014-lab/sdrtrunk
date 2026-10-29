@@ -61,6 +61,12 @@
       <div class="row" style="margin-top:6px"><button id="copy">Copy link</button><button id="rotate">Make a new link</button></div>
       <div class="muted" style="margin-top:6px">Anyone with this link can listen, but can't see the map, transcripts or settings. Make a new link if it gets out; the old one stops working.</div>
     </div>
+    <h2>Map link for friends</h2>
+    <div class="link">
+      <div id="share-text" class="muted"></div>
+      <div class="row" style="margin-top:6px"><button id="share-copy" hidden>Copy link</button></div>
+      <div class="muted" style="margin-top:6px">Friends sign in with the password and see the map, calls and audio, view only. To change the password run setup-share-link.bat again; to turn it off run stop-sharing.bat. Either one signs everyone out.</div>
+    </div>
   </section>
 </main>
 <audio id="player" preload="none"></audio>
@@ -169,6 +175,8 @@ async function refresh() {
 
 // Only on the private page (Tailscale or this PC): the map links and the secret link for the public page.
 async function loadSecret() {
+  // A friend on the shared map: the map and call log links, but no secret links.
+  if (document.documentElement.dataset.guest) { document.querySelectorAll(".private").forEach(el => el.hidden = false); return; }
   if (key) return;
   const r = await fetch("api/listen/link").catch(() => null);
   if (!r || !r.ok) return;
@@ -186,6 +194,13 @@ function showSecret(link) {
     : `Not set up yet. Run setup-listen-link.bat on the PC once, then reload this page.`;
   $("copy").hidden = !link.url;
   $("copy").onclick = () => navigator.clipboard.writeText(link.url).then(() => $("copy").textContent = "Copied");
+  let share = link.share_url;
+  if (!share && link.share_path && location.hostname.endsWith(".ts.net")) share = `https://${location.hostname}:8443${link.share_path}`;
+  $("share-text").innerHTML = share ? `<code>${esc(share)}</code>`
+    : link.share_path ? `On, at <code>${esc(link.share_path)}</code> on the public address.`
+    : `Off. Run setup-share-link.bat on the PC to pick a password and turn it on.`;
+  $("share-copy").hidden = !share;
+  $("share-copy").onclick = () => navigator.clipboard.writeText(share).then(() => $("share-copy").textContent = "Copied");
 }
 $("rotate").onclick = async () => {
   if (!confirm("Make a new link? The old one stops working right away.")) return;

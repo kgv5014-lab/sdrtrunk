@@ -2,6 +2,8 @@
 
     python -m sdrtrunk_transcriber                      run the service (reads config.toml)
     python -m sdrtrunk_transcriber --test-file call.mp3 transcribe one file and exit
+    python -m sdrtrunk_transcriber --share setup        set the friends' map password and show the link
+    python -m sdrtrunk_transcriber --share stop         turn the friends' map link off
 """
 
 import argparse
@@ -36,6 +38,8 @@ def main():
                         help="settings file (default: config.toml)")
     parser.add_argument("--test-file", type=Path,
                         help="transcribe one audio file with the configured backend, print it, and exit")
+    parser.add_argument("--share", choices=["setup", "stop"],
+                        help="set the password for the friends' map link, or turn that link off")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -47,6 +51,12 @@ def main():
     if config_path is None:
         logging.warning("%s not found, using built-in defaults", args.config)
     config = load_config(config_path)
+
+    if args.share:
+        from . import share
+        if args.share == "setup":
+            sys.exit(share.setup(config.data_path, config.listen.public_url))
+        sys.exit(share.stop(config.data_path))
 
     if args.test_file:
         sys.exit(test_file(config, args.test_file))

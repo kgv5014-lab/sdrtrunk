@@ -266,6 +266,10 @@ class AircraftConfig:
     # Hospitals come from places-geo.json (fetch-places.bat). Add pads it misses here:
     # [{name = "St. Luke's Anderson", lat = 40.68, lon = -75.29}]
     hospitals: list = field(default_factory=list)
+    # Air band channels (talkgroup labels, or part of them) where a pilot saying a medevac call sign
+    # ("Life Flight 2", "Lifeguard") marks the helicopter flying as medevac.
+    radio_talkgroups: list = field(default_factory=lambda: ["ABE Approach", "ABE Tower", "Air Emergency",
+                                                            "Helicopters"])
 
 
 @dataclass

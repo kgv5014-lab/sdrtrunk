@@ -181,7 +181,9 @@ CREATE TABLE IF NOT EXISTS helicopters (
     hospital_landings INTEGER NOT NULL DEFAULT 0,
     incident_landings INTEGER NOT NULL DEFAULT 0,
     first_seen INTEGER,
-    last_seen INTEGER
+    last_seen INTEGER,
+    radio_name TEXT,                     -- the medevac call sign a pilot used on the air band, "Life Flight 2"
+    radio_calls INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS helicopter_landings (
@@ -285,6 +287,10 @@ class Database:
             self._conn.execute("ALTER TABLE calls ADD COLUMN speaker_kind TEXT")
             self._conn.execute("ALTER TABLE calls ADD COLUMN speaker TEXT")
             self._conn.execute("ALTER TABLE calls ADD COLUMN speaker_how TEXT")
+        helicopter_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(helicopters)")}
+        if "radio_name" not in helicopter_columns:
+            self._conn.execute("ALTER TABLE helicopters ADD COLUMN radio_name TEXT")
+            self._conn.execute("ALTER TABLE helicopters ADD COLUMN radio_calls INTEGER NOT NULL DEFAULT 0")
         summary_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(summaries)")}
         if "last_call_id" not in summary_columns:
             self._conn.execute("ALTER TABLE summaries ADD COLUMN last_call_id INTEGER")
@@ -772,7 +778,7 @@ class Database:
     # ---- helicopters from ADS-B (aircraft.py)
 
     HELICOPTER_FIELDS = ("hex", "reg", "flight", "operator", "type", "kind", "hospital_landings",
-                         "incident_landings", "first_seen", "last_seen")
+                         "incident_landings", "first_seen", "last_seen", "radio_name", "radio_calls")
 
     def helicopters(self) -> dict[str, dict]:
         with self._lock:
@@ -784,7 +790,8 @@ class Database:
             self._conn.execute(
                 f"INSERT OR REPLACE INTO helicopters ({', '.join(self.HELICOPTER_FIELDS)}) "
                 f"VALUES ({', '.join('?' for _ in self.HELICOPTER_FIELDS)})",
-                [heli.get(n) for n in self.HELICOPTER_FIELDS])
+                [heli.get(n) or (0 if n.endswith(("_landings", "_calls")) else None)
+                 for n in self.HELICOPTER_FIELDS])
             self._conn.commit()
 
     def add_helicopter_landing(self, landing: dict):
@@ -802,7 +809,8 @@ class Database:
         found: dict[int, list[dict]] = {}
         with self._lock:
             rows = self._conn.execute(
-                f"SELECT l.*, h.kind AS hand_kind, h.operator, h.hospital_landings, h.incident_landings "
+                f"SELECT l.*, h.kind AS hand_kind, h.operator, h.hospital_landings, h.incident_landings, "
+                f"h.radio_name, h.radio_calls "
                 f"FROM helicopter_landings l LEFT JOIN helicopters h ON h.hex = l.hex "
                 f"WHERE l.incident_id IN ({', '.join('?' for _ in incident_ids)}) ORDER BY l.landing_time",
                 list(incident_ids)).fetchall()

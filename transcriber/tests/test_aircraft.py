@@ -294,3 +294,52 @@ def test_aircraft_kind_api(tmp_path):
         reply = client.post("/api/aircraft/abc123/kind", json={"kind": "police"}).json()
         assert reply["kind"] == "police"
         assert client.get("/api/incidents").status_code == 200
+
+
+def test_medevac_callsigns():
+    from sdrtrunk_transcriber.aircraft import medevac_callsign
+    assert medevac_callsign("Allentown tower, Life Flight two, ten miles south inbound St. Luke's") == "Life Flight 2"
+    assert medevac_callsign("lifeguard eight one two lima foxtrot") == "Lifeguard"
+    assert medevac_callsign("Cessna three four five, runway two four, cleared to land") is None
+
+
+def radio_call(text, label="Helicopters", when=NOW):
+    return {"id": 1, "talkgroup_label": label, "transcript": text, "call_time": when}
+
+
+def test_radio_callsign_marks_the_only_helicopter_flying(tmp_path):
+    watch, db = make_watch(tmp_path)
+    watch.update({"aircraft": [unknown_heli()]}, NOW)
+    assert watch.aircraft()[0]["kind"] == "other"
+    # Not an air band channel: ignored
+    assert watch.heard_on_radio(radio_call("Life Flight 2 en route", label="Countywide"), now=NOW) is None
+    plane = watch.heard_on_radio(radio_call("Allentown approach, Life Flight 2, ten south"), now=NOW + 5)
+    assert plane["hex"] == "c0ffee"
+    shown = watch.aircraft()[0]
+    assert shown["kind"] == "medevac" and shown["kind_how"] == "heard on the radio as Life Flight 2"
+    assert shown["radio_name"] == "Life Flight 2"
+    assert db.helicopters()["c0ffee"]["radio_calls"] == 1
+
+
+def test_radio_callsign_uses_the_matched_plane_or_the_callsign_heard_before(tmp_path):
+    watch, db = make_watch(tmp_path)
+    news = heli(hex="dddddd", r="N3NW", flight="N3NW", ownOp="")
+    watch.update({"aircraft": [unknown_heli(), news]}, NOW)
+    # Two flying and the aviation log found no plane: not sure, nothing marked
+    assert watch.heard_on_radio(radio_call("Life Flight 2 inbound"), None, NOW) is None
+    # The aviation log matched the tail number it heard
+    plane = watch.heard_on_radio(radio_call("Life Flight 2, November seven lima golf"), {"hex": "c0ffee"}, NOW)
+    assert plane["hex"] == "c0ffee"
+    # A later call with only "Life Flight 2" goes to the one heard as Life Flight 2 before
+    assert watch.heard_on_radio(radio_call("Life Flight 2, clear of the Bravo"), None, NOW + 30)["hex"] == "c0ffee"
+    assert db.helicopters()["c0ffee"]["radio_calls"] == 2
+    assert [a["kind"] for a in watch.aircraft() if a["hex"] == "dddddd"] == ["other"]
+
+
+def test_hand_pick_not_medevac_is_never_overridden_by_radio(tmp_path):
+    watch, db = make_watch(tmp_path)
+    watch.update({"aircraft": [unknown_heli()]}, NOW)
+    watch.set_kind("c0ffee", "other")
+    assert watch.heard_on_radio(radio_call("Life Flight 2 inbound"), now=NOW) is None
+    assert watch.heard_on_radio(radio_call("Life Flight 2 inbound"), {"hex": "c0ffee"}, NOW) is None
+    assert watch.aircraft()[0]["kind"] == "other"

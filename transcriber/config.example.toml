@@ -202,6 +202,10 @@ learn_landings = 2
 # Hospitals come from places-geo.json (made by fetch-places.bat). Add any pad it misses here:
 # hospitals = [{name = "St. Luke's Anderson", lat = 40.68, lon = -75.29}]
 hospitals = []
+# Air band channels (talkgroup labels, or part of one) where a pilot saying a medevac call sign
+# ("Life Flight 2", "Lifeguard") marks that helicopter as medevac: the one whose tail number was said,
+# else the one heard with that call sign before, else the only helicopter flying.
+radio_talkgroups = ["ABE Approach", "ABE Tower", "Air Emergency", "Helicopters"]
 
 [traffic]
 # PennDOT crashes, road closures and roadwork, plus live traffic cameras, on the incident map. Read from

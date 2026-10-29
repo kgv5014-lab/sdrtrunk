@@ -226,6 +226,12 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 map_worker.submit(call_id)
             if summarizer:
                 summarizer.call_done(call_id)
+            if aircraft:
+                # A pilot saying "Life Flight 2" on the air band marks that helicopter as medevac.
+                try:
+                    aircraft.heard_on_radio(db.get_call(call_id) or {})
+                except Exception:
+                    log.exception("Helicopters: call %s failed", call_id)
 
         worker.on_done = done
         aircraft = AircraftWatch(config, db, alerter) if config.aircraft.enabled else None

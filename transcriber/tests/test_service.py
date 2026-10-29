@@ -591,3 +591,21 @@ def test_fire_and_ems_calls_are_transcribed_before_police_when_calls_pile_up(mak
     assert order == ["Co PD S1 Patch", "Countywide", "Norco Ops 1", "Co PD N1 Patch", "Co PD E1 Patch"]
     assert worker.rank({"talkgroup_label": "Nancy FD"}) == 2
     assert worker.rank({"talkgroup_label": "Co PD S1 Patch"}) == len(worker.config.transcription.first_talkgroups)
+
+
+class AirBackend(FakeBackend):
+    def transcribe(self, samples, prompt):
+        self.prompts.append(prompt)
+        return Transcript("November eight one two Lima Foxtrot, runway two four, cleared to land, 10-4", -0.25)
+
+
+def test_air_band_calls_get_aviation_hints_and_cleanup(make_client):
+    client, fake = make_client(api_key="secret", backend=AirBackend(), vocabulary="RIT\nCetronia EMS\n")
+    air = dict(CALL, talkgroup="9102", talkgroupLabel="ABE Tower", talkgroupGroup="Air", talkerAlias="")
+    with client:
+        post(client, sdrtrunk_body(air, make_mp3(3.0)))
+        assert client.app.state.worker.wait_idle()
+        call = client.get("/api/calls").json()[0]
+    # Only aviation hints: none of the county vocabulary
+    assert "Foxtrot" in fake.prompts[0] and "RIT" not in fake.prompts[0] and "Cetronia" not in fake.prompts[0]
+    assert call["transcript"].startswith("N812LF, runway 24, cleared to land")

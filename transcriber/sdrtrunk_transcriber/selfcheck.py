@@ -68,8 +68,9 @@ class SelfCheck:
         self._ollama_down_until = 0.0
 
     def problems(self, transcript: str | None, confidence: float | None, speech_s: float,
-                 *context: str | None) -> list[str]:
-        """What looks wrong with a finished transcript, in plain words. Empty = looks fine."""
+                 *context: str | None, county: bool = True) -> list[str]:
+        """What looks wrong with a finished transcript, in plain words. Empty = looks fine. county=False
+        (air band calls) skips the street and unit checks, which only know county names."""
         text = transcript or ""
         if not text.strip():
             return []
@@ -77,9 +78,9 @@ class SelfCheck:
         found = []
         if confidence is not None and confidence < sc.low_confidence:
             found.append("Whisper unsure")
-        if sc.streets:
+        if sc.streets and county:
             found += [f"unknown street \"{name}\"" for name in self.placebook.unknown_streets(text)]
-        if sc.units:
+        if sc.units and county:
             found += [f"unknown unit \"{name}\"" for name in self.codebook.unknown_units(text, *context)]
         loop = loop_words(text)
         if loop:

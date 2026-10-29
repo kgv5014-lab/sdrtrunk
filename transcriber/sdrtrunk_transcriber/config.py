@@ -67,6 +67,17 @@ class AudioConfig:
 
 
 @dataclass
+class AirTranscriptsConfig:
+    # Air band talkgroups (airport, helicopters), by number or name. They get aviation hints and cleanup
+    # (phonetic alphabet, runway, squawk, tail numbers) in place of the county streets, units and 10-codes.
+    talkgroups: list = field(default_factory=lambda: ["9101", "9102", "9103", "9104"])
+    # Your own extra air hints, one per line (airline call signs you hear, local fixes). Optional.
+    vocabulary_file: str = "air-vocabulary.txt"
+    # Even out each speaker within a call: a pilot overhead is often 15 dB louder than the tower.
+    level_speakers: bool = True
+
+
+@dataclass
 class TonesConfig:
     # Finds two-tone pages in call recordings, for talkgroups where SDRTrunk's own paging decoder can't
     # hear them (P25 and other digital voice). Found pages are logged like SDRTrunk's and can alert.
@@ -394,6 +405,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
+    air_transcripts: AirTranscriptsConfig = field(default_factory=AirTranscriptsConfig)
     tones: TonesConfig = field(default_factory=TonesConfig)
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
@@ -421,6 +433,10 @@ class Config:
     @property
     def vocabulary_path(self) -> Path:
         return self._resolve(self.transcription.vocabulary_file)
+
+    @property
+    def air_vocabulary_path(self) -> Path | None:
+        return self._resolve(self.air_transcripts.vocabulary_file) if self.air_transcripts.vocabulary_file else None
 
     @property
     def codes_path(self) -> Path | None:

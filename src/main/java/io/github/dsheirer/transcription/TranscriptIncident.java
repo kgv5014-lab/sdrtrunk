@@ -42,12 +42,26 @@ import java.util.List;
  *                      or unknown, may be null
  * @param services police, fire and/or ems: the services working it, in that order
  * @param helicopters medevac and police helicopters that came down near it, e.g. "Medevac N812LF landed 2:14 PM"
+ * @param updates what changed along the way, written by the AI model, oldest first
  */
 public record TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
                                  String label, String category, String nature, String type,
                                  List<Call> calls, List<Page> pages, String summary, List<String> summaryTags,
-                                 String summaryStatus, List<String> services, List<String> helicopters)
+                                 String summaryStatus, List<String> services, List<String> helicopters,
+                                 List<Update> updates)
 {
+    /**
+     * An incident without update notes.
+     */
+    public TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
+                              String label, String category, String nature, String type,
+                              List<Call> calls, List<Page> pages, String summary, List<String> summaryTags,
+                              String summaryStatus, List<String> services, List<String> helicopters)
+    {
+        this(id, firstTime, lastTime, latitude, longitude, label, category, nature, type, calls, pages, summary,
+            summaryTags, summaryStatus, services, helicopters, List.of());
+    }
+
     /**
      * An incident without helicopters.
      */
@@ -103,6 +117,14 @@ public record TranscriptIncident(long id, long firstTime, long lastTime, double 
      * @param label station name, null when not on the station list
      */
     public record Page(long pageTime, String label) {}
+
+    /**
+     * A change in the incident, such as "Second alarm called" or "Patient transported".
+     *
+     * @param time the newest call it is about, seconds since epoch
+     * @param note what changed
+     */
+    public record Update(long time, String note) {}
 
     /**
      * Display name of the type: Fire, EMS, Police, MVA or Other.

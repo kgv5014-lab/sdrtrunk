@@ -234,11 +234,25 @@ public class TranscriptionClient
                 }
             }
 
+            List<TranscriptIncident.Update> updates = new ArrayList<>();
+
+            if(incident.has("updates") && incident.get("updates").isJsonArray())
+            {
+                for(JsonElement item : incident.getAsJsonArray("updates"))
+                {
+                    if(item.isJsonObject() && string(item.getAsJsonObject(), "note") != null)
+                    {
+                        updates.add(new TranscriptIncident.Update(number(item.getAsJsonObject(), "time", 0L),
+                            string(item.getAsJsonObject(), "note")));
+                    }
+                }
+            }
+
             incidents.add(new TranscriptIncident(number(incident, "id", 0L), number(incident, "first_time", 0L),
                 number(incident, "last_time", 0L), decimal(incident, "lat"), decimal(incident, "lon"),
                 string(incident, "label"), string(incident, "category"), string(incident, "nature"),
                 string(incident, "type"), calls, pages, string(incident, "summary"), summaryTags,
-                string(incident, "summary_status"), services, helicopters));
+                string(incident, "summary_status"), services, helicopters, updates));
         }
 
         return incidents;

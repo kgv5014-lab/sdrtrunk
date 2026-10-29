@@ -262,7 +262,8 @@ enabled = true
 file = "paging_tones.csv"
 # Only check calls whose talkgroup name or number contains one of these, e.g. ["Fire Dispatch"]. [] = all.
 talkgroups = []
-# Name unlisted tones by themselves from the station dispatch names right after them (see the README).
+# Name unlisted tones by themselves from the station dispatch names right after them, and correct those
+# names later if dispatch keeps naming another station (see the README).
 learn = true
 learn_min_seen = 3
 learn_share = 0.5

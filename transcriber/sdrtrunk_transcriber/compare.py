@@ -70,8 +70,8 @@ class Runner:
     def __init__(self, config: Config, backend):
         self.config = config
         self.backend = backend
-        self.codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         self.placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
+        self.codebook = CodeBook(config.codes_path, config.codes.time_window_minutes, self.placebook.street_at)
         self.corrections = CorrectionBook(config.corrections_path)
         self.vocabulary = load_vocabulary(config.vocabulary_path)
         self.hints = LearnedHints(config.data_path / "calls.db", config.hints)

@@ -123,13 +123,18 @@ What happens to each call:
    becomes `Signal 33`. Bare four-digit numbers like `1023` are left alone, because they are usually
    call signs.
 3. A four-digit 24-hour time within `time_window_minutes` (default 3) of the call, like "1346" said at
-   1:46 PM, becomes `13:46`. Numbers after unit words ("Engine 1346") or before street words
-   ("1346 Main St") are left alone. Whisper writes the time dispatch reads at the end of a call many
+   1:46 PM, becomes `13:46`. Numbers after unit words ("Engine 1346"), house numbers ("1346 Main St",
+   "1346, Blue Mountain Drive", or the same number said with a street elsewhere in the call) and units
+   calling or being called by County ("1346 County", "County, 1346, on scene") are left alone. Whisper writes the time dispatch reads at the end of a call many
    ways ("14-16", "14, 11", "13.43 hours", "Ops 113-30"); these become `14:16` and so on too.
 4. The call log page shows labels such as `10-23 Arrived on scene`, `2081 Easton Fire/EMS, Ambulance`,
    `EMS 15 Hanover Twp Fire/EMS`, `ALS Advanced life support call` and `13:46 1:46 PM`. Call signs
    written with a dash (`15-82`) count too. On police talkgroups, three- and four-digit numbers are read
    as police cars instead (`2741 Palmer Twp PD, car 41`). Whisper's original text is kept in the log as `transcript_raw`.
+5. Numbers that are not units get no unit label: house numbers (a street follows, with or without
+   "Street" for streets in `places.csv`: "1360 Butler"), apartments and rooms ("Apartment 505"), years
+   ("a 2016 Jeep", "March of 2027") and 911 calls ("a 911 hang-up"). The unit board skips them too.
+   Times Whisper already wrote with AM or PM keep it ("11:16 PM").
 
 ## Local streets and landmarks
 
@@ -574,12 +579,20 @@ restart. Settings are under `[tones]`; `talkgroups` limits the search to dispatc
 
 Unnamed tones also get named by themselves (`learn = true`). Every few minutes the transcriber looks at
 the last `learn_days` of unnamed tone-outs and at what dispatch said on that talkgroup from the tones
-until 90 seconds later ("EMS 27", "Fire 54", "Station 20", or a call sign like "Medic 2781"). When the
+until 90 seconds later ("EMS 27", "Fire 54", "Station 20", a call sign like "Medic 2781", "62 committed",
+or the station a dispatch starts with, "62, Tac 6, ALS ..."). Only station numbers in `codes.csv` count
+when it lists stations, so a garbled "MS-6" isn't taken for a station 6. When the
 same station was named after more than `learn_share` (half) of a tone pair's tone-outs that name a
 station, more often than any other, and at least `learn_min_seen` times, the pair is added to `paging_tones.csv` with a "# Learned" note above it, and its
 tone-outs already logged get the name. When the service varies ("Fire 20", then "EMS 20") the name is
 "Station 20". Tones that start or end every fire call name a different station each time, so they stay
-unnamed. Fix or delete a learned line like any other; it is not learned again while it's in the file.
+unnamed.
+
+Learned names keep being checked as more tone-outs come in. When dispatch has since clearly been naming a
+different station after a pair's tones, the line is changed in place with a "# Relearned ... (was EMS 6)"
+note, and its tone-outs get the new name. "Fire 17" and "Station 17" are the same station, so that never
+counts as a change. Lines you typed yourself are never changed: to keep a name of your own on a learned
+line, delete the "# Learned" note above it.
 
 ## Auto-restart
 

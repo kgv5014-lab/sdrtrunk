@@ -3,8 +3,13 @@
 Reads the receiver's aircraft.json every few seconds and keeps the helicopters, plus any aircraft on the
 watch list, with a short trail each. A helicopter that comes down low near a recent incident is marked
 as landing there, and can send a phone alert.
+
+Each helicopter is remembered by its ICAO hex code and sorted into medevac, police or other: by hand on the
+map, else by its registered owner, else learned from where it sets down. Landing at hospitals (and at
+incidents) makes it medevac. Only medevac landings alert.
 """
 
+import json
 import logging
 import threading
 import time
@@ -38,6 +43,12 @@ MEDICAL_OPERATORS = ("GEISINGER", "LIFE FLIGHT", "LIFEFLIGHT", "MEDEVAC", "MED E
                      "ST. LUKE", "HOSPITAL", "MEDICAL")
 
 
+# Owners of police and other law enforcement aircraft.
+POLICE_OPERATORS = ("POLICE", "SHERIFF", "STATE TROOPER", "CUSTOMS AND BORDER", "BORDER PROTECTION",
+                    "HOMELAND SECURITY", "LAW ENFORCEMENT")
+KINDS = ("medevac", "police", "other")
+
+
 def is_helicopter(plane: dict) -> bool:
     return (plane.get("category") == "A7" or (plane.get("t") or "").upper() in HELICOPTER_TYPES
             or "HELICOPTER" in (plane.get("desc") or "").upper())
@@ -46,6 +57,48 @@ def is_helicopter(plane: dict) -> bool:
 def is_medical(plane: dict) -> bool:
     operator = (plane.get("ownOp") or "").upper()
     return any(word in operator for word in MEDICAL_OPERATORS)
+
+
+def is_police(plane: dict) -> bool:
+    operator = (plane.get("ownOp") or "").upper()
+    return any(word in operator for word in POLICE_OPERATORS)
+
+
+def decide_kind(known: dict, learn_landings: int = 2) -> tuple[str, str]:
+    """medevac, police or other for a remembered helicopter, and what decided it. `known` is its row in the
+    helicopters table: kind picked by hand, operator, hospital_landings, incident_landings."""
+    if known.get("kind") in KINDS:
+        return known["kind"], "set by hand"
+    owner = {"ownOp": known.get("operator")}
+    if is_police(owner):
+        return "police", "from owner name"
+    if is_medical(owner):
+        return "medevac", "from owner name"
+    hospital, incident = known.get("hospital_landings") or 0, known.get("incident_landings") or 0
+    if hospital >= max(1, learn_landings) or (hospital >= 1 and incident >= 1):
+        return "medevac", f"learned: {hospital} hospital and {incident} incident landing{'' if incident == 1 else 's'}"
+    if hospital or incident:
+        return "other", f"{hospital} hospital and {incident} incident landing{'' if incident == 1 else 's'} so far"
+    return "other", ""
+
+
+def load_hospitals(geo_path, extra: list) -> list[dict]:
+    """Hospitals from places-geo.json (fetch-places.bat) plus [aircraft] hospitals in config.toml."""
+    found = []
+    if geo_path and geo_path.exists():
+        try:
+            data = json.loads(geo_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            log.warning("ADS-B: could not read hospitals from %s (%s)", geo_path, e)
+            data = {}
+        for mark in data.get("landmarks", []):
+            if mark.get("type") == "amenity=hospital" and mark.get("lat") is not None and mark.get("name"):
+                found.append({"name": mark["name"], "lat": mark["lat"], "lon": mark["lon"]})
+    for entry in extra:
+        if isinstance(entry, dict) and entry.get("lat") is not None and entry.get("lon") is not None:
+            found.append({"name": str(entry.get("name") or "Hospital"), "lat": float(entry["lat"]),
+                          "lon": float(entry["lon"])})
+    return found
 
 
 def altitude_ft(plane: dict) -> int | None:
@@ -88,6 +141,14 @@ class AircraftWatch:
         self._lock = threading.Lock()
         self._planes: dict[str, dict] = {}
         self._landed: set[tuple[str, int]] = set()
+        # Every helicopter seen, by hex: what it is and how often it set down at hospitals and incidents.
+        self._known: dict[str, dict] = db.helicopters()
+        # Where each helicopter last sat low and slow at a hospital, so one landing counts once.
+        self._on_pad: dict[str, tuple[str, float]] = {}
+        self._set_down_at: set[tuple[str, int]] = set()
+        self._geo_path = config.geo_path
+        self._geo_mtime = None
+        self.hospitals: list[dict] = []
         self.error: str | None = None
         self.updated: float | None = None
         self._stop = threading.Event()
@@ -121,6 +182,7 @@ class AircraftWatch:
     def update(self, data: dict, now: float | None = None):
         now = time.time() if now is None else now
         incidents = self._recent_incidents(now)
+        self._load_hospitals()
         with self._lock:
             for plane in data.get("aircraft", []):
                 hex_id = plane.get("hex")
@@ -134,7 +196,7 @@ class AircraftWatch:
                 shown.update({
                     "flight": (plane.get("flight") or "").strip(), "reg": plane.get("r") or "",
                     "type": plane.get("t") or "", "desc": plane.get("desc") or "",
-                    "operator": plane.get("ownOp") or "", "medical": is_medical(plane),
+                    "operator": plane.get("ownOp") or "",
                     "name": name or "", "watched": name is not None,
                     "lat": lat, "lon": lon, "alt_ft": altitude_ft(plane), "speed_kt": plane.get("gs"),
                     "track": plane.get("track"), "seen": now - plane.get("seen_pos", 0),
@@ -142,9 +204,12 @@ class AircraftWatch:
                 if not shown["trail"] or shown["trail"][-1] != [lat, lon]:
                     shown["trail"] = (shown["trail"] + [[lat, lon]])[-TRAIL_POINTS:]
                 shown["near"] = self._near(shown, incidents)
+                known = self._remember(shown, now)
+                self._set_down(shown, known, now)
+                self._classify(shown)
                 self._planes[hex_id] = shown
                 if shown["near"] and shown["near"]["landing"]:
-                    self._landing(shown, shown["near"])
+                    self._landing(shown, shown["near"], now)
             for hex_id in [h for h, p in self._planes.items() if now - p["seen"] > STALE_S]:
                 del self._planes[hex_id]
         self.updated = now
@@ -152,6 +217,78 @@ class AircraftWatch:
     def aircraft(self) -> list[dict]:
         with self._lock:
             return [dict(p, trail=list(p["trail"])) for p in self._planes.values()]
+
+    def set_kind(self, hex_id: str, kind: str | None) -> dict:
+        """Ken's pick from the map: medevac, police or other; None goes back to learning."""
+        hex_id = hex_id.strip().lower()
+        with self._lock:
+            known = self._known.setdefault(hex_id, {"hex": hex_id, "hospital_landings": 0, "incident_landings": 0})
+            known["kind"] = kind if kind in KINDS else None
+            self.db.save_helicopter(known)
+            if hex_id in self._planes:
+                self._classify(self._planes[hex_id])
+            return dict(known)
+
+    def _load_hospitals(self):
+        mtime = self._geo_path.stat().st_mtime if self._geo_path and self._geo_path.exists() else None
+        if mtime != self._geo_mtime or not self.hospitals:
+            self._geo_mtime = mtime
+            self.hospitals = load_hospitals(self._geo_path, self.settings.hospitals)
+
+    def _remember(self, shown: dict, now: float) -> dict:
+        """The helicopter's row in the helicopters table, updated with what the receiver says now."""
+        known = self._known.get(shown["hex"])
+        fresh = {"reg": shown["reg"], "flight": shown["flight"], "type": shown["type"]}
+        if shown["operator"]:
+            fresh["operator"] = shown["operator"]
+        if known is None:
+            known = self._known[shown["hex"]] = {"hex": shown["hex"], "hospital_landings": 0,
+                                                 "incident_landings": 0, "first_seen": int(now)}
+        changed = any(value and known.get(key) != value for key, value in fresh.items())
+        known.update({key: value for key, value in fresh.items() if value})
+        if changed or now - (known.get("last_seen") or 0) >= 300:
+            known["last_seen"] = int(now)
+            self.db.save_helicopter(known)
+        return known
+
+    def _set_down(self, shown: dict, known: dict, now: float):
+        """Counts a landing when the helicopter is low and slow at a hospital or an incident."""
+        alt, speed = shown["alt_ft"], shown["speed_kt"]
+        if alt is None or alt > self.settings.pad_altitude_ft or (speed is not None and speed > self.settings.pad_speed_kt):
+            return
+        hex_id, changed = shown["hex"], False
+        hospital = self._hospital_near(shown["lat"], shown["lon"])
+        if hospital:
+            name, miles = hospital
+            last = self._on_pad.get(hex_id)
+            if last is None or last[0] != name or now - last[1] > 3600:
+                known["hospital_landings"] = (known.get("hospital_landings") or 0) + 1
+                changed = True
+                log.info("Helicopter %s set down at %s (%d hospital landings)", self._who(shown), name,
+                         known["hospital_landings"])
+                self.db.add_helicopter_landing({"hex": hex_id, "landing_time": int(now), "name": self._who(shown),
+                                                "place": name, "miles": miles})
+            self._on_pad[hex_id] = (name, now)
+        near = shown["near"]
+        if near and (hex_id, near["incident_id"]) not in self._set_down_at:
+            self._set_down_at.add((hex_id, near["incident_id"]))
+            known["incident_landings"] = (known.get("incident_landings") or 0) + 1
+            changed = True
+        if changed:
+            self.db.save_helicopter(known)
+
+    def _hospital_near(self, lat: float, lon: float) -> tuple[str, float] | None:
+        best = None
+        for hospital in self.hospitals:
+            meters = distance_m(lat, lon, hospital["lat"], hospital["lon"])
+            if meters <= self.settings.hospital_radius_miles * METERS_PER_MILE and (best is None or meters < best[0]):
+                best = (meters, hospital["name"])
+        return (best[1], round(best[0] / METERS_PER_MILE, 2)) if best else None
+
+    def _classify(self, shown: dict):
+        kind, how = decide_kind(self._known.get(shown["hex"]) or {}, self.settings.learn_landings)
+        shown.update({"kind": kind, "kind_how": how, "medical": kind == "medevac", "police": kind == "police",
+                      "hand_kind": (self._known.get(shown["hex"]) or {}).get("kind")})
 
     def _recent_incidents(self, now: float) -> list[dict]:
         return [i for i in self.db.incidents(since=int(now - self.settings.incident_hours * 3600), limit=200)
@@ -174,19 +311,49 @@ class AircraftWatch:
                 "nature": incident.get("nature") or "", "miles": round(meters / METERS_PER_MILE, 2),
                 "landing": landing}
 
-    def _landing(self, plane: dict, near: dict):
+    @staticmethod
+    def _who(plane: dict) -> str:
+        return plane["name"] or plane["flight"] or plane["reg"] or plane["hex"]
+
+    def _landing(self, plane: dict, near: dict, now: float):
         key = (plane["hex"], near["incident_id"])
         if key in self._landed:
             return
         self._landed.add(key)
-        who = plane["name"] or plane["flight"] or plane["reg"] or plane["hex"]
+        who = self._who(plane)
+        self.db.add_helicopter_landing({"hex": plane["hex"], "landing_time": int(now), "name": who,
+                                        "incident_id": near["incident_id"], "miles": near["miles"]})
         if plane["operator"] and not plane["name"]:
             who += f" ({plane['operator']})"
-        log.info("Helicopter %s coming down %.1f mi from incident %d (%s)", who, near["miles"],
+        log.info("Helicopter %s (%s) coming down %.1f mi from incident %d (%s)", who, plane["kind"], near["miles"],
                  near["incident_id"], near["label"])
-        if self.alerter and self.settings.alert_landing:
+        wanted = plane["kind"] == "medevac" or plane["watched"] or not self.settings.alert_only_medevac
+        if self.alerter and self.settings.alert_landing and wanted:
             where = " ".join(filter(None, (near["nature"], near["label"])))
-            self.alerter.send("aircraft", f"Helicopter landing: {who}",
+            title = "Medevac landing" if plane["kind"] == "medevac" else "Helicopter landing"
+            self.alerter.send("aircraft", f"{title}: {who}",
                               f"{near['miles']} mi from {where or 'an incident'}", tags=["helicopter"],
                               priority=4, click=f"{self.alerter.base_url}/map" if self.alerter.base_url else None,
                               incident_id=near["incident_id"])
+
+
+def incident_helicopters(db: Database, incident_ids: list[int], learn_landings: int = 2) -> dict[int, list[dict]]:
+    """Medevac and police helicopters that came down near each incident, once per helicopter, for the
+    incident list. Decided by what is known about the helicopter now, so a landing counts once it is learned."""
+    notes: dict[int, list[dict]] = {}
+    for incident_id, landings in db.helicopter_landings(incident_ids).items():
+        seen = set()
+        for landing in landings:
+            known = dict(landing, kind=landing["hand_kind"])
+            kind, _how = decide_kind(known, learn_landings)
+            if kind == "other" or landing["hex"] in seen:
+                continue
+            seen.add(landing["hex"])
+            clock = time.strftime("%I:%M %p", time.localtime(landing["landing_time"])).lstrip("0")
+            verb = "landed" if kind == "medevac" else "overhead"
+            label = "Medevac" if kind == "medevac" else "Police"
+            notes.setdefault(incident_id, []).append({
+                "hex": landing["hex"], "name": landing["name"] or landing["hex"], "kind": kind,
+                "time": landing["landing_time"], "miles": landing["miles"],
+                "text": f"{label} {landing['name'] or landing['hex']} {verb} {clock}"})
+    return notes

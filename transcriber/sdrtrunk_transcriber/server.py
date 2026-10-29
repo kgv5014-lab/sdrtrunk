@@ -39,7 +39,7 @@ from .hints import LearnedHints
 from .places import PlaceBook
 from .address_fix import AddressBook, AddressFixer
 from .addresses import Gazetteer
-from .aircraft import AircraftWatch
+from .aircraft import KINDS, AircraftWatch, incident_helicopters
 from .traffic import Traffic511
 from .config import Config
 from .db import Database
@@ -472,6 +472,18 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         return {"enabled": True, "aircraft": aircraft.aircraft(), "error": aircraft.error,
                 "updated": aircraft.updated}
 
+    @app.post("/api/aircraft/{hex_id}/kind")
+    async def set_aircraft_kind(request: Request, hex_id: str):
+        """Mark a helicopter medevac, police or other by hand; "auto" goes back to learning."""
+        aircraft = request.app.state.aircraft
+        if aircraft is None:
+            raise HTTPException(404, "[aircraft] is off")
+        body = await request.json()
+        kind = body.get("kind") if isinstance(body, dict) else None
+        if kind not in (*KINDS, "auto"):
+            raise HTTPException(400, "send {\"kind\": \"medevac\" | \"police\" | \"other\" | \"auto\"}")
+        return aircraft.set_kind(hex_id, None if kind == "auto" else kind)
+
     def _traffic(request: Request) -> Traffic511:
         if request.app.state.traffic is None:
             raise HTTPException(404, "PennDOT traffic is turned off in config.toml ([traffic] enabled)")
@@ -514,6 +526,11 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             incident["services"] = services_of(incident["calls"])
             # Tone-outs just before the first call (pages carry no address, so this is by time only).
             incident["pages"] = db.pages(incident["first_time"] - 600, incident["first_time"] + 60, limit=10)
+        # Medevac (and police) helicopters that came down near it, from the ADS-B receiver.
+        helicopters = incident_helicopters(db, [incident["id"] for incident in incidents],
+                                           config.aircraft.learn_landings)
+        for incident in incidents:
+            incident["helicopters"] = helicopters.get(incident["id"], [])
         if request.app.state.summarizer:
             summaries = db.summaries("incident", [incident["id"] for incident in incidents])
             for incident in incidents:

@@ -46,7 +46,8 @@ public class IncidentsTest
           "pages": [{"id": 3, "page_time": 1792656813.25, "tone_a": 349.0, "tone_b": 832.5, "label": "Station 4 Engine"}],
           "summary": "Engine 41 sent to a structure fire at North 3rd and Northampton; on location.",
           "summary_tags": ["working fire"], "summary_status": "active", "summary_current": true,
-          "services": ["police", "fire"]},
+          "services": ["police", "fire"],
+          "helicopters": [{"hex": "a1b2c3", "kind": "medevac", "text": "Medevac N812LF landed 2:14 PM"}]},
          {"id": 6, "first_time": 1792650000, "last_time": 1792650000, "lat": 40.68, "lon": -75.25,
           "label": "Route 22 & Freemansburg Avenue, Palmer Township", "category": null, "nature": "MVA",
           "hidden": 0, "type": "mva", "calls": [], "pages": []}]
@@ -73,6 +74,8 @@ public class IncidentsTest
         assertEquals("active", fire.summaryStatus());
         assertEquals(List.of("police", "fire"), fire.services());
         assertEquals("Police · Fire", fire.servicesDisplay());
+        assertEquals(List.of("Medevac N812LF landed 2:14 PM"), fire.helicopters());
+        assertTrue(IncidentsPanel.describe(fire).contains("Helicopter: Medevac N812LF landed 2:14 PM"));
 
         TranscriptIncident crash = incidents.get(1);
         assertEquals("MVA", crash.typeDisplay());

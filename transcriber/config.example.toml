@@ -186,6 +186,19 @@ landing_radius_miles = 1.0
 incident_hours = 2.0
 # Also send a phone alert when that happens (needs [alerts] set up).
 alert_landing = false
+# Alert only for medevac helicopters (and named watch-list aircraft). Others still show on the map:
+# medevac in red, police in blue, the rest in gray. The map's helicopter popup has buttons to set it by hand.
+alert_only_medevac = true
+# How it learns which helicopters are medevac: one this low (feet) and slow (knots) within
+# hospital_radius_miles of a hospital has set down there. After learn_landings such landings (or one at a
+# hospital and one at an incident) it counts as medevac.
+pad_altitude_ft = 1100
+pad_speed_kt = 50
+hospital_radius_miles = 0.4
+learn_landings = 2
+# Hospitals come from places-geo.json (made by fetch-places.bat). Add any pad it misses here:
+# hospitals = [{name = "St. Luke's Anderson", lat = 40.68, lon = -75.29}]
+hospitals = []
 
 [traffic]
 # PennDOT crashes, road closures and roadwork, plus live traffic cameras, on the incident map. Read from

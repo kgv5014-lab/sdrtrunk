@@ -158,6 +158,30 @@ CREATE TABLE IF NOT EXISTS geocode_cache (
     display TEXT,
     fetched_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS helicopters (
+    hex TEXT PRIMARY KEY,                -- ICAO hex code from ADS-B, the same for the aircraft's whole life
+    reg TEXT,
+    flight TEXT,
+    operator TEXT,
+    type TEXT,
+    kind TEXT,                           -- medevac, police or other, picked by hand on the map; NULL = learned
+    hospital_landings INTEGER NOT NULL DEFAULT 0,
+    incident_landings INTEGER NOT NULL DEFAULT 0,
+    first_seen INTEGER,
+    last_seen INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS helicopter_landings (
+    id INTEGER PRIMARY KEY,
+    hex TEXT NOT NULL,
+    landing_time INTEGER NOT NULL,
+    name TEXT,                           -- what the aircraft was called then
+    place TEXT,                          -- the hospital it set down at, else NULL
+    incident_id INTEGER,                 -- the incident it came down near, else NULL
+    miles REAL
+);
+CREATE INDEX IF NOT EXISTS helicopter_landings_incident ON helicopter_landings(incident_id);
 """
 
 FTS_SCHEMA = """
@@ -688,6 +712,47 @@ class Database:
                     "SELECT * FROM alerts WHERE time >= ? AND rowid > ? ORDER BY rowid DESC LIMIT ?",
                     (since, after[0] if after else 0, limit)).fetchall()[::-1]
         return [dict(row) for row in rows]
+
+    # ---- helicopters from ADS-B (aircraft.py)
+
+    HELICOPTER_FIELDS = ("hex", "reg", "flight", "operator", "type", "kind", "hospital_landings",
+                         "incident_landings", "first_seen", "last_seen")
+
+    def helicopters(self) -> dict[str, dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM helicopters").fetchall()
+        return {row["hex"]: dict(row) for row in rows}
+
+    def save_helicopter(self, heli: dict):
+        with self._lock:
+            self._conn.execute(
+                f"INSERT OR REPLACE INTO helicopters ({', '.join(self.HELICOPTER_FIELDS)}) "
+                f"VALUES ({', '.join('?' for _ in self.HELICOPTER_FIELDS)})",
+                [heli.get(n) for n in self.HELICOPTER_FIELDS])
+            self._conn.commit()
+
+    def add_helicopter_landing(self, landing: dict):
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO helicopter_landings (hex, landing_time, name, place, incident_id, miles) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [landing.get(n) for n in ("hex", "landing_time", "name", "place", "incident_id", "miles")])
+            self._conn.commit()
+
+    def helicopter_landings(self, incident_ids: list[int]) -> dict[int, list[dict]]:
+        """Landings near these incidents, oldest first, with what the helicopter is known as now."""
+        if not incident_ids:
+            return {}
+        found: dict[int, list[dict]] = {}
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT l.*, h.kind AS hand_kind, h.operator, h.hospital_landings, h.incident_landings "
+                f"FROM helicopter_landings l LEFT JOIN helicopters h ON h.hex = l.hex "
+                f"WHERE l.incident_id IN ({', '.join('?' for _ in incident_ids)}) ORDER BY l.landing_time",
+                list(incident_ids)).fetchall()
+        for row in rows:
+            found.setdefault(row["incident_id"], []).append(dict(row))
+        return found
 
     # ---- signal quality per dongle
 

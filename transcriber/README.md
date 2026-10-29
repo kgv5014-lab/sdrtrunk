@@ -293,8 +293,20 @@ internet; map data is © OpenStreetMap contributors.
 
 If an ADS-B receiver (readsb, tar1090 or ultrafeeder) runs on your network, the map can show helicopters
 with a short trail, and mark one coming down low near a recent incident as landing there ("🚁 LIFE12
-landing" on the incident). Air ambulance operators (Geisinger Life Flight, Air Methods, PHI and others)
-are outlined in red. In `config.toml`:
+landing" on the incident).
+
+Each helicopter is remembered by its ADS-B code and sorted into medevac (red), police (blue) or other
+(gray):
+
+- by its registered owner when the receiver knows it (Geisinger Life Flight, Air Methods, PHI, state police);
+- else learned from where it sets down: two landings at a hospital, or one at a hospital and one at an
+  incident, make it medevac. Hospitals come from `places-geo.json` (fetch-places.bat), plus any you add
+  under `[aircraft] hospitals`;
+- or by hand: its popup on the map has Medevac, Police, Not medevac and Let it learn buttons.
+
+Phone alerts go out only for medevac landings near an incident (`alert_only_medevac = false` alerts for
+any helicopter). The incident keeps a note such as "🚁 Medevac N812LF landed 2:14 PM" after the
+helicopter leaves, on the map and in SDRTrunk's Incidents tab. In `config.toml`:
 
 ```toml
 [aircraft]

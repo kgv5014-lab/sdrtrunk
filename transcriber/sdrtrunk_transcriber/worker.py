@@ -97,6 +97,8 @@ class TranscriptionWorker:
         self.on_done = None
         # Called with (call, samples) with the audio as uploaded, before cleaning (the tone finder).
         self.on_audio = None
+        # Called with a call; True puts it ahead of everything else (121.5 emergency calls, aviation.py).
+        self.urgent = None
 
     def is_air(self, call: dict | None) -> bool:
         """Whether a call is on an airport or helicopter talkgroup ([air_transcripts])."""
@@ -129,6 +131,8 @@ class TranscriptionWorker:
     def rank(self, call: dict | None) -> int:
         """Where a call goes in line: its place in first_talkgroups, or after all of them."""
         first = self.config.transcription.first_talkgroups
+        if call and self.urgent and self.urgent(call):
+            return -1
         if call:
             names = " ".join(str(call.get(k) or "") for k in ("talkgroup_label", "talkgroup_group", "talkgroup"))
             names = names.lower()

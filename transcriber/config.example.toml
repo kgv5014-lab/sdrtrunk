@@ -219,6 +219,25 @@ hospitals = []
 # else the one heard with that call sign before, else the only helicopter flying.
 radio_talkgroups = ["ABE Approach", "ABE Tower", "Air Emergency", "Helicopters"]
 
+[aviation]
+# The airport and helicopter channels get a page of their own (Aviation, at /aviation). Their calls stay out
+# of the main call log and the incident map, except calls from medevac helicopters ("Life Flight 4"), which
+# show in the call log too. Each call is matched to the plane that said it on the ADS-B receiver above.
+enabled = true
+# Which talkgroups are aviation channels is set in [air_transcripts] talkgroups above.
+# The 121.5 emergency frequency: anyone talking there sends a phone alert (needs [alerts] below),
+# at most once every emergency_repeat_minutes.
+emergency_talkgroups = ["9103"]
+emergency_alert = true
+emergency_repeat_minutes = 10.0
+# Also alert for sound with no words (an emergency beacon, or static) at least emergency_min_s long.
+emergency_alert_no_words = false
+emergency_min_s = 5.0
+# How many minutes around a call to look for its plane in what the receiver saw.
+match_minutes = 10.0
+# The receiver's own map, to open a plane on. Empty = the [aircraft] url without data/aircraft.json.
+adsb_map_url = ""
+
 [traffic]
 # PennDOT crashes, road closures and roadwork, plus live traffic cameras, on the incident map. Read from
 # the public 511PA website (no sign-up). Cameras are shown live only; PennDOT doesn't allow recording them.

@@ -453,6 +453,9 @@ class MapWorker:
         call = self.db.get_call(call_id)
         if call is None or call["status"] != "done":
             return
+        if call.get("air"):
+            self.db.set_map_status(call_id, "aviation")     # airport and helicopter radio (aviation.py)
+            return
         try:
             self._process(call)
             if self.on_done:

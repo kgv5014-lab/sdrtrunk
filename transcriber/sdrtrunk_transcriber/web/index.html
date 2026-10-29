@@ -40,6 +40,7 @@
   .first { color: var(--muted); font-size: 13px; margin-top: 2px; }
   .meta b.dispatch { color: var(--warn); }
   .meta b.unit { color: var(--accent); }
+  .medevac { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; border-radius: 6px; padding: 1px 6px; color: #fff; background: #d33c2f; }
   textarea { width: 100%; margin-top: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; font: 15px/1.45 system-ui, sans-serif; resize: vertical; }
   .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
   .note { color: var(--muted); font-size: 12px; }
@@ -55,6 +56,7 @@
   <h1>Call log</h1>
   <a href="map">Incident map</a>
   <a href="units" class="admin">Units</a>
+  <a href="aviation" class="admin">Aviation</a>
   <a href="listen" hidden id="listen-link">🔊 Listen</a>
   <input id="q" type="search" placeholder="Search transcripts">
   <input id="talkgroup" type="search" placeholder="Talkgroup" size="12">
@@ -85,6 +87,11 @@ function render(call) {
   const meta = el('div', 'meta');
   const when = new Date(call.call_time * 1000);
   meta.append(el('span', '', when.toLocaleString()));
+  // A medevac helicopter on the aviation channels (the rest of the airport radio is on the Aviation page).
+  if (call.air === 'medevac') {
+    const plane = (call.aircraft || [])[0];
+    meta.append(el('span', 'medevac', 'MEDEVAC' + (plane ? ' ' + (plane.flight || plane.reg || plane.hex) : '')));
+  }
   const tg = el('span'); tg.append('TG ', el('b', '', call.talkgroup_label || call.talkgroup));
   if (call.talkgroup_label) tg.append(' (' + call.talkgroup + ')');
   meta.append(tg);

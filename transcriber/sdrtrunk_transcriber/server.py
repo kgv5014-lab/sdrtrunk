@@ -43,6 +43,7 @@ from .places import PlaceBook
 from .address_fix import AddressBook, AddressFixer
 from .addresses import Gazetteer
 from .aircraft import KINDS, AircraftWatch, incident_helicopters
+from .aviation import AviationLog, tar1090_url
 from .traffic import Traffic511
 from .config import Config
 from .db import Database
@@ -174,6 +175,16 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:
             tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE, codebook)
+        aviation = AviationLog(config, db, alerter=alerter) if config.aviation.enabled else None
+        if aviation:
+            worker.urgent = aviation.urgent
+            try:
+                # Before the map starts, so earlier airport calls aren't placed on it.
+                marked = aviation.backfill()
+                if marked:
+                    log.info("Aviation: moved %d earlier calls to the aviation page", marked)
+            except Exception:
+                log.exception("Aviation: could not mark earlier calls")
         map_worker = None
         if config.map.enabled:
             geocoder = Geocoder(db, config.map.area, contact=config.map.contact_email) \
@@ -210,6 +221,15 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             log.exception("Unit board: could not read recent calls")
 
         def done(call_id):
+            if aviation:
+                try:
+                    air = aviation.call_done(call_id)
+                except Exception:
+                    log.exception("Aviation: call %s failed", call_id)
+                    air = (db.get_call(call_id) or {}).get("air")
+                if air:
+                    # Airport and helicopter radio: not for the unit board, the map or the summaries.
+                    return
             if speakers:
                 # First: the unit board, the map and the summaries read the label.
                 try:
@@ -226,8 +246,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 map_worker.submit(call_id)
             if summarizer:
                 summarizer.call_done(call_id)
-            if aircraft:
-                # A pilot saying "Life Flight 2" on the air band marks that helicopter as medevac.
+            if aircraft and not aviation:
+                # A pilot saying "Life Flight 2" on the air band marks that helicopter as medevac (with the
+                # aviation page on, AviationLog.call_done does this with the plane it matched).
                 try:
                     aircraft.heard_on_radio(db.get_call(call_id) or {})
                 except Exception:
@@ -237,6 +258,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         aircraft = AircraftWatch(config, db, alerter) if config.aircraft.enabled else None
         if aircraft:
             aircraft.start()
+        if aviation:
+            aviation.aircraft = aircraft
         traffic = Traffic511(config) if config.traffic.enabled else None
         if traffic:
             traffic.start()
@@ -254,6 +277,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.alerter = alerter
         app.state.summarizer = summarizer
         app.state.aircraft = aircraft
+        app.state.aviation = aviation
         app.state.traffic = traffic
         app.state.units = units
         app.state.signal = SignalWatch(config.signal, db, alerter) if config.signal.enabled else None
@@ -327,6 +351,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "patches": _text(form, "patches"),
             "audio_path": relative.as_posix(),
         }
+        if request.app.state.aviation:
+            # Airport and helicopter channels go to the aviation page, not the main call log.
+            call["air"] = request.app.state.aviation.air_of(call)
         call_id = request.app.state.db.insert_call(call)
         request.app.state.worker.submit(call_id)
         if request.app.state.live:
@@ -416,6 +443,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     def list_calls(request: Request, q: str = "", talkgroup: str = "", source: str = "",
                    before_id: int | None = None, limit: int = 100):
         calls = request.app.state.db.search(q, talkgroup, source, before_id, limit)
+        _aircraft_of(calls)
         codebook = request.app.state.codebook
         # Labels are worked out on every read, so edits to codes.csv apply to old calls too.
         for call in calls:
@@ -430,6 +458,27 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             for call in calls:
                 attach_summary(summaries, call)
         return _json_unless_unchanged(request, calls)
+
+    def _aircraft_of(calls: list[dict]):
+        for call in calls:
+            call["aircraft"] = json.loads(call["aircraft"]) if call.get("aircraft") else []
+
+    @app.get("/aviation", response_class=HTMLResponse)
+    def aviation_page():
+        return (WEB_DIR / "aviation.html").read_text(encoding="utf-8")
+
+    @app.get("/api/aviation/calls")
+    def list_aviation_calls(request: Request, q: str = "", talkgroup: str = "", before_id: int | None = None,
+                            limit: int = 100):
+        """Calls on the airport and helicopter channels, newest first, with the aircraft each was matched to."""
+        calls = request.app.state.db.search(q, talkgroup, "", before_id, limit, aviation=True)
+        _aircraft_of(calls)
+        emergency = request.app.state.aviation
+        for call in calls:
+            call["emergency"] = bool(emergency and emergency.urgent(call))
+        return _json_unless_unchanged(request, {
+            "enabled": request.app.state.aviation is not None, "adsb": request.app.state.aircraft is not None,
+            "adsb_map_url": tar1090_url(config), "calls": calls})
 
     @app.post("/api/calls/{call_id}/transcript")
     async def correct_transcript(request: Request, call_id: int):
@@ -451,6 +500,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         original = call["transcript"] or ""
         learned = request.app.state.corrections.learn(original, text) if body.get("learn", True) else []
         db.update_call(call_id, transcript=text, corrected_at=int(time.time()), status="done", error=None)
+        if request.app.state.aviation and call.get("air"):
+            # A fixed call sign may match a different plane.
+            request.app.state.aviation.call_done(call_id, alert=False)
         if request.app.state.speakers:
             request.app.state.speakers.apply(call_id, learn=False)
         # A fixed street name may put a call on the map that wasn't placed before.

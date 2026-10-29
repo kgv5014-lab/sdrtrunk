@@ -626,7 +626,7 @@ def test_air_band_calls_get_aviation_hints_and_cleanup(make_client):
     with client:
         post(client, sdrtrunk_body(air, make_mp3(3.0)))
         assert client.app.state.worker.wait_idle()
-        call = client.get("/api/calls").json()[0]
+        call = client.get("/api/aviation/calls").json()["calls"][0]
     # Only aviation hints: none of the county vocabulary
     assert "Foxtrot" in fake.prompts[0] and "RIT" not in fake.prompts[0] and "Cetronia" not in fake.prompts[0]
     assert call["transcript"].startswith("N812LF, runway 24, cleared to land")

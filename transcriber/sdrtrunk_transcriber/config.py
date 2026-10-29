@@ -258,6 +258,27 @@ class AircraftConfig:
 
 
 @dataclass
+class AviationConfig:
+    # The airport and helicopter channels, on an aviation page of their own (aviation.py). Their calls are
+    # left out of the main call log and the incident map, except medevac calls, which stay in the call log.
+    enabled: bool = True
+    # Talkgroup numbers or names of the aviation channels: ABE Approach, Tower, Air Emergency, Helicopters.
+    talkgroups: list = field(default_factory=lambda: ["9101", "9102", "9103", "9104"])
+    # The 121.5 emergency frequency (a channel tuned to 121.5 MHz counts too). Anyone talking there sends a
+    # phone alert (needs [alerts] set up), at most once every emergency_repeat_minutes.
+    emergency_talkgroups: list = field(default_factory=lambda: ["9103"])
+    emergency_alert: bool = True
+    emergency_repeat_minutes: float = 10.0
+    # Also alert for a call with sound but no words (an emergency beacon, or static) this many seconds long.
+    emergency_alert_no_words: bool = False
+    emergency_min_s: float = 5.0
+    # Calls are matched to aircraft the ADS-B receiver ([aircraft]) saw this many minutes around the call.
+    match_minutes: float = 10.0
+    # The receiver's own map, to open an aircraft on. Empty = the [aircraft] url without data/aircraft.json.
+    adsb_map_url: str = ""
+
+
+@dataclass
 class TrafficConfig:
     # PennDOT crashes, closures and roadwork, and traffic cameras, from the public 511PA website.
     enabled: bool = False
@@ -406,6 +427,7 @@ class Config:
     map: MapConfig = field(default_factory=MapConfig)
     alerts: AlertsConfig = field(default_factory=AlertsConfig)
     aircraft: AircraftConfig = field(default_factory=AircraftConfig)
+    aviation: AviationConfig = field(default_factory=AviationConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)

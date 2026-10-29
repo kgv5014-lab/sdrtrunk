@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aviation</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --warn: #b26a00;
+          --danger: #d33c2f; --medevac: #d33c2f; --sel: #eaf1fd; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --warn: #f0a640;
+            --danger: #ff6b5e; --medevac: #ff6b5e; --sel: #1f2a3d; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 1000; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  h1 { font-size: 16px; margin: 0 12px 0 0; }
+  header a { color: var(--accent); margin-right: 8px; }
+  input { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; }
+  #q { flex: 1 1 200px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 4px; }
+  .chips button { border-radius: 14px; padding: 2px 10px; color: var(--fg); }
+  .chips button.on { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 12px; padding: 8px 16px 32px; align-items: start; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } #side { position: static !important; order: -1; } }
+  #side { position: sticky; top: 64px; }
+  #plane-map { height: 300px; border: 1px solid var(--line); border-radius: 8px; }
+  #side[hidden] { display: none; }
+  #plane-info { margin-top: 8px; background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+  #plane-info .name { font-size: 16px; font-weight: 700; }
+  .call { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+  .call.emergency { border-left-color: var(--danger); }
+  .call.medevac { border-left-color: var(--medevac); }
+  .call.picked { background: var(--sel); }
+  .meta { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12px; align-items: center; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  .badge { font-size: 11px; font-weight: 700; letter-spacing: 0.03em; border-radius: 6px; padding: 1px 6px; color: #fff; background: var(--danger); }
+  .text { margin-top: 6px; font-size: 15px; white-space: pre-wrap; }
+  .text.none, .text.pending { color: var(--muted); font-style: italic; }
+  .text.failed { color: var(--warn); }
+  .planes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .plane { border: 1px solid var(--accent); color: var(--accent); border-radius: 14px; padding: 2px 10px; font-size: 13px; cursor: pointer; background: none; }
+  .plane.medevac { border-color: var(--medevac); color: var(--medevac); }
+  .plane small { color: var(--muted); margin-left: 4px; }
+  .nomatch { color: var(--muted); font-size: 12px; margin-top: 6px; }
+  audio { height: 28px; max-width: 100%; }
+  button { background: none; border: 1px solid var(--line); color: var(--accent); border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+  .edit { margin-left: auto; padding: 2px 10px; font-size: 12px; }
+  textarea { width: 100%; margin-top: 6px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: 6px; padding: 6px 8px; font: 15px/1.45 system-ui, sans-serif; resize: vertical; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 6px; }
+  .note { color: var(--muted); font-size: 12px; }
+  #more { display: block; margin: 16px auto; }
+  #more[hidden] { display: none; }
+  .empty { color: var(--muted); padding: 24px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Aviation</h1>
+  <a href="./">Call log</a>
+  <a href="map">Incident map</a>
+  <a id="adsb-link" target="_blank" rel="noopener" hidden>ADS-B map</a>
+  <div class="chips" id="channels"></div>
+  <input id="q" type="search" placeholder="Search, e.g. a call sign">
+  <span id="status"></span>
+</header>
+<div class="layout">
+  <main>
+    <div id="calls"></div>
+    <button id="more" hidden>Older calls</button>
+  </main>
+  <aside id="side" hidden>
+    <div id="plane-map"></div>
+    <div id="plane-info"></div>
+  </aside>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+let channel = '';
+let channels = new Map();
+let oldestId = null;
+let timer = null;
+let editing = 0;
+let adsbUrl = '';
+let picked = null;   // {callId, hex}
+let map = null, marker = null;
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined && text !== null) e.textContent = text;
+  return e;
+}
+
+function planeName(p) { return p.flight || p.reg || p.hex; }
+
+function feet(n) { return n === null || n === undefined ? '' : n === 0 ? 'on the ground' : n.toLocaleString() + ' ft'; }
+
+function render(call) {
+  const card = el('div', 'call');
+  if (call.emergency) card.classList.add('emergency');
+  if (call.air === 'medevac') card.classList.add('medevac');
+  if (picked && picked.callId === call.id) card.classList.add('picked');
+  const meta = el('div', 'meta');
+  meta.append(el('span', '', new Date(call.call_time * 1000).toLocaleString()));
+  if (call.emergency) meta.append(el('span', 'badge', '121.5 EMERGENCY'));
+  if (call.air === 'medevac') meta.append(el('span', 'badge', 'MEDEVAC'));
+  meta.append(el('b', '', call.talkgroup_label || call.talkgroup));
+  if (call.frequency) meta.append(el('span', '', (call.frequency / 1e6).toFixed(3) + ' MHz'));
+  if (call.duration_s) meta.append(el('span', '', call.duration_s.toFixed(1) + ' s'));
+  if (call.audio_deleted_at) meta.append(el('span', '', 'audio deleted'));
+  else {
+    const player = el('audio'); player.controls = true; player.preload = 'none';
+    player.src = 'api/calls/' + call.id + '/audio';
+    meta.append(player);
+  }
+  if (['done', 'skipped', 'failed'].includes(call.status)) {
+    const edit = el('button', 'edit', 'Edit');
+    edit.addEventListener('click', () => startEdit(card, call));
+    meta.append(edit);
+  }
+  card.append(meta);
+
+  let text, cls = 'text';
+  if (call.status === 'done') { text = call.transcript || 'no words'; if (!call.transcript) cls += ' none'; }
+  else if (call.status === 'skipped') { text = 'not transcribed (' + (call.error || 'skipped') + ')'; cls += ' none'; }
+  else if (call.status === 'failed') { text = 'transcription failed: ' + (call.error || ''); cls += ' failed'; }
+  else { text = call.status + '...'; cls += ' pending'; }
+  card.append(el('div', cls, text));
+
+  if (call.aircraft && call.aircraft.length) {
+    const planes = el('div', 'planes');
+    call.aircraft.forEach(p => {
+      const chip = el('button', 'plane' + (p.kind === 'medevac' ? ' medevac' : ''));
+      chip.append('✈ ' + planeName(p));
+      const bits = [p.type, feet(p.alt_ft)].filter(Boolean).join(' · ');
+      if (bits) chip.append(el('small', '', bits));
+      chip.title = p.how || '';
+      chip.addEventListener('click', () => pick(call, p, card));
+      planes.append(chip);
+    });
+    card.append(planes);
+  } else if (call.status === 'done' && call.transcript) {
+    card.append(el('div', 'nomatch', 'No aircraft matched'));
+  }
+  return card;
+}
+
+// The aircraft on the small map, where it was when the call was made.
+function pick(call, plane, card) {
+  picked = { callId: call.id, hex: plane.hex };
+  document.querySelectorAll('.call.picked').forEach(c => c.classList.remove('picked'));
+  card.classList.add('picked');
+  $('side').hidden = false;
+  const info = $('plane-info');
+  info.replaceChildren();
+  info.append(el('div', 'name', planeName(plane) + (plane.reg && plane.reg !== planeName(plane) ? ' (' + plane.reg + ')' : '')));
+  const lines = [
+    [plane.desc || plane.type, plane.operator].filter(Boolean).join(', '),
+    plane.kind === 'medevac' ? 'Medevac helicopter' : plane.kind === 'police' ? 'Police helicopter' : plane.helicopter ? 'Helicopter' : '',
+    [feet(plane.alt_ft), plane.speed_kt ? Math.round(plane.speed_kt) + ' kt' : ''].filter(Boolean).join(', ') +
+      (plane.at ? ' at ' + new Date(plane.at * 1000).toLocaleTimeString() : ''),
+    plane.how ? 'Matched: ' + plane.how : '',
+  ].filter(Boolean);
+  lines.forEach(line => info.append(el('div', 'note', line)));
+  if (adsbUrl) {
+    const a = el('a', '', 'Open on the ADS-B map');
+    a.href = adsbUrl + '?icao=' + encodeURIComponent(plane.hex); a.target = '_blank'; a.rel = 'noopener';
+    info.append(a);
+  }
+  if (!window.L) return;
+  if (!map) {
+    map = L.map('plane-map', { zoomControl: true });
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    }).addTo(map);
+  }
+  setTimeout(() => map.invalidateSize(), 0);
+  if (marker) marker.remove();
+  if (plane.lat === undefined || plane.lat === null) {
+    map.setView([40.65, -75.43], 9);
+    info.append(el('div', 'note', 'The receiver had no position for it.'));
+    return;
+  }
+  marker = L.circleMarker([plane.lat, plane.lon], { radius: 8, color: plane.kind === 'medevac' ? '#d33c2f' : '#2a6fdb', fillOpacity: 0.8 })
+    .addTo(map).bindTooltip(planeName(plane), { permanent: true, direction: 'right' });
+  map.setView([plane.lat, plane.lon], 11);
+}
+
+function startEdit(card, call) {
+  if (card.querySelector('textarea')) return;
+  editing++;
+  const shown = card.querySelector('.text');
+  const box = el('textarea');
+  box.value = call.status === 'done' ? (call.transcript || '') : '';
+  box.rows = Math.max(2, Math.ceil(box.value.length / 80));
+  const actions = el('div', 'actions');
+  const save = el('button', '', 'Save');
+  const cancel = el('button', '', 'Cancel');
+  actions.append(save, cancel, el('span', 'note', 'A fixed call sign is matched to its plane again.'));
+  shown.replaceWith(box);
+  box.after(actions);
+  box.focus();
+  const done = () => { editing = Math.max(0, editing - 1); };
+  cancel.addEventListener('click', () => { box.replaceWith(shown); actions.remove(); done(); });
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const res = await fetch('api/calls/' + call.id + '/transcript', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: box.value }) });
+      if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+      done();
+      load(false);
+    } catch (e) {
+      save.disabled = false;
+      actions.querySelector('.note').textContent = 'Not saved: ' + e.message;
+    }
+  });
+}
+
+function renderChannels() {
+  const box = $('channels');
+  box.replaceChildren();
+  [['', 'All'], ...channels.entries()].forEach(([value, label]) => {
+    const b = el('button', value === channel ? 'on' : '', label);
+    b.addEventListener('click', () => { channel = value; renderChannels(); load(false); });
+    box.append(b);
+  });
+}
+
+function params(beforeId) {
+  const p = new URLSearchParams({ q: $('q').value, talkgroup: channel, limit: 100 });
+  if (beforeId) p.set('before_id', beforeId);
+  return p;
+}
+
+async function load(append) {
+  let reply;
+  try { reply = await (await fetch('api/aviation/calls?' + params(append ? oldestId : null))).json(); }
+  catch (e) { $('status').textContent = 'service unreachable'; return; }
+  const calls = reply.calls;
+  adsbUrl = reply.adsb_map_url || '';
+  if (adsbUrl && reply.adsb) { $('adsb-link').href = adsbUrl; $('adsb-link').hidden = false; }
+  $('status').textContent = reply.adsb ? '' : 'ADS-B is off, so calls are not matched to planes';
+  let added = false;
+  calls.forEach(c => {
+    if (!channels.has(c.talkgroup)) { channels.set(c.talkgroup, c.talkgroup_label || c.talkgroup); added = true; }
+  });
+  if (added) renderChannels();
+  const list = $('calls');
+  if (!append) list.replaceChildren();
+  calls.forEach(c => list.append(render(c)));
+  if (!append && !calls.length) list.append(el('div', 'empty', 'No airport or helicopter calls yet.'));
+  if (calls.length) oldestId = calls[calls.length - 1].id;
+  $('more').hidden = calls.length < 100;
+}
+
+function playing() { return [...document.querySelectorAll('audio')].some(a => !a.paused); }
+
+async function tick() {
+  if (!playing() && !editing && window.scrollY < 200) await load(false);
+}
+
+$('q').addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(() => load(false), 250); });
+$('more').addEventListener('click', () => load(true));
+renderChannels();
+tick();
+setInterval(tick, 5000);
+</script>
+</body>
+</html>

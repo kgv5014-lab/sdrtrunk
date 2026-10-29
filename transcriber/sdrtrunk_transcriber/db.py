@@ -213,7 +213,7 @@ MAP_VERSION = 5
 
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",
-    "talkgroup_group", "source", "talker_alias", "frequency", "patches", "audio_path",
+    "talkgroup_group", "source", "talker_alias", "frequency", "patches", "audio_path", "air",
 )
 
 
@@ -273,6 +273,12 @@ class Database:
             self._conn.execute("ALTER TABLE calls ADD COLUMN speaker_kind TEXT")
             self._conn.execute("ALTER TABLE calls ADD COLUMN speaker TEXT")
             self._conn.execute("ALTER TABLE calls ADD COLUMN speaker_how TEXT")
+        if "air" not in columns:
+            # Aviation channels (aviation.py): aviation or medevac, else NULL for a county call; and the
+            # aircraft the call was matched to on ADS-B, as JSON.
+            self._conn.execute("ALTER TABLE calls ADD COLUMN air TEXT")
+            self._conn.execute("ALTER TABLE calls ADD COLUMN aircraft TEXT")
+        self._conn.execute("CREATE INDEX IF NOT EXISTS calls_air ON calls(air)")
         incident_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incidents)")}
         if "channel" not in incident_columns:
             self._conn.execute("ALTER TABLE incidents ADD COLUMN channel TEXT")
@@ -349,9 +355,12 @@ class Database:
         return [row["id"] for row in rows]
 
     def search(self, q: str = "", talkgroup: str = "", source: str = "",
-               before_id: int | None = None, limit: int = 100) -> list[dict]:
+               before_id: int | None = None, limit: int = 100, aviation: bool = False) -> list[dict]:
+        """The call log, newest first. Aviation channel calls are only in the aviation list (aviation=True),
+        except medevac calls, which are in both."""
         # Morse-code station IDs are hidden (worker.STATION_ID).
         where, params = ["(error IS NULL OR error != 'station ID')"], []
+        where.append("air IS NOT NULL" if aviation else "(air IS NULL OR air = 'medevac')")
 
         if q:
             if self.has_fts:
@@ -376,6 +385,17 @@ class Database:
 
         with self._lock:
             return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def mark_air(self, names: list[str], emergency_hz: int) -> int:
+        """Marks unmarked calls on these talkgroups (numbers or names, lower case) or on 121.5 as aviation."""
+        marks = ", ".join("?" for _ in names)
+        with self._lock:
+            cur = self._conn.execute(
+                f"UPDATE calls SET air = 'aviation' WHERE air IS NULL AND (LOWER(talkgroup) IN ({marks}) "
+                f"OR LOWER(talkgroup_label) IN ({marks}) OR LOWER(talkgroup_group) IN ({marks}) "
+                f"OR ABS(COALESCE(frequency, 0) - ?) < 5000)", [*names, *names, *names, emergency_hz])
+            self._conn.commit()
+            return cur.rowcount
 
     def insert_page(self, page: dict) -> int:
         columns = ", ".join(PAGE_FIELDS)

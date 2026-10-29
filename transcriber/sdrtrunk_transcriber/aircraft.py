@@ -35,6 +35,8 @@ METERS_PER_MILE = 1609.344
 TRAIL_POINTS = 40
 # An aircraft not heard for this long is dropped.
 STALE_S = 60
+# Every aircraft (not only helicopters) is kept this long, with where it was, to match radio calls to it.
+RECENT_S = 900
 
 
 # Operators of air ambulances in and around the Lehigh Valley, matched in the receiver's ownOp field.
@@ -140,6 +142,8 @@ class AircraftWatch:
         self.watch = WatchList(self.settings.watch)
         self._lock = threading.Lock()
         self._planes: dict[str, dict] = {}
+        # Every aircraft heard lately, by hex, with timed positions (for aviation.py).
+        self._recent: dict[str, dict] = {}
         self._landed: set[tuple[str, int]] = set()
         # Every helicopter seen, by hex: what it is and how often it set down at hospitals and incidents.
         self._known: dict[str, dict] = db.helicopters()
@@ -184,6 +188,7 @@ class AircraftWatch:
         incidents = self._recent_incidents(now)
         self._load_hospitals()
         with self._lock:
+            self._record(data, now)
             for plane in data.get("aircraft", []):
                 hex_id = plane.get("hex")
                 name = self.watch.name(plane)
@@ -213,6 +218,42 @@ class AircraftWatch:
             for hex_id in [h for h, p in self._planes.items() if now - p["seen"] > STALE_S]:
                 del self._planes[hex_id]
         self.updated = now
+
+    def _record(self, data: dict, now: float):
+        """Keeps every aircraft heard in the last RECENT_S, so a radio call can be matched to it later."""
+        for plane in data.get("aircraft", []):
+            hex_id = plane.get("hex")
+            if not hex_id or not (plane.get("flight") or plane.get("r")):
+                continue
+            seen = self._recent.get(hex_id) or {"hex": hex_id, "track_points": []}
+            seen.update({"flight": (plane.get("flight") or "").strip(), "reg": plane.get("r") or "",
+                         "type": plane.get("t") or "", "desc": plane.get("desc") or "",
+                         "operator": plane.get("ownOp") or "", "helicopter": is_helicopter(plane),
+                         "seen": now - plane.get("seen", 0)})
+            lat, lon = plane.get("lat"), plane.get("lon")
+            if lat is not None and lon is not None and plane.get("seen_pos", 0) <= STALE_S:
+                point = [round(now - plane.get("seen_pos", 0), 1), lat, lon, altitude_ft(plane), plane.get("gs")]
+                if not seen["track_points"] or seen["track_points"][-1][1:3] != point[1:3]:
+                    seen["track_points"].append(point)
+            seen["track_points"] = [p for p in seen["track_points"] if now - p[0] <= RECENT_S]
+            self._recent[hex_id] = seen
+        for hex_id in [h for h, p in self._recent.items() if now - p["seen"] > RECENT_S]:
+            del self._recent[hex_id]
+
+    def recent_aircraft(self, when: float, window_s: float = 600) -> list[dict]:
+        """Aircraft heard within window_s before a time (or up to two minutes after), with timed positions
+        [time, lat, lon, alt_ft, speed_kt] and, for helicopters, whether they are medevac or police."""
+        with self._lock:
+            found = []
+            for plane in self._recent.values():
+                times = [p[0] for p in plane["track_points"]] + [plane["seen"]]
+                if not any(when - window_s <= t <= when + 120 for t in times):
+                    continue
+                known = self._known.get(plane["hex"])
+                kind = decide_kind(known, self.settings.learn_landings)[0] if known else None
+                found.append(dict(plane, track_points=list(plane["track_points"]),
+                                  kind=kind if kind != "other" else None))
+            return found
 
     def aircraft(self) -> list[dict]:
         with self._lock:

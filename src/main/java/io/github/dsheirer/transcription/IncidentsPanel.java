@@ -365,6 +365,11 @@ public class IncidentsPanel extends JPanel
             sb.append("\nServices: ").append(incident.servicesDisplay());
         }
 
+        if(!incident.helicopters().isEmpty())
+        {
+            sb.append("\nHelicopter: ").append(String.join(", ", incident.helicopters()));
+        }
+
         if(incident.summary() != null && !incident.summary().isBlank())
         {
             sb.append("\nSummary (AI): ").append(incident.summary());

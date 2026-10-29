@@ -221,11 +221,24 @@ public class TranscriptionClient
                 }
             }
 
+            List<String> helicopters = new ArrayList<>();
+
+            if(incident.has("helicopters") && incident.get("helicopters").isJsonArray())
+            {
+                for(JsonElement item : incident.getAsJsonArray("helicopters"))
+                {
+                    if(item.isJsonObject() && string(item.getAsJsonObject(), "text") != null)
+                    {
+                        helicopters.add(string(item.getAsJsonObject(), "text"));
+                    }
+                }
+            }
+
             incidents.add(new TranscriptIncident(number(incident, "id", 0L), number(incident, "first_time", 0L),
                 number(incident, "last_time", 0L), decimal(incident, "lat"), decimal(incident, "lon"),
                 string(incident, "label"), string(incident, "category"), string(incident, "nature"),
                 string(incident, "type"), calls, pages, string(incident, "summary"), summaryTags,
-                string(incident, "summary_status"), services));
+                string(incident, "summary_status"), services, helicopters));
         }
 
         return incidents;

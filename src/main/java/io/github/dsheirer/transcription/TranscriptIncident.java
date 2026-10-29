@@ -41,12 +41,25 @@ import java.util.List;
  * @param summaryStatus latest status the AI model read from the calls: active, under control, cleared, canceled
  *                      or unknown, may be null
  * @param services police, fire and/or ems: the services working it, in that order
+ * @param helicopters medevac and police helicopters that came down near it, e.g. "Medevac N812LF landed 2:14 PM"
  */
 public record TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
                                  String label, String category, String nature, String type,
                                  List<Call> calls, List<Page> pages, String summary, List<String> summaryTags,
-                                 String summaryStatus, List<String> services)
+                                 String summaryStatus, List<String> services, List<String> helicopters)
 {
+    /**
+     * An incident without helicopters.
+     */
+    public TranscriptIncident(long id, long firstTime, long lastTime, double latitude, double longitude,
+                              String label, String category, String nature, String type,
+                              List<Call> calls, List<Page> pages, String summary, List<String> summaryTags,
+                              String summaryStatus, List<String> services)
+    {
+        this(id, firstTime, lastTime, latitude, longitude, label, category, nature, type, calls, pages, summary,
+            summaryTags, summaryStatus, services, List.of());
+    }
+
     /**
      * An incident without the services working it.
      */

@@ -84,6 +84,11 @@
   .stags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 3px; }
   .heli { font-size: 20px; line-height: 20px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
   .heli.medical { filter: drop-shadow(0 0 3px #d33c2f); }
+  .heli.police { filter: drop-shadow(0 0 3px #2a6fdb); }
+  .heli.other { opacity: 0.55; filter: grayscale(1) drop-shadow(0 0 2px #fff); }
+  .heli-kind { margin: 4px 0 2px; }
+  .heli-kind button { margin: 2px 4px 0 0; }
+  .heli-kind button.on { font-weight: 700; border-color: currentColor; }
   .heli-label { font-size: 11px; font-weight: 600; padding: 0 4px; }
   .heli-note { color: var(--fire); font-weight: 600; }
   .road { font-size: 17px; line-height: 20px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
@@ -243,6 +248,8 @@ function popup(incident) {
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
   box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
   if (incident.channel) box.append(el('div', 'channel', 'Working on ' + incident.channel));
+  const heliNote = helicoptersAt(incident);
+  if (heliNote) box.append(el('div', 'heli-note', heliNote));
   const road = roadEventsAt(incident);
   if (road) box.append(el('div', 'road-note', road));
   const cams = cameraButtons(incident.lat, incident.lon);
@@ -389,7 +396,7 @@ function render(incidents) {
     meta.append(incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's'));
     if (incident.channel) meta.append(' · ', el('span', 'channel', incident.channel));
     item.append(meta);
-    const heli = helicoptersAt(incident.id);
+    const heli = helicoptersAt(incident);
     if (heli) item.append(el('div', 'heli-note', heli));
     const road = roadEventsAt(incident);
     if (road) item.append(el('div', 'road-note', road));
@@ -408,14 +415,38 @@ let aircraft = [];
 
 function aircraftName(a) { return a.name || a.flight || a.reg || a.hex; }
 
-function helicoptersAt(incidentId) {
-  const here = aircraft.filter(a => a.near && a.near.incident_id === incidentId);
-  if (!here.length) return '';
-  return '🚁 ' + here.map(a => aircraftName(a) + (a.near.landing ? ' landing' : ' nearby')).join(', ');
+const KIND_NAMES = { medevac: 'Medevac', police: 'Police', other: 'Other helicopter' };
+const KIND_COLORS = { medevac: '#d33c2f', police: '#2a6fdb', other: '#777' };
+
+// Medevac and police helicopters that came down there (kept after they leave), then any overhead now.
+function helicoptersAt(incident) {
+  const parts = (incident.helicopters || []).map(h => h.text);
+  const noted = new Set((incident.helicopters || []).map(h => h.hex));
+  aircraft.filter(a => a.near && a.near.incident_id === incident.id && !noted.has(a.hex) && a.kind !== 'other')
+    .forEach(a => parts.push(KIND_NAMES[a.kind] + ' ' + aircraftName(a) + (a.near.landing ? ' coming down' : ' nearby')));
+  return parts.length ? '🚁 ' + parts.join(', ') : '';
+}
+
+// Buttons to say what a helicopter is; the transcriber remembers it by its ADS-B code.
+function kindButtons(a) {
+  const box = el('div', 'heli-kind');
+  [['medevac', 'Medevac'], ['police', 'Police'], ['other', 'Not medevac'], ['auto', 'Let it learn']].forEach(([kind, label]) => {
+    const b = el('button', (a.hand_kind || 'auto') === kind ? 'on' : '', label);
+    b.onclick = async ev => {
+      ev.stopPropagation();
+      await fetch('api/aircraft/' + a.hex + '/kind', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                       body: JSON.stringify({ kind }) });
+      await loadAircraft();
+      load();
+    };
+    box.append(b);
+  });
+  return box;
 }
 
 function aircraftText(a) {
-  const lines = [aircraftName(a) + (a.type ? ' · ' + a.type : '')];
+  const lines = [aircraftName(a) + (a.type ? ' · ' + a.type : ''),
+                 (KIND_NAMES[a.kind] || 'Helicopter') + (a.kind_how ? ' (' + a.kind_how + ')' : '')];
   if (a.operator) lines.push(a.operator);
   if (a.desc) lines.push(a.desc);
   lines.push((a.alt_ft === null ? '? ft' : a.alt_ft === 0 ? 'on the ground' : a.alt_ft.toLocaleString() + ' ft')
@@ -433,10 +464,11 @@ async function loadAircraft() {
   aircraft.forEach(a => {
     seen.add(a.hex);
     let m = aircraftMarkers[a.hex];
-    const icon = L.divIcon({ className: 'heli' + (a.medical || a.watched ? ' medical' : ''), html: '🚁', iconSize: [22, 22] });
+    const kind = a.watched && a.kind === 'other' ? 'medevac' : a.kind || 'other';
+    const icon = L.divIcon({ className: 'heli ' + (kind === 'medevac' ? 'medical' : kind), html: '🚁', iconSize: [22, 22] });
     if (!m) {
-      m = { marker: L.marker([a.lat, a.lon], { icon, zIndexOffset: 1000 }).addTo(aircraftLayer),
-            trail: L.polyline(a.trail, { color: a.medical || a.watched ? '#d33c2f' : '#555', weight: 2, opacity: 0.6, dashArray: '4 4' }).addTo(aircraftLayer) };
+      m = { marker: L.marker([a.lat, a.lon], { icon, zIndexOffset: kind === 'other' ? 900 : 1000 }).addTo(aircraftLayer),
+            trail: L.polyline(a.trail, { weight: 2, opacity: 0.6, dashArray: '4 4' }).addTo(aircraftLayer) };
       m.marker.bindTooltip('', { permanent: true, direction: 'right', offset: [10, 0], className: 'heli-label' });
       m.marker.bindPopup('', { minWidth: 240 });
       aircraftMarkers[a.hex] = m;
@@ -446,8 +478,9 @@ async function loadAircraft() {
     const pop = el('div', 'pop');
     pop.style.whiteSpace = 'pre-line';
     pop.textContent = aircraftText(a);
+    pop.append(kindButtons(a));
     m.marker.setPopupContent(pop);
-    m.trail.setLatLngs(a.trail);
+    m.trail.setLatLngs(a.trail).setStyle({ color: KIND_COLORS[kind] });
   });
   Object.keys(aircraftMarkers).forEach(hex => {
     if (!seen.has(hex)) { aircraftLayer.removeLayer(aircraftMarkers[hex].marker); aircraftLayer.removeLayer(aircraftMarkers[hex].trail); delete aircraftMarkers[hex]; }

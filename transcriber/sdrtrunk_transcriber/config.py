@@ -241,6 +241,18 @@ class AircraftConfig:
     incident_hours: float = 2.0
     # Also send a phone alert when that happens (needs [alerts] set up).
     alert_landing: bool = False
+    # Alert only for medevac helicopters (and named watch-list aircraft); others still show on the map.
+    alert_only_medevac: bool = True
+    # Learning which helicopters are medevac: one this low (feet, as the receiver reports it) and slow
+    # (knots) within hospital_radius_miles of a hospital has set down there. After learn_landings such
+    # landings (or one at a hospital plus one at an incident) it counts as medevac.
+    pad_altitude_ft: int = 1100
+    pad_speed_kt: int = 50
+    hospital_radius_miles: float = 0.4
+    learn_landings: int = 2
+    # Hospitals come from places-geo.json (fetch-places.bat). Add pads it misses here:
+    # [{name = "St. Luke's Anderson", lat = 40.68, lon = -75.29}]
+    hospitals: list = field(default_factory=list)
 
 
 @dataclass

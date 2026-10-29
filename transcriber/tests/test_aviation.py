@@ -183,7 +183,7 @@ def test_calls_logged_before_are_moved_to_the_aviation_page(tmp_path):
         db.insert_call({"call_time": NOW, "received_at": NOW, "talkgroup": talkgroup, "talkgroup_label": label,
                         "audio_path": "x.mp3"})
     config = Config()
-    config.aviation.talkgroups = ["9101", "helicopters"]
+    config.air_transcripts.talkgroups = ["9101", "helicopters"]
     assert aviation.AviationLog(config, db).backfill() == 2
     assert [c["talkgroup"] for c in db.search(limit=10)] == ["1203"]
     assert [c["talkgroup"] for c in db.search(limit=10, aviation=True)] == ["77", "9101"]
@@ -192,7 +192,7 @@ def test_calls_logged_before_are_moved_to_the_aviation_page(tmp_path):
 def test_aviation_settings_load(tmp_path):
     from sdrtrunk_transcriber.config import load_config
     path = tmp_path / "config.toml"
-    path.write_text('[aviation]\ntalkgroups = ["ABE Tower"]\nemergency_alert = false\n', encoding="utf-8")
+    path.write_text('[aviation]\nemergency_alert = false\n', encoding="utf-8")
     config = load_config(path)
-    assert config.aviation.talkgroups == ["ABE Tower"] and not config.aviation.emergency_alert
+    assert not config.aviation.emergency_alert
     assert json.loads(json.dumps(config.aviation.emergency_talkgroups)) == ["9103"]

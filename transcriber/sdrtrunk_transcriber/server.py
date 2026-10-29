@@ -51,7 +51,7 @@ from .geocode import Geocoder
 from .incidents import MapWorker, highlights, services_of
 from .zones import ZoneWatch, read_zones
 from .speakers import SpeakerBook
-from .summaries import Summarizer, attach as attach_summary, incident_basis
+from .summaries import Summarizer, attach as attach_summary, attach_updates, incident_basis
 from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
 from .tones import ToneFinder
@@ -145,8 +145,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         db = Database(data_path / "calls.db")
-        codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
         placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
+        codebook = CodeBook(config.codes_path, config.codes.time_window_minutes, placebook.street_at)
         corrections = CorrectionBook(config.corrections_path)
         hints = LearnedHints(data_path / "calls.db", config.hints) if config.hints.enabled else None
         gazetteer = Gazetteer(config.geo_path, config.places_path) \
@@ -174,7 +174,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 log.exception("Speakers: could not label older calls")
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
         if config.tones.enabled:
-            tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE)
+            tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE, codebook)
         aviation = AviationLog(config, db, alerter=alerter) if config.aviation.enabled else None
         if aviation:
             worker.urgent = aviation.urgent
@@ -246,6 +246,13 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 map_worker.submit(call_id)
             if summarizer:
                 summarizer.call_done(call_id)
+            if aircraft and not aviation:
+                # A pilot saying "Life Flight 2" on the air band marks that helicopter as medevac (with the
+                # aviation page on, AviationLog.call_done does this with the plane it matched).
+                try:
+                    aircraft.heard_on_radio(db.get_call(call_id) or {})
+                except Exception:
+                    log.exception("Helicopters: call %s failed", call_id)
 
         worker.on_done = done
         aircraft = AircraftWatch(config, db, alerter) if config.aircraft.enabled else None
@@ -645,7 +652,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             incident["helicopters"] = helicopters.get(incident["id"], [])
         if request.app.state.summarizer:
             summaries = db.summaries("incident", [incident["id"] for incident in incidents])
+            # What changed along the way ("Second alarm called"), written with each later summary.
+            updates = db.incident_updates([incident["id"] for incident in incidents])
             for incident in incidents:
+                attach_updates(updates, incident)
                 calls = sorted({c["id"]: c for c in incident["calls"] if c["transcript"]}.values(),
                                key=lambda c: (c["call_time"], c["id"]))
                 attach_summary(summaries, incident, incident_basis(calls))

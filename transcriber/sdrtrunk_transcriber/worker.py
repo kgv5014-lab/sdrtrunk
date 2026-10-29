@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from . import audio, selfcheck
+from . import airtalk, audio, selfcheck
 from .address_fix import heard_note
 from .backends import Backend
 from .codes import CodeBook, to_twelve_hour
@@ -85,6 +85,7 @@ class TranscriptionWorker:
         self.placebook = placebook or PlaceBook(None)
         self.corrections = corrections or CorrectionBook(None)
         self.vocabulary = load_vocabulary(config.vocabulary_path)
+        self.air_vocabulary = airtalk.load_terms(config.air_vocabulary_path)
         # LearnedHints (hints.py), or None.
         self.hints = hints
         # AddressFixer (address_fix.py), or None.
@@ -99,7 +100,14 @@ class TranscriptionWorker:
         # Called with a call; True puts it ahead of everything else (121.5 emergency calls, aviation.py).
         self.urgent = None
 
+    def is_air(self, call: dict | None) -> bool:
+        """Whether a call is on an airport or helicopter talkgroup ([air_transcripts])."""
+        return airtalk.is_air(self.config.air_transcripts.talkgroups, call)
+
     def prompt_terms(self, *context: str | None, call: dict | None = None) -> list[str]:
+        if self.is_air(call):
+            # Air calls hear none of the county hints, which Whisper wrote into pilot talk.
+            return prompt_terms(airtalk.PROMPT_TERMS, self.air_vocabulary)
         # Places first (dropped first when it's too long), then codes, then words fixed on the call log
         # page, then streets and units learned from the call log, then the user's own vocabulary, which
         # Whisper weighs most as it comes last.
@@ -198,9 +206,12 @@ class TranscriptionWorker:
             return
 
         tone_s = 0.0
+        air = self.is_air(call)
         if self.config.audio.clean:
             samples, tone_s = audio.clean(samples, self.config.audio.remove_tones,
                                           self.config.audio.reduce_hiss)
+            if air and self.config.air_transcripts.level_speakers:
+                samples = audio.level_speakers(samples)
 
         started = time.perf_counter()
         context = (call["talkgroup_label"], call["talkgroup_group"])
@@ -214,7 +225,7 @@ class TranscriptionWorker:
                 call, samples, max(duration - tone_s, 0.0), prompt, terms, context, result, transcript, junk)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         address_fix = None
-        if self.address_fixer:
+        if self.address_fixer and not air:
             # On the finished text, after any second try, so a real address is checked once.
             try:
                 transcript, heard = self.address_fixer.fix(transcript, " ".join(filter(None, context)),
@@ -249,7 +260,8 @@ class TranscriptionWorker:
         """Checks a transcript for signs it is garbled (selfcheck.py). When it looks wrong, Whisper runs
         again more carefully and the better of the two is kept. Returns the kept result, transcript and
         junk, and the check's columns for the call log."""
-        problems = self.selfcheck.problems(transcript, result.confidence, speech_s, *context)
+        county = not self.is_air(call)
+        problems = self.selfcheck.problems(transcript, result.confidence, speech_s, *context, county=county)
         if not problems:
             reason = self.selfcheck.ask_ollama(transcript, result.confidence, call["talkgroup_label"])
             problems = [reason] if reason else []
@@ -260,7 +272,8 @@ class TranscriptionWorker:
         if self.config.self_check.retry and self._backend.careful_retry:
             retry = self._backend.transcribe(samples, prompt, careful=True)
             retry_text, retry_junk = self._finish(retry, terms, call, context)
-            retry_problems = self.selfcheck.problems(retry_text, retry.confidence, speech_s, *context)
+            retry_problems = self.selfcheck.problems(retry_text, retry.confidence, speech_s, *context,
+                                                     county=county)
             if problems[0].startswith("AI:") and not retry_problems and retry_text != transcript:
                 reason = self.selfcheck.ask_ollama(retry_text, retry.confidence, call["talkgroup_label"])
                 retry_problems = [reason] if reason else []
@@ -284,6 +297,10 @@ class TranscriptionWorker:
             transcript, junk = remove_junk(transcript, result.confidence, terms,
                                            self.config.transcription.stock_phrase_logprob,
                                            self.config.transcription.english_only)
+        if self.is_air(call):
+            # No county streets, 10-codes or dispatch times on the air band.
+            transcript = airtalk.normalize(transcript)
+            return self.corrections.normalize(transcript, call["talkgroup_label"]), junk
         # Places first, so "route ten" becomes Route 10 before the codes see "ten".
         transcript = self.placebook.normalize(transcript, *context)
         transcript = self.codebook.normalize(transcript, datetime.fromtimestamp(call["call_time"]))

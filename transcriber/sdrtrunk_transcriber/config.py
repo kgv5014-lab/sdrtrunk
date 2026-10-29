@@ -67,6 +67,17 @@ class AudioConfig:
 
 
 @dataclass
+class AirTranscriptsConfig:
+    # Air band talkgroups (airport, helicopters), by number or name. They get aviation hints and cleanup
+    # (phonetic alphabet, runway, squawk, tail numbers) in place of the county streets, units and 10-codes.
+    talkgroups: list = field(default_factory=lambda: ["9101", "9102", "9103", "9104"])
+    # Your own extra air hints, one per line (airline call signs you hear, local fixes). Optional.
+    vocabulary_file: str = "air-vocabulary.txt"
+    # Even out each speaker within a call: a pilot overhead is often 15 dB louder than the tower.
+    level_speakers: bool = True
+
+
+@dataclass
 class TonesConfig:
     # Finds two-tone pages in call recordings, for talkgroups where SDRTrunk's own paging decoder can't
     # hear them (P25 and other digital voice). Found pages are logged like SDRTrunk's and can alert.
@@ -77,7 +88,7 @@ class TonesConfig:
     talkgroups: list = field(default_factory=list)
     # Name unlisted tones by themselves: when dispatch names the same station after more than learn_share
     # of a tone pair's tone-outs that name one (last learn_days, at least learn_min_seen times), the pair
-    # is added to the station list.
+    # is added to the station list. Names it learned are checked again and corrected the same way.
     learn: bool = True
     learn_min_seen: int = 3
     learn_share: float = 0.5
@@ -255,6 +266,10 @@ class AircraftConfig:
     # Hospitals come from places-geo.json (fetch-places.bat). Add pads it misses here:
     # [{name = "St. Luke's Anderson", lat = 40.68, lon = -75.29}]
     hospitals: list = field(default_factory=list)
+    # Air band channels (talkgroup labels, or part of them) where a pilot saying a medevac call sign
+    # ("Life Flight 2", "Lifeguard") marks the helicopter flying as medevac.
+    radio_talkgroups: list = field(default_factory=lambda: ["ABE Approach", "ABE Tower", "Air Emergency",
+                                                            "Helicopters"])
 
 
 @dataclass
@@ -262,8 +277,7 @@ class AviationConfig:
     # The airport and helicopter channels, on an aviation page of their own (aviation.py). Their calls are
     # left out of the main call log and the incident map, except medevac calls, which stay in the call log.
     enabled: bool = True
-    # Talkgroup numbers or names of the aviation channels: ABE Approach, Tower, Air Emergency, Helicopters.
-    talkgroups: list = field(default_factory=lambda: ["9101", "9102", "9103", "9104"])
+    # Which talkgroups are aviation channels is set once, in [air_transcripts] talkgroups.
     # The 121.5 emergency frequency (a channel tuned to 121.5 MHz counts too). Anyone talking there sends a
     # phone alert (needs [alerts] set up), at most once every emergency_repeat_minutes.
     emergency_talkgroups: list = field(default_factory=lambda: ["9103"])
@@ -415,6 +429,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     transcription: TranscriptionConfig = field(default_factory=TranscriptionConfig)
     audio: AudioConfig = field(default_factory=AudioConfig)
+    air_transcripts: AirTranscriptsConfig = field(default_factory=AirTranscriptsConfig)
     tones: TonesConfig = field(default_factory=TonesConfig)
     faster_whisper: FasterWhisperConfig = field(default_factory=FasterWhisperConfig)
     whisper_cpp: WhisperCppConfig = field(default_factory=WhisperCppConfig)
@@ -443,6 +458,10 @@ class Config:
     @property
     def vocabulary_path(self) -> Path:
         return self._resolve(self.transcription.vocabulary_file)
+
+    @property
+    def air_vocabulary_path(self) -> Path | None:
+        return self._resolve(self.air_transcripts.vocabulary_file) if self.air_transcripts.vocabulary_file else None
 
     @property
     def codes_path(self) -> Path | None:

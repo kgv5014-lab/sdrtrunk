@@ -78,8 +78,8 @@ def test_file(config, path: Path) -> int:
     from .places import PlaceBook
     from .worker import build_prompt, load_vocabulary
 
-    codebook = CodeBook(config.codes_path, config.codes.time_window_minutes)
     placebook = PlaceBook(config.places_path, config.places.prompt_chars, config.places.areas)
+    codebook = CodeBook(config.codes_path, config.codes.time_window_minutes, placebook.street_at)
     backend = create_backend(config)
     samples = audio.decode(path)
     started = time.perf_counter()

@@ -11,6 +11,7 @@ incidents) makes it medevac. Only medevac landings alert.
 
 import json
 import logging
+import re
 import threading
 import time
 
@@ -50,6 +51,15 @@ POLICE_OPERATORS = ("POLICE", "SHERIFF", "STATE TROOPER", "CUSTOMS AND BORDER", 
                     "HOMELAND SECURITY", "LAW ENFORCEMENT")
 KINDS = ("medevac", "police", "other")
 
+# Air ambulance call signs pilots and controllers use on the air band, with the unit number after it
+# ("Life Flight 2"). Lifeguard is the FAA's medical-flight call sign, said before the tail number.
+MEDEVAC_CALLSIGN = re.compile(
+    r"\b(life ?flight|life ?guard|med ?evac|medivac|life ?net|jeff ?stat|penn ?star|life ?lion|life ?link|"
+    r"med ?flight|air ?methods|geisinger|mercy ?flight|stat ?medevac)\b"
+    r"(?:[\s,-]+((?:\d+|one|two|three|four|five|six|seven|eight|nine|niner|ten)\b))?", re.IGNORECASE)
+NUMBER_WORDS = {"one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
+                "eight": "8", "nine": "9", "niner": "9", "ten": "10"}
+
 
 def is_helicopter(plane: dict) -> bool:
     return (plane.get("category") == "A7" or (plane.get("t") or "").upper() in HELICOPTER_TYPES
@@ -66,11 +76,24 @@ def is_police(plane: dict) -> bool:
     return any(word in operator for word in POLICE_OPERATORS)
 
 
+def medevac_callsign(text: str) -> str | None:
+    """The medevac call sign said in a transcript, tidied: "Life Flight 2", "Lifeguard", else None."""
+    found = MEDEVAC_CALLSIGN.search(text or "")
+    if not found:
+        return None
+    name = " ".join(word.capitalize() for word in found.group(1).split())
+    if found.group(2) and name != "Lifeguard":
+        name += " " + NUMBER_WORDS.get(found.group(2).lower(), found.group(2))
+    return name
+
+
 def decide_kind(known: dict, learn_landings: int = 2) -> tuple[str, str]:
     """medevac, police or other for a remembered helicopter, and what decided it. `known` is its row in the
-    helicopters table: kind picked by hand, operator, hospital_landings, incident_landings."""
+    helicopters table: kind picked by hand, operator, hospital_landings, incident_landings, radio_calls."""
     if known.get("kind") in KINDS:
         return known["kind"], "set by hand"
+    if known.get("radio_calls"):
+        return "medevac", f"heard on the radio as {known.get('radio_name') or 'a medevac'}"
     owner = {"ownOp": known.get("operator")}
     if is_police(owner):
         return "police", "from owner name"
@@ -328,8 +351,9 @@ class AircraftWatch:
 
     def _classify(self, shown: dict):
         kind, how = decide_kind(self._known.get(shown["hex"]) or {}, self.settings.learn_landings)
+        known = self._known.get(shown["hex"]) or {}
         shown.update({"kind": kind, "kind_how": how, "medical": kind == "medevac", "police": kind == "police",
-                      "hand_kind": (self._known.get(shown["hex"]) or {}).get("kind")})
+                      "hand_kind": known.get("kind"), "radio_name": known.get("radio_name") or ""})
 
     def _recent_incidents(self, now: float) -> list[dict]:
         return [i for i in self.db.incidents(since=int(now - self.settings.incident_hours * 3600), limit=200)
@@ -354,7 +378,49 @@ class AircraftWatch:
 
     @staticmethod
     def _who(plane: dict) -> str:
-        return plane["name"] or plane["flight"] or plane["reg"] or plane["hex"]
+        return plane["name"] or plane.get("radio_name") or plane["flight"] or plane["reg"] or plane["hex"]
+
+    def heard_on_radio(self, call: dict, plane: dict | None = None, now: float | None = None) -> dict | None:
+        """A pilot or controller said a medevac call sign on an air band channel: marks the helicopter it
+        was. `plane` is the aircraft the aviation log matched by call sign or tail number, when it found
+        one; else the helicopter heard with this call sign before, else the only helicopter flying."""
+        label = (call.get("talkgroup_label") or "").lower()
+        if not any(name.lower() in label for name in self.settings.radio_talkgroups if name):
+            return None
+        callsign = medevac_callsign(call.get("transcript") or "")
+        if not callsign:
+            return None
+        now = time.time() if now is None else now
+        when = call.get("call_time") or now
+        with self._lock:
+            if plane is not None and plane.get("hex"):
+                how = "matched by the aviation log"
+                plane = self._planes.get(plane["hex"]) or dict(plane, trail=[])
+                if (self._known.get(plane["hex"]) or {}).get("kind") in ("other", "police"):
+                    return None
+            else:
+                flying = [p for p in self._planes.values() if p["seen"] >= when - 120 and p.get("kind") != "police"
+                          and (self._known.get(p["hex"]) or {}).get("kind") not in ("other", "police")]
+                by_name = [p for p in flying if callsign != "Lifeguard" and p.get("radio_name") == callsign]
+                if len(by_name) == 1:
+                    plane, how = by_name[0], "call sign heard before"
+                elif len(flying) == 1:
+                    plane, how = flying[0], "only helicopter flying"
+                else:
+                    log.info("Radio: %s heard on %s, but %d helicopters are flying; not sure which", callsign,
+                             call.get("talkgroup_label"), len(flying))
+                    return None
+            known = self._known.setdefault(plane["hex"], {"hex": plane["hex"], "hospital_landings": 0,
+                                                          "incident_landings": 0})
+            known["radio_calls"] = (known.get("radio_calls") or 0) + 1
+            if callsign != "Lifeguard" or not known.get("radio_name"):
+                known["radio_name"] = callsign
+            self.db.save_helicopter(known)
+            if plane["hex"] in self._planes:
+                self._classify(plane)
+            log.info("Radio: %s on %s is %s (%s)", callsign, call.get("talkgroup_label"),
+                     plane.get("reg") or plane["hex"], how)
+            return dict(plane, trail=list(plane.get("trail") or []))
 
     def _landing(self, plane: dict, near: dict, now: float):
         key = (plane["hex"], near["incident_id"])

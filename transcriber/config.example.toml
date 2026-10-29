@@ -58,6 +58,18 @@ reduce_hiss = true
 # hour. They are not transcribed and don't show in the call log or search.
 hide_station_ids = true
 
+
+[air_transcripts]
+# Airport and helicopter talkgroups (by number or name). Their calls get aviation hints for Whisper
+# (phonetic alphabet, runway, squawk, altimeter, Allentown Tower) and aviation cleanup ("November 8, 1, 2
+# Lima Foxtrot" -> N812LF, "heading 1, 7, 0" -> heading 170), instead of the county streets, units and
+# 10-codes, which Whisper was writing into pilot talk.
+talkgroups = ["9101", "9102", "9103", "9104"]
+# Optional: your own air hints, one per line (airline call signs you hear often).
+vocabulary_file = "air-vocabulary.txt"
+# Bring each speaker in a call to the same level: a plane overhead is often 15 dB louder than the tower.
+level_speakers = true
+
 [faster_whisper]
 model = "large-v3-turbo"
 device = "cuda"
@@ -202,14 +214,17 @@ learn_landings = 2
 # Hospitals come from places-geo.json (made by fetch-places.bat). Add any pad it misses here:
 # hospitals = [{name = "St. Luke's Anderson", lat = 40.68, lon = -75.29}]
 hospitals = []
+# Air band channels (talkgroup labels, or part of one) where a pilot saying a medevac call sign
+# ("Life Flight 2", "Lifeguard") marks that helicopter as medevac: the one whose tail number was said,
+# else the one heard with that call sign before, else the only helicopter flying.
+radio_talkgroups = ["ABE Approach", "ABE Tower", "Air Emergency", "Helicopters"]
 
 [aviation]
 # The airport and helicopter channels get a page of their own (Aviation, at /aviation). Their calls stay out
 # of the main call log and the incident map, except calls from medevac helicopters ("Life Flight 4"), which
 # show in the call log too. Each call is matched to the plane that said it on the ADS-B receiver above.
 enabled = true
-# Talkgroup numbers or names of the aviation channels in SDRTrunk.
-talkgroups = ["9101", "9102", "9103", "9104"]
+# Which talkgroups are aviation channels is set in [air_transcripts] talkgroups above.
 # The 121.5 emergency frequency: anyone talking there sends a phone alert (needs [alerts] below),
 # at most once every emergency_repeat_minutes.
 emergency_talkgroups = ["9103"]
@@ -282,7 +297,8 @@ enabled = true
 file = "paging_tones.csv"
 # Only check calls whose talkgroup name or number contains one of these, e.g. ["Fire Dispatch"]. [] = all.
 talkgroups = []
-# Name unlisted tones by themselves from the station dispatch names right after them (see the README).
+# Name unlisted tones by themselves from the station dispatch names right after them, and correct those
+# names later if dispatch keeps naming another station (see the README).
 learn = true
 learn_min_seen = 3
 learn_share = 0.5

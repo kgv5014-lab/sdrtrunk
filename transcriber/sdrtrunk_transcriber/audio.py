@@ -257,6 +257,62 @@ def normalize(samples: np.ndarray) -> np.ndarray:
     return out.astype(np.float32)
 
 
+# Speaker leveler (air band): a pause this long between loud parts starts a new speaker.
+SPEAKER_GAP_S = 0.25
+# Loud parts shorter than this are clicks, not a speaker.
+SPEAKER_MIN_S = 0.3
+# Background level: this percentile of the call's 16 ms frames; speech sits this far above it.
+SPEAKER_NOISE_PERCENTILE = 10
+SPEAKER_GATE_DB = 10.0
+# Most one speaker is turned up or down against the others, and the fade between them.
+SPEAKER_MAX_DB = 24.0
+SPEAKER_FADE_S = 0.03
+
+
+def speaker_runs(samples: np.ndarray) -> list[tuple[int, int, float]]:
+    """(start, end, level in dB) of each stretch of speech between pauses, in samples."""
+    if len(samples) < HOP * 8:
+        return []
+    frames = samples[: len(samples) // HOP * HOP].reshape(-1, HOP).astype(np.float64)
+    db = 10.0 * np.log10(np.maximum((frames ** 2).mean(axis=1), 1e-12))
+    gate = max(float(np.percentile(db, SPEAKER_NOISE_PERCENTILE)) + SPEAKER_GATE_DB, QUIET_DB)
+    loud = db > gate
+    gap = int(np.ceil(SPEAKER_GAP_S * WHISPER_RATE / HOP))
+    # Bridge pauses shorter than a gap, so words of one speaker stay together.
+    quiet = _runs(~loud)
+    for start, end in quiet:
+        if end - start < gap and start > 0 and end < len(loud):
+            loud[start:end] = True
+    runs = []
+    for start, end in _runs(loud):
+        if (end - start) * HOP >= SPEAKER_MIN_S * WHISPER_RATE:
+            active = db[start:end][db[start:end] > gate]
+            level = _db(float(np.mean(10.0 ** (active / 10.0))))
+            runs.append((start * HOP, end * HOP, level))
+    return runs
+
+
+def level_speakers(samples: np.ndarray) -> np.ndarray:
+    """Brings each speaker in a call to the same level as the loudest one, so the tower after a pilot
+    overhead isn't 15 dB quieter. Pauses keep the quieter neighbour's gain, so hiss isn't turned up."""
+    runs = speaker_runs(samples)
+    if len(runs) < 2:
+        return samples
+    top = max(level for _start, _end, level in runs)
+    gains_db = np.zeros(len(samples), np.float32)
+    marks = [(start, end, min(SPEAKER_MAX_DB, top - level)) for start, end, level in runs]
+    for i, (start, end, gain) in enumerate(marks):
+        gains_db[start:end] = gain
+        if i + 1 < len(marks):
+            gains_db[end:marks[i + 1][0]] = min(gain, marks[i + 1][2])
+    gains_db[marks[-1][1]:] = marks[-1][2]
+    gains_db[:marks[0][0]] = marks[0][2]
+    fade = max(1, int(SPEAKER_FADE_S * WHISPER_RATE))
+    gains_db = np.convolve(np.pad(gains_db, (fade // 2, fade - fade // 2 - 1), mode="edge"),
+                           np.ones(fade, np.float32) / fade, mode="valid")
+    return normalize(samples * (10.0 ** (gains_db / 20.0)).astype(np.float32))
+
+
 def clean(samples: np.ndarray, remove_tones: bool = True,
           reduce_noise: bool = True) -> tuple[np.ndarray, float]:
     """Prepares a call for Whisper: voice band only, FM hiss turned down, steady tones cut out, speech

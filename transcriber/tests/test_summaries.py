@@ -11,7 +11,7 @@ from sdrtrunk_transcriber import summaries
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.db import Database
 from sdrtrunk_transcriber.server import create_app
-from sdrtrunk_transcriber.summaries import Summarizer, clean_tags, clip_words
+from sdrtrunk_transcriber.summaries import Summarizer, clean_tags, clip_words, update_note
 
 from test_incidents import GEO, Radio
 from test_service import CALL, make_mp3, post, sdrtrunk_body
@@ -152,12 +152,89 @@ def test_an_incident_is_summarized_again_only_when_its_calls_change(tmp_path, ol
     assert db.get_summary("incident", incident_id) is None
 
 
+def test_a_change_gets_an_update_note(tmp_path, ollama):
+    config = make_config(tmp_path)
+    db = Database(tmp_path / "calls.db")
+    t = int(time.time()) - 600
+    incident_id = db.create_incident({"first_time": t, "last_time": t, "lat": 40.69, "lon": -75.21,
+                                      "label": "Main Street", "category": "fire", "nature": "Structure fire"})
+
+    def add(transcript, offset, speaker=None):
+        call_id = db.insert_call({"call_time": t + offset, "received_at": t, "talkgroup": "1",
+                                  "talkgroup_label": "Fire", "audio_path": "x.mp3"})
+        db.update_call(call_id, status="done", transcript=transcript, speaker_kind="unit" if speaker else None,
+                       speaker=speaker)
+        db.add_call_place({"call_id": call_id, "incident_id": incident_id, "kind": "address", "precision": "address"})
+
+    summarizer = Summarizer(config, db)
+    add("Station 41 respond 100 Main Street for a structure fire.", 0)
+    summarizer.summarize_incident(incident_id)
+    # The first summary is the start, not a change.
+    assert "NEW" not in ollama.prompts[-1] and db.incident_updates([incident_id]) == {}
+
+    add("Engine 41 to County, we have heavy fire showing, strike a second alarm.", 120, speaker="Engine 41")
+    ollama.answers = [{"summary": "Working house fire, second alarm.", "tags": ["working fire"], "status": "active",
+                       "update": "second alarm called"}]
+    summarizer.summarize_incident(incident_id)
+    prompt = ollama.prompts[-1]
+    assert "Summary so far" in prompt and "Structure fire at North 3rd" in prompt
+    assert "NEW " in prompt and "(Engine 41): Engine 41 to County" in prompt
+    assert "NEW " not in prompt.split("Station 41 respond")[0].splitlines()[-1]
+
+    # Routine traffic: no note. Going under control with no words from the model: says so.
+    add("Engine 41 is on location.", 180)
+    ollama.answers = [{"summary": "s", "tags": [], "status": "active", "update": "Units continue to operate."}]
+    summarizer.summarize_incident(incident_id)
+    add("Command to County, fire is knocked down, under control.", 900)
+    ollama.answers = [{"summary": "s", "tags": [], "status": "under control", "update": ""}]
+    summarizer.summarize_incident(incident_id)
+    notes = db.incident_updates([incident_id])[incident_id]
+    assert [n["note"] for n in notes] == ["Second alarm called.", "Under control."]
+    assert notes[0]["time"] == t + 120 and notes[1]["time"] == t + 900
+
+    # Gone from the map: its notes go too.
+    db._conn.execute("DELETE FROM incidents WHERE id = ?", (incident_id,))
+    summarizer.summarize_incident(incident_id)
+    assert db.incident_updates([incident_id]) == {}
+
+
+def test_update_notes_skip_repeats_and_filler():
+    earlier = [{"note": "Second alarm called."}]
+    assert update_note("Second alarm called", "active", "active", earlier) is None
+    assert update_note("No new information.", "active", "active", []) is None
+    assert update_note("N/A", "active", "active", []) is None
+    assert update_note("", "active", "active", []) is None
+    assert update_note("", "cleared", "active", []) == "Units cleared."
+    assert update_note("patient transported to St. Luke's", "active", "active", earlier) == \
+        "Patient transported to St. Luke's."
+
+
+def test_updates_shown_with_incidents(tmp_path, ollama):
+    config = make_config(tmp_path)
+    radio = Radio(["Station 4 Engine, respond North Third and Northampton for a structure fire, smoke showing."])
+    now = int(time.time())
+    client = TestClient(create_app(config, backend_factory=lambda _c: radio))
+    with client:
+        post(client, sdrtrunk_body({**CALL, "dateTime": str(now), "talkgroupLabel": "County Fire",
+                                    "talkgroupGroup": ""}, make_mp3(2.0)))
+        assert client.app.state.worker.wait_idle()
+        assert client.app.state.map_worker.wait_idle()
+        assert client.app.state.summarizer.wait_idle()
+        db = client.app.state.db
+        incident_id = client.get("/api/incidents", params={"since": now - 3600}).json()[0]["id"]
+        db.add_incident_update({"incident_id": incident_id, "time": now, "note": "Second alarm called.",
+                                "status": "active", "made_at": now})
+        incident = client.get("/api/incidents", params={"since": now - 3600}).json()[0]
+    assert incident["updates"] == [{"time": now, "note": "Second alarm called."}]
+
+
 def test_rebuilding_the_map_forgets_incident_summaries(tmp_path):
     db = Database(tmp_path / "calls.db")
     db.store_summary({"kind": "incident", "ref_id": 1, "basis": "x", "summary": "s", "made_at": 1})
     db.store_summary({"kind": "call", "ref_id": 1, "basis": "x", "summary": "s", "made_at": 1})
+    db.add_incident_update({"incident_id": 1, "time": 1, "note": "n", "made_at": 1})
     db.clear_map()
-    assert db.get_summary("incident", 1) is None
+    assert db.get_summary("incident", 1) is None and db.incident_updates([1]) == {}
     assert db.get_summary("call", 1) is not None
 
 

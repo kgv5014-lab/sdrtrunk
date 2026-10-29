@@ -80,6 +80,10 @@
   .summary { margin: 4px 0; }
   .summary .ai { font-size: 10px; font-weight: 700; letter-spacing: 0.04em; color: var(--muted); border: 1px solid var(--line); border-radius: 6px; padding: 0 4px; margin-right: 5px; vertical-align: 1px; }
   .summary.stale { opacity: 0.7; }
+  .updates { margin: 4px 0; padding-left: 8px; border-left: 2px solid var(--line); font-size: 12px; }
+  .updates .when { color: var(--muted); margin-right: 5px; }
+  .item .latest { font-size: 12px; margin-top: 2px; }
+  .item .latest .when { color: var(--muted); margin-right: 5px; }
   .item .summary { font-size: 13px; }
   .stags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 3px; }
   .heli { font-size: 20px; line-height: 20px; text-align: center; filter: drop-shadow(0 0 2px #fff); }
@@ -243,12 +247,24 @@ function summary(incident, withTags) {
   return box;
 }
 
+// What changed along the way ("Second alarm called"), written by Ollama with each later summary.
+function updates(incident) {
+  const box = el('div', 'updates');
+  (incident.updates || []).forEach(u => {
+    const line = el('div');
+    line.append(el('span', 'when', clock(u.time)), u.note);
+    box.append(line);
+  });
+  return box;
+}
+
 function popup(incident) {
   const box = el('div', 'pop');
   box.append(el('div', 'where', incident.label || 'Unknown place'));
   if (incident.category || incident.nature) { const what = el('div'); what.append(describe(incident)); box.append(what); }
   if ((incident.services || []).length) { const svc = el('div'); svc.append(services(incident)); box.append(svc); }
   if (incident.summary) box.append(summary(incident, true));
+  if ((incident.updates || []).length) box.append(updates(incident));
   const span = incident.first_time === incident.last_time ? time(incident.first_time)
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
   box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
@@ -409,6 +425,8 @@ function render(incidents) {
     const road = roadEventsAt(incident);
     if (road) item.append(el('div', 'road-note', road));
     if (incident.summary) item.append(summary(incident, false));
+    const latest = (incident.updates || []).slice(-1)[0];
+    if (latest) { const line = el('div', 'latest'); line.append(el('span', 'when', 'Latest ' + clock(latest.time)), latest.note); item.append(line); }
     items[incident.id] = item;
     item.onclick = () => { pick('map'); map.setView([incident.lat, incident.lon], Math.max(map.getZoom(), 15)); markers[incident.id].openPopup(); };
     list.append(item);

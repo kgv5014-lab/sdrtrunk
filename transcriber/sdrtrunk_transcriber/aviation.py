@@ -16,6 +16,7 @@ import logging
 import re
 import time
 
+from .aircraft import medevac_callsign
 from .config import Config
 from .db import Database
 
@@ -60,12 +61,6 @@ TYPE_WORDS = {"cessna", "piper", "cherokee", "archer", "warrior", "arrow", "sene
               "helicopter", "helo", "robinson", "bell", "airbus", "eurocopter", "sikorsky", "agusta",
               "experimental", "lifeguard", "medevac", "november"}
 
-# Medevac call signs heard on the radio.
-MEDEVAC_WORDS = re.compile(
-    r"\b(life ?flight|life ?net|life ?lion|life ?guard|med ?evac|medevac|jeff ?stat|penn ?star|stat ?medevac|"
-    r"air ?methods|geisinger|life ?star|air ?care)\b", re.I)
-
-
 def _named(call: dict, names: list) -> bool:
     """Whether the call's talkgroup number, name or group is one of these (case doesn't matter)."""
     wanted = {str(n).strip().lower() for n in names if str(n).strip()}
@@ -73,8 +68,10 @@ def _named(call: dict, names: list) -> bool:
     return bool(wanted & (have - {""}))
 
 
-def is_aviation(call: dict, settings) -> bool:
-    return settings.enabled and (_named(call, settings.talkgroups) or is_emergency(call, settings))
+def is_aviation(call: dict, config: Config) -> bool:
+    """On one of the air band talkgroups ([air_transcripts] talkgroups) or on 121.5."""
+    return config.aviation.enabled and (_named(call, config.air_transcripts.talkgroups)
+                                        or is_emergency(call, config.aviation))
 
 
 def is_emergency(call: dict, settings) -> bool:
@@ -86,7 +83,7 @@ def is_emergency(call: dict, settings) -> bool:
 
 
 def is_medevac_call(text: str | None) -> bool:
-    return bool(MEDEVAC_WORDS.search(text or ""))
+    return bool(medevac_callsign(text or ""))
 
 
 # ---- call signs
@@ -254,6 +251,7 @@ def describe(plane: dict, when: float) -> dict:
 
 class AviationLog:
     def __init__(self, config: Config, db: Database, aircraft=None, alerter=None):
+        self.config = config
         self.settings = config.aviation
         self.db = db
         # AircraftWatch (aircraft.py), or None when ADS-B is off.
@@ -262,11 +260,12 @@ class AviationLog:
 
     def backfill(self) -> int:
         """Marks calls logged before this existed, so they leave the main call log too."""
-        names = [str(n).strip().lower() for n in self.settings.talkgroups + self.settings.emergency_talkgroups]
+        names = [str(n).strip().lower() for n in self.config.air_transcripts.talkgroups
+                 + self.settings.emergency_talkgroups]
         return self.db.mark_air(names, EMERGENCY_HZ) if names else 0
 
     def air_of(self, call: dict) -> str | None:
-        return AVIATION if is_aviation(call, self.settings) else None
+        return AVIATION if is_aviation(call, self.config) else None
 
     def urgent(self, call: dict) -> bool:
         """121.5 calls go first in the transcription queue, so the alert isn't held up."""
@@ -276,11 +275,18 @@ class AviationLog:
         """After a call is transcribed (or fixed by hand, alert=False): matches it to aircraft, marks medevac
         calls and alerts on 121.5. Returns the call's air value (None for a county call)."""
         call = self.db.get_call(call_id)
-        if call is None or not is_aviation(call, self.settings):
+        if call is None or not is_aviation(call, self.config):
             return None
         planes = self.aircraft.recent_aircraft(call["call_time"], self.settings.match_minutes * 60) \
             if self.aircraft else []
         matched = [describe(p, call["call_time"]) for p in match_call(call["transcript"], planes)]
+        if self.aircraft and alert:
+            # A medevac call sign said on the air marks the helicopter that said it (aircraft.py).
+            helicopter = next((p for p in matched if p["helicopter"]), None)
+            try:
+                self.aircraft.heard_on_radio(call, helicopter)
+            except Exception:
+                log.exception("Helicopters: call %s failed", call_id)
         medevac = is_medevac_call(call["transcript"]) or any(p["kind"] == MEDEVAC for p in matched)
         air = MEDEVAC if medevac else AVIATION
         self.db.update_call(call_id, air=air, aircraft=json.dumps(matched) if matched else None)

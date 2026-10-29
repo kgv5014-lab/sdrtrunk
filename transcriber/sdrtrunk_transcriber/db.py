@@ -350,7 +350,8 @@ class Database:
 
     def search(self, q: str = "", talkgroup: str = "", source: str = "",
                before_id: int | None = None, limit: int = 100) -> list[dict]:
-        where, params = [], []
+        # Morse-code station IDs are hidden (worker.STATION_ID).
+        where, params = ["(error IS NULL OR error != 'station ID')"], []
 
         if q:
             if self.has_fts:
@@ -369,9 +370,7 @@ class Database:
             where.append("id < ?")
             params.append(before_id)
 
-        sql = "SELECT * FROM calls"
-        if where:
-            sql += " WHERE " + " AND ".join(where)
+        sql = "SELECT * FROM calls WHERE " + " AND ".join(where)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(max(1, min(limit, 500)))
 

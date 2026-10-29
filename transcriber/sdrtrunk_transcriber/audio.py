@@ -29,6 +29,16 @@ TONE_MIN_S = 0.25
 # Silence left where a tone was, so the words either side don't run together.
 TONE_GAP_S = 0.25
 
+# Morse-code station ID (an automatic repeater or base station ID, such as Nancy FD's every half
+# hour): many short beeps on one pitch. Dits and dahs last 0.05-0.2 s, so far more beeps than any
+# alert or paging tone (Countywide's alert is 5 beeps of 0.5 s), none of them long.
+MORSE_MIN_BEEPS = 10
+MORSE_MAX_BEEP_S = 0.4
+# Beeps within this far of their usual pitch count as the same tone.
+MORSE_PITCH_HZ = 60.0
+# Share of the call's sound that must be the beeps; the rest is carrier hiss before and after.
+MORSE_MIN_SHARE = 0.4
+
 # Hiss reducer: 32 ms frames, 8 ms apart (square-root Hann windows in and out add back to flat).
 HISS_FRAME = 512
 HISS_HOP = 128
@@ -148,10 +158,8 @@ def reduce_hiss(samples: np.ndarray) -> tuple[np.ndarray, bool]:
     return _overlap_add(cleaned, len(samples)), True
 
 
-def find_tones(samples: np.ndarray) -> list[tuple[int, int]]:
-    """Sample ranges (start, end) holding a steady single tone, such as two-tone paging or alert beeps."""
-    if len(samples) < FRAME:
-        return []
+def _tone_frames(samples: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Per frame: whether it is a pure tone, whether it is loud enough to count, and its strongest pitch."""
     count = 1 + (len(samples) - FRAME) // HOP
     index = np.arange(FRAME)[None, :] + HOP * np.arange(count)[:, None]
     power = np.abs(np.fft.rfft(samples[index] * np.hanning(FRAME), axis=1)) ** 2
@@ -167,19 +175,47 @@ def find_tones(samples: np.ndarray) -> list[tuple[int, int]]:
     hi = np.clip(peak + 4, 0, power.shape[1])
     purity = (cumulative[rows, hi] - cumulative[rows, lo]) / np.maximum(total, 1e-20)
     loud = 10.0 * np.log10(np.maximum(total / (FRAME * FRAME * 3.0 / 16.0), 1e-12)) > QUIET_DB
-    tonal = (purity >= TONE_PURITY) & loud
+    return (purity >= TONE_PURITY) & loud, loud, freqs[band][peak]
 
-    ranges = []
-    min_frames = int(np.ceil(TONE_MIN_S * WHISPER_RATE / HOP))
-    start = None
-    for i, is_tone in enumerate(np.append(tonal, False)):
-        if is_tone and start is None:
+
+def _runs(flags: np.ndarray) -> list[tuple[int, int]]:
+    """(start, end) frame indexes of each run of True."""
+    runs, start = [], None
+    for i, flag in enumerate(np.append(flags, False)):
+        if flag and start is None:
             start = i
-        elif not is_tone and start is not None:
-            if i - start >= min_frames:
-                ranges.append((start * HOP, min(len(samples), (i - 1) * HOP + FRAME)))
+        elif not flag and start is not None:
+            runs.append((start, i))
             start = None
-    return ranges
+    return runs
+
+
+def find_tones(samples: np.ndarray) -> list[tuple[int, int]]:
+    """Sample ranges (start, end) holding a steady single tone, such as two-tone paging or alert beeps."""
+    if len(samples) < FRAME:
+        return []
+    tonal, _loud, _pitch = _tone_frames(samples)
+    min_frames = int(np.ceil(TONE_MIN_S * WHISPER_RATE / HOP))
+    return [(start * HOP, min(len(samples), (end - 1) * HOP + FRAME))
+            for start, end in _runs(tonal) if end - start >= min_frames]
+
+
+def is_morse_id(samples: np.ndarray) -> bool:
+    """Whether a call is only a Morse-code station ID: ten or more short beeps on one pitch and no
+    speech. Takes band-passed samples, as find_tones does."""
+    if len(samples) < FRAME:
+        return False
+    tonal, loud, pitch = _tone_frames(samples)
+    beeps = _runs(tonal)
+    if len(beeps) < MORSE_MIN_BEEPS:
+        return False
+    longest = max(end - start for start, end in beeps) * HOP / WHISPER_RATE
+    if longest > MORSE_MAX_BEEP_S:
+        return False
+    usual = float(np.median(pitch[tonal]))
+    if np.mean(np.abs(pitch[tonal] - usual) <= MORSE_PITCH_HZ) < 0.9:
+        return False
+    return tonal.sum() >= MORSE_MIN_SHARE * max(loud.sum(), 1)
 
 
 def remove_ranges(samples: np.ndarray, ranges: list[tuple[int, int]]) -> np.ndarray:

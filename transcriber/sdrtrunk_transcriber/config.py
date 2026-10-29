@@ -62,6 +62,8 @@ class AudioConfig:
     remove_tones: bool = True
     # Also turn down the steady hiss of weak FM channels. Clean calls, such as P25, are left as they are.
     reduce_hiss: bool = True
+    # Hide calls that are only a Morse-code station ID (Nancy FD's every half hour) from the call log.
+    hide_station_ids: bool = True
 
 
 @dataclass

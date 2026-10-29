@@ -54,6 +54,9 @@ remove_tones = true
 # Also turn down the steady hiss on weak FM channels (T-band, UHF fire). Calls without hiss, such as
 # P25, are left as they are. Adds a few hundredths of a second per call.
 reduce_hiss = true
+# Hide calls that are only a Morse-code station ID, like the one Nancy FD's channel sends every half
+# hour. They are not transcribed and don't show in the call log or search.
+hide_station_ids = true
 
 [faster_whisper]
 model = "large-v3-turbo"

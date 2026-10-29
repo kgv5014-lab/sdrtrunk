@@ -33,7 +33,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from starlette.datastructures import UploadFile
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import audio
+from . import audio, live
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -109,7 +109,7 @@ def _json_unless_unchanged(request: Request, data) -> Response:
 
 
 class _CompressText:
-    """Gzips the pages and JSON replies, but not call audio or camera pictures.
+    """Gzips the pages and JSON replies, but not call audio, the live stream or camera pictures.
 
     Those are already compressed, and Safari plays audio with range requests that gzip would break.
     """
@@ -120,7 +120,7 @@ class _CompressText:
 
     async def __call__(self, scope, receive, send):
         path = scope.get("path", "") if scope["type"] == "http" else ""
-        if scope["type"] == "http" and not path.endswith(("/audio", "/image")):
+        if scope["type"] == "http" and not path.endswith(("/audio", "/image", ".mp3")):
             await self.gzip(scope, receive, send)
         else:
             await self.app(scope, receive, send)
@@ -271,6 +271,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
     app.add_middleware(_CompressText)
+    app.state.live = live.LiveHub() if config.listen.enabled else None
 
     async def call_upload(request: Request):
         form = await request.form()
@@ -305,7 +306,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(audio_bytes)
 
-        call_id = request.app.state.db.insert_call({
+        call = {
             "call_time": call_time,
             "received_at": int(time.time()),
             "system_id": _text(form, "system"),
@@ -318,8 +319,11 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "frequency": _int(_text(form, "frequency")),
             "patches": _text(form, "patches"),
             "audio_path": relative.as_posix(),
-        })
+        }
+        call_id = request.app.state.db.insert_call(call)
         request.app.state.worker.submit(call_id)
+        if request.app.state.live:
+            await live.add_call(request.app.state.live, {**call, "id": call_id}, target)
         return PlainTextResponse(SUCCESS_REPLY)
 
     # Rdio Scanner's own path, plus the bare host SDRTrunk defaults to.
@@ -478,6 +482,23 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if not path.is_relative_to(data_path.resolve()) or not path.exists():
             raise HTTPException(404)
         return FileResponse(path)
+
+    if config.listen.enabled:
+        live.add_routes(app, app, data_path, public=False)
+
+        @app.get("/api/listen/link")
+        def listen_link():
+            """The secret link for the public listen page (this route is never on the public port)."""
+            key = live.read_key(data_path)
+            base = config.listen.public_url.rstrip("/")
+            return {"key": key, "port": config.listen.public_port,
+                    "url": f"{base}/listen?key={key}" if base and config.listen.public_port else None}
+
+        @app.post("/api/listen/new-link")
+        def new_listen_link():
+            """Makes a new secret, so an old link that got out stops working."""
+            live.new_key(data_path)
+            return listen_link()
 
     @app.get("/map", response_class=HTMLResponse)
     def map_page():

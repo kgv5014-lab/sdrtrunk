@@ -640,11 +640,18 @@ function rangeStart(value) {
   return Math.floor(Date.now() / 1000) - Number(value);
 }
 
+// The reply's tag from last time: an unchanged list comes back as an empty 304, which saves a phone
+// re-downloading every incident every 10 seconds.
+let incidentsTag = null;
 async function load() {
   const since = rangeStart($('range').value);
   const p = new URLSearchParams({ since, hidden: $('hidden').checked });
   try {
-    render(await (await fetch('api/incidents?' + p)).json());
+    const res = await fetch('api/incidents?' + p, { headers: incidentsTag ? { 'If-None-Match': incidentsTag } : {} });
+    if (res.status === 304) return;
+    const incidents = await res.json();
+    render(incidents);
+    incidentsTag = res.headers.get('ETag');
   } catch (e) { $('status').textContent = 'service unreachable'; }
 }
 
@@ -810,8 +817,8 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
 })();
 $('range').value = stored('map.range', '86400');
 if (!$('range').value) $('range').value = '86400';
-$('range').addEventListener('change', () => { store('map.range', $('range').value); fitted = false; load(); });
-$('hidden').addEventListener('change', load);
+$('range').addEventListener('change', () => { store('map.range', $('range').value); fitted = false; incidentsTag = null; load(); });
+$('hidden').addEventListener('change', () => { incidentsTag = null; load(); });
 $('multi').checked = stored('map.multi', false);
 $('multi').addEventListener('change', () => { store('map.multi', $('multi').checked); render(lastIncidents); });
 </script>

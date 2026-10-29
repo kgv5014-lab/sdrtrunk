@@ -60,7 +60,7 @@ NATURES = [(re.compile(pattern, re.IGNORECASE), label, category) for pattern, la
 LIFE_SUPPORT = re.compile(r"\b(?:(a)|[bpd])\.?\s?l\.?\s?s\b|\b(advanced|basic) life support", re.IGNORECASE)
 # An EMS unit: "Medic 5", "EMS 27", or as Whisper writes them, "MS-5", "AMS-5", "PMS 5", "Mb. 14", "E-M-S-14".
 EMS_UNIT = re.compile(r"\b(?:medic|ems|e-m-s|a?ms|pms|mb\.?|ambulance|qrs)[\s#-]*\d", re.IGNORECASE)
-PRECISION_RANK = {"address": 0, "intersection": 1, "landmark": 2, "street": 3}
+PRECISION_RANK = {"address": 0, "intersection": 1, "milepost": 2, "landmark": 3, "street": 4}
 # A channel named in a call, as Whisper writes it: "Tac 2", "TAC-2A", "Tag 3", "Pac-1", "Op 2", "Fire Ground 1",
 # often with the time run into it ("OPS 1-1509", "TAC 3-634"). Channels here are numbered 1 to 9.
 CHANNEL = re.compile(r"\b(tac|tack|tact|tach|tag|pac|ops|op|fire ?ground)[\s.-]*(\d)([a-d])?(?![\d:]|[a-z])",

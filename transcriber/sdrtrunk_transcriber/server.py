@@ -733,6 +733,13 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "tiles_url": config.map.tiles_url,
         }
 
+    @app.get("/api/map/mileposts")
+    def map_mileposts(request: Request):
+        """Every highway mile marker the map knows, for the map's mile marker layer."""
+        worker = request.app.state.map_worker
+        mileposts = worker.gazetteer.mileposts if worker else None
+        return {"markers": mileposts.markers() if mileposts else []}
+
     if config.alerts.enabled:
         # The two addresses the ntfy phone app asks, at this PC's address plus the topic name.
         topic = config.alerts.topic

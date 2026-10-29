@@ -19,6 +19,7 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import mileposts
 from .codes import ONES, TENS
 from .fetch_places import route_names
 
@@ -178,7 +179,7 @@ class Mention:
 
 @dataclass
 class Found:
-    kind: str             # address, intersection, landmark
+    kind: str             # address, intersection, landmark, milepost
     heard: str            # the words as transcribed
     label: str            # "1234 Northampton St, Easton"
     query: str | None = None          # free-text search for the online lookup
@@ -216,6 +217,7 @@ class Gazetteer:
         self.town_names: dict[str, str] = {}         # town key -> display name
         self.landmarks: dict[tuple, list[Landmark]] = {}
         self.has_shapes = False
+        self.mileposts: mileposts.Mileposts | None = None
         self.reload_if_changed()
 
     # ---- loading
@@ -252,6 +254,7 @@ class Gazetteer:
         town_names: dict[str, str] = {}
         landmarks: dict[tuple, list[Landmark]] = {}
         has_shapes = False
+        route_ways: dict[str, list] = {}
 
         if self.geo_path and self.geo_path.exists():
             data = json.loads(self.geo_path.read_text(encoding="utf-8"))
@@ -265,7 +268,11 @@ class Gazetteer:
                 towns = way.get("municipalities") or [""]
                 names = [(way["name"], towns)] if way.get("name") else []
                 # A numbered route is one road, whatever town it passes through.
-                names += [(name, [""]) for name in route_names(way.get("ref") or "")]
+                routes = route_names(way.get("ref") or "")
+                names += [(name, [""]) for name in routes]
+                if way.get("highway") in ("motorway", "trunk"):
+                    for name in routes:
+                        route_ways.setdefault(name, []).append((way["highway"], line))
                 for name, name_towns in names:
                     for town in name_towns:
                         key = (_name_key(name), town_key(town))
@@ -342,6 +349,13 @@ class Gazetteer:
         self.town_names = town_names
         self.landmarks = landmarks
         self.has_shapes = has_shapes
+        try:
+            self.mileposts = mileposts.Mileposts(route_ways, self.proj) if route_ways else None
+        except Exception:
+            log.exception("Could not work out the highway mile markers")
+            self.mileposts = None
+        if self.mileposts:
+            log.info("Mile markers: %s", ", ".join(sorted(self.mileposts.routes)) or "none")
         log.info("Street list: %d streets in %d towns (%s), %d landmarks", len(self.streets), len(town_names),
                  "with shapes" if has_shapes else "names only", sum(len(v) for v in landmarks.values()))
 
@@ -363,6 +377,9 @@ class Gazetteer:
         towns = self.towns_in(w)
         if not towns and context:
             towns = self._towns_anywhere(words(context))
+        milepost = self._milepost(text)
+        if milepost:
+            return milepost
         mentions = self._mentions(w)
 
         address = self._address(w, mentions, towns)
@@ -372,6 +389,18 @@ class Gazetteer:
         if crossing:
             return crossing
         return self._landmark(w, towns)
+
+    def _milepost(self, text: str) -> Found | None:
+        """A highway mile marker: "337.5 Route 22 East", "78 westbound, mile marker 72.4"."""
+        if not self.mileposts:
+            return None
+        found = mileposts.find(text, self.mileposts.routes)
+        if not found:
+            return None
+        point = self.mileposts.locate(found.route, found.mile, found.direction)
+        if not point:
+            return None
+        return Found("milepost", found.heard, found.label, points=[point])
 
     def towns_in(self, w: list[str]) -> set[str]:
         """Towns named after "in" or with Township/Borough/City: "in Easton", "Palmer Township"."""

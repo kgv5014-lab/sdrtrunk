@@ -284,6 +284,13 @@ Radio speech is messy, so some calls are missed and some land in the wrong place
 shows its transcript and how it was placed (house address, intersection, landmark, or street only), and
 **Remove from map** hides a wrong one ("Show removed" brings it back).
 
+**Play all.** An incident with more than one call has a **Play all** button at the top of its popup. It
+plays every call in time order with a one second pause between them, highlights the call playing and
+scrolls to it, and has Back, Next and a speed choice (1x to 2x). The PC joins the calls into one MP3
+(kept in `data\incident-audio`, the newest 40), so an iPhone keeps playing with the screen locked, and
+the lock screen's skip buttons go to the next or previous call. Calls whose audio was deleted are
+skipped, and the popup says how many. The friends' map has it too.
+
 **Fixing it by hand.** Under each call in a popup: **Move to…** puts it in another incident nearby in
 time, **Own incident** takes it out into an incident of its own, and **Not an incident** takes it off the
 map. **Merge into…** at the bottom joins two incidents. Fixes are kept when the map is rebuilt.

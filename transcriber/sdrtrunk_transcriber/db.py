@@ -595,6 +595,15 @@ class Database:
                 "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
         return [dict(row) for row in rows]
 
+    def incident_audio_calls(self, incident_id: int) -> list[dict]:
+        """Each call of an incident once, oldest first, with where its audio is (Play all)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT c.id, c.call_time, c.audio_path, c.audio_deleted_at, c.talkgroup, c.talkgroup_label "
+                "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
+                "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
+        return [dict(row) for row in rows]
+
     def incident_of_call(self, call_id: int) -> int | None:
         with self._lock:
             row = self._conn.execute("SELECT incident_id FROM call_places WHERE call_id = ? AND incident_id IS NOT NULL "

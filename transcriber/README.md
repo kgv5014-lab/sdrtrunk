@@ -671,6 +671,27 @@ It finds SDRTrunk by looking at the SDRTrunk that is running. If SDRTrunk isn't 
 starts, set `sdrtrunk` under `[watchdog]` in `config.toml` to its `bin\sdr-trunk.bat` (see
 `config.example.toml`), or start SDRTrunk yourself once. The other settings are there too.
 
+### Start everything when the PC boots
+
+Double-click **autostart-on.bat** once. From then on, a minute after you sign in to Windows,
+start-everything.bat starts by itself in a minimized **SDRTrunk watchdog** window. The minute lets the
+dongles, the network, NordVPN and Tailscale finish starting; press a key in that window to skip the wait.
+If a watchdog is already running it does nothing. **autostart-off.bat** turns it off again. (It is a
+shortcut called "SDRTrunk Plus" in your Startup folder, which Task Manager also lists under Startup apps.)
+
+SDRTrunk is a program with a window, so it only starts once someone is signed in. To have the PC come back
+by itself after a power cut or a Windows Update restart, let Windows sign you in by itself:
+
+1. Settings > Accounts > Sign-in options: turn off "For improved security, only allow Windows Hello
+   sign-in for Microsoft accounts on this device".
+2. Press Windows+R, type `netplwiz`, press Enter, untick "Users must enter a user name and password to use
+   this computer", click OK and type your Windows password (for a Microsoft account, its password, not the
+   PIN).
+
+Anyone who can touch the PC then gets in without a password, so only do this if that's fine. To go back,
+tick the box again. For a PC that also loses power, set "Restore on AC power loss" (sometimes "After power
+failure") to On in the BIOS so it turns itself back on.
+
 ## Accuracy tips
 
 * Whisper invents words on noise. `junk_filter` drops a whole call of "Thank you." heard with low

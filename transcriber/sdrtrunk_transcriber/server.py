@@ -15,6 +15,7 @@ At the top of each hour SDRTrunk posts each dongle's signal quality as JSON to /
 (see signal_quality.py).
 """
 
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -33,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from starlette.datastructures import UploadFile
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import audio, live, share
+from . import audio, incident_audio, live, share
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -549,6 +550,22 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         if not path.is_relative_to(data_path.resolve()) or not path.exists():
             raise HTTPException(404)
         return FileResponse(path)
+
+    @app.get("/api/incidents/{incident_id}/play")
+    async def incident_play(request: Request, incident_id: int):
+        """Play all: where each call starts in the incident's joined audio (made here if needed)."""
+        info = await asyncio.to_thread(incident_audio.build, request.app.state.db, data_path, incident_id)
+        if info is None:
+            raise HTTPException(404)
+        url = f"api/incidents/{incident_id}/audio.mp3?v={info['version']}" if info["file"] else None
+        return {"url": url, "seconds": info["seconds"], "calls": info["calls"], "missing": info["missing"]}
+
+    @app.get("/api/incidents/{incident_id}/audio.mp3")
+    async def incident_play_audio(request: Request, incident_id: int):
+        info = await asyncio.to_thread(incident_audio.build, request.app.state.db, data_path, incident_id)
+        if info is None or info["file"] is None:
+            raise HTTPException(404)
+        return FileResponse(info["file"], media_type="audio/mpeg")
 
     if config.listen.enabled:
         live.add_routes(app, app, data_path, public=False)

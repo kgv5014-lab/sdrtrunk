@@ -59,6 +59,12 @@
   .pop .where { font-size: 15px; font-weight: 600; }
   .pop .call { border-top: 1px solid #ddd; padding-top: 6px; margin-top: 6px; }
   .pop audio { width: 100%; height: 28px; margin-top: 4px; }
+  /* Stays at the top while the popup scrolls to the call playing, so Back and Next are always in reach. */
+  .pop .playall { margin-top: 6px; padding: 6px 8px; border: 1px solid #ddd; border-radius: 8px; position: sticky; top: 0; z-index: 1; background: #fff; }
+  .pop .call.now { scroll-margin-top: 150px; }
+  .pop .playall .row button, .pop .playall .row select { font-size: 13px; padding: 3px 8px; }
+  .pop .playall .start { font-size: 14px; font-weight: 600; padding: 5px 12px; }
+  .pop .call.now { background: var(--mark); border-radius: 4px; box-shadow: 0 0 0 4px var(--mark); }
   .pop .tags { display: flex; flex-wrap: wrap; gap: 3px 5px; margin-top: 4px; }
   .pop .tag { font-size: 11px; border: 1px solid #ccc; border-radius: 10px; padding: 0 6px; color: #555; }
   .pop .page { color: #9a5800; font-weight: 600; }
@@ -270,6 +276,7 @@ function popup(incident) {
   const span = incident.first_time === incident.last_time ? time(incident.first_time)
     : time(incident.first_time) + ' – ' + clock(incident.last_time);
   box.append(el('div', 'muted', span + ' · ' + incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's')));
+  if (new Set(incident.calls.map(c => c.id)).size > 1) box.append(playAll(incident, box));
   if (incident.channel) box.append(el('div', 'channel', 'Working on ' + incident.channel));
   const heliNote = helicoptersAt(incident);
   if (heliNote) box.append(el('div', 'heli-note', heliNote));
@@ -283,6 +290,7 @@ function popup(incident) {
   });
   incident.calls.forEach(c => {
     const call = el('div', 'call');
+    call.dataset.callId = c.id;
     call.append(el('div', 'muted', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) +
       (c.talker_alias ? ' · ' + c.talker_alias : c.speaker_kind ? ' · ' + c.speaker : '') + ' · ' + (PRECISION[c.precision] || c.precision)));
     const text = highlighted(c.transcript, c.highlights);
@@ -324,6 +332,78 @@ function popup(incident) {
 }
 
 // Other incidents close in time, nearest in time first, to move a call to or merge with.
+// Play all: the PC joins the incident's calls into one file (incident_audio.py), oldest first, so an
+// iPhone keeps playing with the screen locked. The call playing now is highlighted and scrolled to.
+let incidentPlayer = null;
+function playAll(incident, box) {
+  const wrap = el('div', 'playall');
+  const start = el('button', 'start', '▶ Play all ' + new Set(incident.calls.map(c => c.id)).size + ' calls');
+  start.title = 'Plays every call of this incident in order';
+  wrap.append(start);
+  start.onclick = () => {
+    if (incidentPlayer) incidentPlayer.pause();
+    // Hidden, not removed: Leaflet takes a tap on a removed button for a tap on the map and closes the popup.
+    start.hidden = true;
+    const audio = el('audio'); audio.controls = true; audio.preload = 'auto';
+    // Started right in the tap (iPhones only play audio that starts from a tap); the times come after.
+    audio.src = 'api/incidents/' + incident.id + '/audio.mp3';
+    const speed = stored('playSpeed', 1);
+    audio.playbackRate = audio.defaultPlaybackRate = speed;
+    audio.play().catch(() => {});
+    incidentPlayer = audio;
+    const now = el('div', 'muted', 'Getting the calls ready…');
+    const row = el('div', 'row');
+    const prev = el('button', '', '⏮ Back'), next = el('button', '', 'Next ⏭');
+    const rate = el('select');
+    [1, 1.25, 1.5, 2].forEach(r => { const o = el('option', '', r + 'x'); o.value = r; o.selected = r === speed; rate.append(o); });
+    rate.title = 'Playing speed';
+    rate.onchange = () => { audio.playbackRate = audio.defaultPlaybackRate = Number(rate.value); store('playSpeed', Number(rate.value)); };
+    row.append(prev, next, rate);
+    const note = el('div', 'muted');
+    wrap.append(audio, row, now, note);
+    let plan = [], current = -1;
+    const byId = id => box.querySelector('.call[data-call-id="' + id + '"]');
+    const show = i => {
+      if (i === current) return;
+      if (current >= 0 && plan[current]) { const old = byId(plan[current].id); if (old) old.classList.remove('now'); }
+      current = i;
+      if (i < 0) return;
+      const c = incident.calls.find(x => x.id === plan[i].id);
+      now.textContent = 'Call ' + (i + 1) + ' of ' + plan.length + (c ? ' · ' + clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup) : '');
+      const card = byId(plan[i].id);
+      if (card) { card.classList.add('now'); card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+    };
+    const at = t => { let i = -1; plan.forEach((p, j) => { if (p.start <= t + 0.05) i = j; }); return i; };
+    const jump = i => { if (!plan.length) return; i = Math.max(0, Math.min(plan.length - 1, i)); audio.currentTime = plan[i].start; show(i); audio.play().catch(() => {}); };
+    // Back goes to the start of this call, or the one before when it has only just begun.
+    prev.onclick = () => { const i = at(audio.currentTime); jump(i > 0 && audio.currentTime - plan[i].start < 2 ? i - 1 : i); };
+    next.onclick = () => jump(at(audio.currentTime) + 1);
+    audio.addEventListener('timeupdate', () => { if (plan.length) show(at(audio.currentTime)); });
+    audio.addEventListener('ended', () => { show(-1); now.textContent = 'Played all ' + plan.length + ' calls'; });
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.metadata = new MediaMetadata({ title: incident.label || 'Incident', artist: 'Incident · ' + time(incident.first_time) });
+        navigator.mediaSession.setActionHandler('nexttrack', () => next.onclick());
+        navigator.mediaSession.setActionHandler('previoustrack', () => prev.onclick());
+      } catch (e) { /* not on this browser */ }
+    }
+    fetch('api/incidents/' + incident.id + '/play').then(r => r.ok ? r.json() : Promise.reject(r.status)).then(info => {
+      plan = info.calls;
+      const missing = info.missing.length;
+      if (!info.url) { now.textContent = 'None of these calls has audio left'; audio.remove(); row.remove(); return; }
+      if (missing) note.textContent = missing + ' call' + (missing === 1 ? ' has' : 's have') + ' no audio (deleted to save space), so ' + (missing === 1 ? 'it is' : 'they are') + ' skipped';
+      now.textContent = plan.length + ' calls, ' + Math.round(info.seconds / 60 * 10) / 10 + ' minutes';
+      show(at(audio.currentTime));
+    }).catch(() => { now.textContent = 'Could not get the calls ready'; });
+  };
+  return wrap;
+}
+map.on('popupclose', () => { if (incidentPlayer) { incidentPlayer.pause(); incidentPlayer = null; } });
+// Only one thing plays at a time: starting a single call pauses Play all, and the other way round.
+document.addEventListener('play', e => {
+  document.querySelectorAll('audio').forEach(a => { if (a !== e.target && !a.paused) a.pause(); });
+}, true);
+
 function otherIncidents(incident) {
   return lastIncidents.filter(i => i.id !== incident.id && Math.abs(i.first_time - incident.first_time) <= 6 * 3600)
     .sort((a, b) => Math.abs(a.first_time - incident.first_time) - Math.abs(b.first_time - incident.first_time))

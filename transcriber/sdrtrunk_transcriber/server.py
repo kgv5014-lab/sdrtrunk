@@ -49,6 +49,7 @@ from .config import Config
 from .db import Database
 from .geocode import Geocoder
 from .incidents import MapWorker, highlights, services_of
+from .history import TYPES as HISTORY_TYPES, HistoryKeeper, to_csv as history_csv
 from .zones import ZoneWatch, read_zones
 from .speakers import SpeakerBook
 from .summaries import Summarizer, attach as attach_summary, attach_updates, incident_basis
@@ -213,6 +214,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 # Calls moved between incidents by hand on the map.
                 map_worker.on_changed = lambda ids: [summarizer.incident_changed(i) for i in ids]
             map_worker.start()
+        # A lasting copy of every incident for the heat map (/history), kept when the map is rebuilt.
+        history = HistoryKeeper(db) if map_worker else None
+        if history:
+            history.start()
 
         units = UnitBoard(db, codebook)
         try:
@@ -274,6 +279,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.codebook = codebook
         app.state.corrections = corrections
         app.state.map_worker = map_worker
+        app.state.history = history
         app.state.alerter = alerter
         app.state.summarizer = summarizer
         app.state.aircraft = aircraft
@@ -291,6 +297,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             aircraft.stop()
         if traffic:
             traffic.stop()
+        if history:
+            history.stop()
         if map_worker:
             map_worker.stop()
         if alerter:
@@ -566,6 +574,59 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     @app.get("/map", response_class=HTMLResponse)
     def map_page():
         return (WEB_DIR / "map.html").read_text(encoding="utf-8")
+
+    # ---- incident history: heat map page and CSV download (history.py)
+
+    @app.get("/history", response_class=HTMLResponse)
+    def history_page():
+        return (WEB_DIR / "history.html").read_text(encoding="utf-8")
+
+    def _history_rows(request: Request, since: int | None, until: int | None, hidden: bool,
+                      types: str | None = None, nature: str | None = None) -> list[dict]:
+        keeper = request.app.state.history
+        if keeper:
+            try:
+                keeper.sync_if_stale()
+            except Exception:
+                log.exception("Incident history: could not save")
+        rows = request.app.state.db.history(since, until, hidden)
+        if types:
+            wanted = set(types.split(","))
+            rows = [r for r in rows if r["type"] in wanted]
+        if nature:
+            rows = [r for r in rows if (r["nature"] or "") == nature]
+        return rows
+
+    @app.get("/api/history")
+    def incident_history(request: Request, since: int | None = None, until: int | None = None,
+                         hidden: bool = False):
+        rows = _history_rows(request, since, until, hidden)
+        oldest = rows[0]["first_time"] if rows else None
+        return {
+            "types": HISTORY_TYPES,
+            "oldest": oldest,
+            # Short rows: years of incidents still load quickly.
+            "fields": ["id", "time", "end", "lat", "lon", "type", "nature", "label", "services", "calls", "hidden",
+                       "incident_id"],
+            "rows": [[r["first_call_id"], r["first_time"], r["last_time"], round(r["lat"], 5), round(r["lon"], 5),
+                      r["type"], r["nature"], r["label"], r["services"] or "", r["calls"], r["hidden"],
+                      r["incident_id"]] for r in rows],
+        }
+
+    @app.get("/api/history.csv")
+    def incident_history_csv(request: Request, since: int | None = None, until: int | None = None,
+                             hidden: bool = False, types: str | None = None, nature: str | None = None):
+        rows = _history_rows(request, since, until, hidden, types, nature)
+        name = f"incident-history-{datetime.now():%Y-%m-%d}.csv"
+        return Response(history_csv(rows), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.get("/api/history/{first_call_id}")
+    def incident_history_entry(request: Request, first_call_id: int):
+        entry = request.app.state.db.history_entry(first_call_id)
+        if entry is None:
+            raise HTTPException(404)
+        return entry
 
     def _map_worker(request: Request) -> MapWorker:
         if request.app.state.map_worker is None:

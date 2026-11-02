@@ -294,6 +294,20 @@ After editing `places.csv` by hand, map earlier calls again with (from the same 
 Settings are under `[map]` in `config.toml`. The map page loads Leaflet and the map tiles from the
 internet; map data is © OpenStreetMap contributors.
 
+### Incident history and heat map
+
+<http://localhost:3000/history> (the **History** link on the map) shows every incident placed so far as a
+heat map: busy places glow warmer, and zoomed in close each incident is a dot you can click to read its
+calls. Filter by type (Fire, EMS, Police, MVA, Other), by what happened (structure fire, fall, ...) and by
+dates (all history, the last 7/30/90 days, 12 months, or picked dates). The side panel lists the ten
+busiest addresses or streets, a day-of-week by hour-of-day grid (click a square to show only that hour),
+and counts by type. **Download CSV** saves what is shown as a spreadsheet file.
+
+The history is kept in its own table in `calls.db` (`incident_history`). Rebuilding the map clears and
+refills the incidents, but not the history: rows are matched by each incident's first call, so a rebuild
+updates them instead of adding them twice. A row only goes away when its calls are joined into another
+incident, or its first call is taken off the map by hand. Removed incidents show with **Show removed**.
+
 ### Helicopters from ADS-B
 
 If an ADS-B receiver (readsb, tar1090 or ultrafeeder) runs on your network, the map can show helicopters

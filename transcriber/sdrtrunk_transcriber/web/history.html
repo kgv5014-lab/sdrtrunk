@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Incident history</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --cell: 42, 111, 219;
+          --fire: #d33c2f; --ems: #1f8a5b; --police: #2a6fdb; --mva: #e07b00; --other: #7a7a82; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --cell: 110, 162, 255;
+            --fire: #ff6b5e; --ems: #4cc38a; --police: #6ea2ff; --mva: #ffa13d; --other: #a0a0a8; }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; display: flex; flex-direction: column; }
+  header { background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  h1 { font-size: 16px; margin: 0; }
+  a { color: var(--accent); }
+  select, button, input[type=date] { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font: inherit; }
+  button { color: var(--accent); cursor: pointer; }
+  label { color: var(--muted); font-size: 13px; }
+  #status { color: var(--muted); font-size: 12px; margin-left: auto; }
+  #custom[hidden] { display: none; }
+  #custom { display: inline-flex; gap: 6px; align-items: center; }
+  #nature { max-width: 220px; }
+  .types { display: flex; flex-wrap: wrap; gap: 4px; }
+  .types label { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 14px; padding: 2px 9px 2px 6px; color: var(--fg); cursor: pointer; user-select: none; }
+  .types label:has(input:not(:checked)) { opacity: 0.45; }
+  .types input { margin: 0; }
+  .types .n { color: var(--muted); font-size: 12px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+  .body { flex: 1; display: flex; min-height: 0; }
+  #side { width: 360px; overflow-y: auto; border-right: 1px solid var(--line); padding: 10px 12px; }
+  #map { flex: 1; min-height: 300px; }
+  .tabs { display: none; }
+  @media (max-width: 900px) {
+    .tabs { display: flex; border-bottom: 1px solid var(--line); }
+    .tabs button { flex: 1; border: 0; border-radius: 0; padding: 8px; color: var(--muted); background: var(--bg); }
+    .tabs button.on { color: var(--accent); box-shadow: 0 -2px 0 var(--accent) inset; }
+    #side { width: auto; flex: 1; border: 0; }
+    .body > :not(.shown) { display: none; }
+  }
+  h2 { font-size: 13px; color: var(--muted); margin: 14px 0 6px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+  h2:first-child { margin-top: 0; }
+  .total { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .bars { display: grid; grid-template-columns: auto 1fr auto; gap: 3px 8px; align-items: center; font-size: 13px; }
+  .bar { height: 8px; border-radius: 4px; }
+  .num { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
+  .switch { margin-left: auto; display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .switch button { border: 0; border-radius: 0; padding: 1px 8px; font-size: 12px; color: var(--muted); }
+  .switch button.on { color: var(--accent); font-weight: 600; }
+  ol.spots { margin: 0; padding: 0; list-style: none; }
+  ol.spots li { display: flex; gap: 8px; align-items: baseline; padding: 4px 6px; border-radius: 6px; cursor: pointer; }
+  ol.spots li:hover { background: var(--card); }
+  ol.spots .rank { color: var(--muted); width: 18px; text-align: right; font-variant-numeric: tabular-nums; }
+  ol.spots .name { flex: 1; min-width: 0; }
+  ol.spots .count { font-variant-numeric: tabular-nums; font-weight: 600; }
+  ol.spots .mix { display: flex; height: 4px; border-radius: 2px; overflow: hidden; margin-top: 2px; }
+  table.grid { border-collapse: separate; border-spacing: 2px; font-size: 10px; color: var(--muted); }
+  table.grid td.c { width: 11px; height: 14px; border-radius: 2px; cursor: pointer; background: rgba(var(--cell), 0.06); }
+  table.grid td.c.sel { outline: 2px solid var(--fg); }
+  table.grid th { font-weight: 500; text-align: right; padding-right: 3px; }
+  table.grid thead th { text-align: left; padding: 0; }
+  .empty { color: var(--muted); padding: 6px 0; }
+  .pop .where { font-size: 15px; font-weight: 600; }
+  .pop .call { border-top: 1px solid #ddd; padding-top: 5px; margin-top: 5px; font-size: 13px; }
+  .pop .calls { max-height: 260px; overflow-y: auto; }
+  .svc { display: inline-block; font-size: 10px; font-weight: 700; color: #fff; border-radius: 8px; padding: 0 6px; margin-right: 3px; }
+  .svc.police { background: var(--police); } .svc.fire { background: var(--fire); } .svc.ems { background: var(--ems); }
+  .note { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin-top: 14px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Incident history</h1>
+  <a href="map">Incident map</a>
+  <a href="./">Call log</a>
+  <select id="range" title="Dates">
+    <option value="all">All history</option>
+    <option value="7">Last 7 days</option>
+    <option value="30">Last 30 days</option>
+    <option value="90">Last 90 days</option>
+    <option value="365">Last 12 months</option>
+    <option value="custom">Pick dates…</option>
+  </select>
+  <span id="custom" hidden><input type="date" id="from" title="From"> to <input type="date" id="to" title="To (included)"></span>
+  <div class="types" id="types"></div>
+  <select id="nature" title="What happened"></select>
+  <label title="Incidents taken off the map by hand"><input type="checkbox" id="hidden"> Show removed</label>
+  <button id="csv" title="Everything shown, as a spreadsheet file">Download CSV</button>
+  <span id="status"></span>
+</header>
+<div class="tabs" id="tabs"><button data-pane="side">Summary</button><button data-pane="map">Map</button></div>
+<div class="body">
+  <div id="side">
+    <h2>Incidents shown</h2>
+    <div><span class="total" id="total">–</span> <span class="muted" id="span"></span></div>
+    <div class="bars" id="bytype" style="margin-top:8px"></div>
+    <h2>Hot spots <span class="switch" id="spotmode"><button data-mode="place">Addresses</button><button data-mode="street">Streets</button></span></h2>
+    <ol class="spots" id="spots"></ol>
+    <h2>Busy times <span class="muted" id="cellnote"></span></h2>
+    <table class="grid" id="grid"></table>
+    <div class="muted">Darker is busier. Click a square to show only that day and hour; click it again to show all.</div>
+    <h2>What happened</h2>
+    <div class="bars" id="bynature"></div>
+    <div class="note">The history keeps every incident the map has placed, even after the map is rebuilt. Zoom in close to see each incident as a dot you can click.</div>
+  </div>
+  <div id="map"></div>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const TYPES = [['fire', 'Fire'], ['ems', 'EMS'], ['police', 'Police'], ['mva', 'MVA'], ['other', 'Other']];
+const TYPE_NAME = Object.fromEntries(TYPES);
+const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const DOTS_ZOOM = 15;
+const css = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const color = type => css('--' + (TYPE_NAME[type] ? type : 'other'));
+function stored(key, fallback) { try { const v = localStorage.getItem(key); return v === null ? fallback : JSON.parse(v); } catch (e) { return fallback; } }
+function store(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private window */ } }
+function el(tag, attrs = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) { if (k === 'style') e.style.cssText = v; else if (k in e) e[k] = v; else e.setAttribute(k, v); }
+  for (const k of kids) if (k !== null && k !== undefined) e.append(k);
+  return e;
+}
+const when = t => new Date(t * 1000).toLocaleString([], { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+const day = t => new Date(t * 1000).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+
+let rows = [];               // from the server for the dates picked
+let shownTypes = new Set(stored('history.types', TYPES.map(t => t[0])));
+let spotMode = stored('history.spots', 'place');
+let cell = null;             // {d, h}: only that day of the week and hour
+$('range').value = stored('history.range', 'all');
+$('nature').dataset.want = stored('history.nature', '');
+
+// ---- map
+const map = L.map('map', { zoomControl: true }).setView([40.66, -75.35], 11);
+let tiles = null;
+fetch('api/map/status').then(r => r.json()).catch(() => ({})).then(s => {
+  tiles = L.tileLayer((s && s.tiles_url) || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    { maxZoom: 19, attribution: '© OpenStreetMap contributors' }).addTo(map);
+});
+const HEAT = { radius: 20, blur: 16, maxZoom: 14 };
+const heat = L.heatLayer([], { ...HEAT, minOpacity: 0.3 });
+// The heat layer can't draw while the map is hidden (the Summary tab on a phone), so it is only on the map
+// while the map can be seen.
+function heatOnlyWhenSeen() {
+  const seen = map.getSize().x > 0;
+  if (seen && !map.hasLayer(heat)) heat.addTo(map);
+  if (!seen && map.hasLayer(heat)) map.removeLayer(heat);
+}
+const dots = L.layerGroup().addTo(map);
+let fitted = false;
+
+// ---- loading
+function range() {
+  const v = $('range').value;
+  $('custom').hidden = v !== 'custom';
+  if (v === 'all') return {};
+  if (v === 'custom') {
+    const from = $('from').value ? new Date($('from').value + 'T00:00').getTime() / 1000 : null;
+    const to = $('to').value ? new Date($('to').value + 'T00:00').getTime() / 1000 + 86400 : null;
+    return { since: from, until: to };
+  }
+  return { since: Math.floor(Date.now() / 1000) - Number(v) * 86400 };
+}
+function query(extra = {}) {
+  const p = new URLSearchParams();
+  const r = range();
+  if (r.since) p.set('since', Math.floor(r.since));
+  if (r.until) p.set('until', Math.floor(r.until));
+  if ($('hidden').checked) p.set('hidden', 'true');
+  for (const [k, v] of Object.entries(extra)) if (v) p.set(k, v);
+  return p.toString();
+}
+async function load() {
+  $('status').textContent = 'Loading…';
+  try {
+    const data = await (await fetch('api/history?' + query())).json();
+    const f = Object.fromEntries(data.fields.map((name, i) => [name, i]));
+    rows = data.rows.map(r => ({ id: r[f.id], time: r[f.time], end: r[f.end], lat: r[f.lat], lon: r[f.lon], type: r[f.type],
+      nature: r[f.nature], label: r[f.label], services: r[f.services] ? r[f.services].split(',') : [], calls: r[f.calls],
+      hidden: r[f.hidden], live: r[f.incident_id] }));
+    $('status').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  } catch (e) {
+    $('status').textContent = 'Could not load the history';
+    rows = [];
+  }
+  natureOptions();
+  draw();
+}
+
+// ---- filters
+function typeChips() {
+  const box = $('types');
+  box.replaceChildren(...TYPES.map(([type, name]) => {
+    const input = el('input', { type: 'checkbox', checked: shownTypes.has(type) });
+    input.onchange = () => { input.checked ? shownTypes.add(type) : shownTypes.delete(type); store('history.types', [...shownTypes]); natureOptions(); draw(); };
+    return el('label', {}, input, el('span', { className: 'dot', style: `background:${color(type)}` }), name, ' ', el('span', { className: 'n', id: 'n-' + type }));
+  }));
+}
+function natureOptions() {
+  const select = $('nature');
+  const want = select.value || select.dataset.want || '';
+  const counts = {};
+  for (const r of rows) if (shownTypes.has(r.type)) counts[r.nature || ''] = (counts[r.nature || ''] || 0) + 1;
+  const natures = Object.entries(counts).filter(([n]) => n).sort((a, b) => b[1] - a[1]);
+  select.replaceChildren(new Option('Everything that happened', ''),
+    ...natures.map(([n, c]) => new Option(`${n} (${c})`, n)));
+  if (want && !counts[want]) select.append(new Option(`${want} (0)`, want));
+  select.value = want;
+  select.dataset.want = '';
+}
+function filtered(ignoreCell = false) {
+  const nature = $('nature').value;
+  return rows.filter(r => shownTypes.has(r.type) && (!nature || r.nature === nature) &&
+    (ignoreCell || !cell || (new Date(r.time * 1000).getDay() === cell.d && new Date(r.time * 1000).getHours() === cell.h)));
+}
+
+// ---- drawing
+function draw() {
+  const shown = filtered();
+  // Counts on the type buttons: what each type would add with the other filters as they are.
+  const nature = $('nature').value;
+  for (const [type] of TYPES) {
+    const n = rows.filter(r => r.type === type && (!nature || r.nature === nature)).length;
+    const span = $('n-' + type);
+    if (span) span.textContent = n.toLocaleString();
+  }
+  $('total').textContent = shown.length.toLocaleString();
+  $('span').textContent = shown.length ? `${day(shown[0].time)} – ${day(shown[shown.length - 1].time)}` : '';
+  heat.setLatLngs(shown.map(r => [r.lat, r.lon, 1]));
+  drawDots();
+  byType(shown);
+  spots(shown);
+  grid(filtered(true));
+  byNature(shown);
+  fitOnce();
+}
+// Zoom to where the incidents are, the first time the map can be seen with some on it.
+function fitOnce() {
+  const shown = filtered();
+  if (fitted || !shown.length || map.getSize().x === 0) return;
+  fitted = true;
+  map.fitBounds(L.latLngBounds(shown.map(r => [r.lat, r.lon])).pad(0.05), { maxZoom: 14 });
+}
+// The busiest spot in view is red and the rest are scaled to it, at any zoom and however many
+// incidents there are (otherwise a single incident is already as red as a hundred).
+function rescale() {
+  const z = map.getZoom();
+  const k = 1 / Math.pow(2, Math.max(0, Math.min(HEAT.maxZoom - z, 12)));   // as leaflet-heat weighs points
+  const view = map.getBounds();
+  const cells = new Map();
+  let best = 0;
+  for (const r of filtered()) {
+    if (!view.contains([r.lat, r.lon])) continue;
+    const p = map.project([r.lat, r.lon], z);
+    const key = Math.floor(p.x / HEAT.radius) + ',' + Math.floor(p.y / HEAT.radius);
+    const n = (cells.get(key) || 0) + 1;
+    cells.set(key, n);
+    if (n > best) best = n;
+  }
+  const close = z >= DOTS_ZOOM;
+  const options = { max: Math.max(k, best * k * 0.8), minOpacity: close ? 0.05 : 0.25 };
+  if (map.hasLayer(heat)) heat.setOptions(options); else L.setOptions(heat, options);
+  if (heat._canvas) heat._canvas.style.opacity = close ? 0.45 : 0.85;
+}
+function drawDots() {
+  heatOnlyWhenSeen();
+  dots.clearLayers();
+  rescale();
+  if (map.getZoom() < DOTS_ZOOM) return;
+  const view = map.getBounds().pad(0.2);
+  for (const r of filtered()) {
+    if (!view.contains([r.lat, r.lon])) continue;
+    L.circleMarker([r.lat, r.lon], { radius: 6, color: '#fff', weight: 1.5, fillColor: color(r.type), fillOpacity: 0.9 })
+      .bindPopup(() => popup(r), { maxWidth: 380 }).addTo(dots);
+  }
+}
+map.on('zoomend moveend', drawDots);
+
+function popup(r) {
+  const box = el('div', { className: 'pop' });
+  box.append(el('div', { className: 'where' }, r.label || 'Unknown place'),
+    el('div', {}, el('span', { className: 'dot', style: `background:${color(r.type)};margin-right:5px` }),
+      [TYPE_NAME[r.type], r.nature].filter(Boolean).join(' · ')),
+    el('div', { className: 'muted' }, when(r.time) + (r.end > r.time + 60 ? ' – ' + new Date(r.end * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '')),
+    el('div', { style: 'margin-top:3px' }, ...r.services.map(s => el('span', { className: 'svc ' + s }, s === 'ems' ? 'EMS' : s[0].toUpperCase() + s.slice(1))),
+      `${r.calls} call${r.calls === 1 ? '' : 's'}`, r.hidden ? ' · removed from the map' : ''));
+  const list = el('div', { className: 'calls' });
+  const more = el('button', { style: 'margin-top:6px;font-size:12px;padding:2px 8px' }, 'Show calls');
+  more.onclick = async () => {
+    more.disabled = true;
+    try {
+      const entry = await (await fetch('api/history/' + r.id)).json();
+      list.replaceChildren(...entry.call_list.map(c => el('div', { className: 'call' },
+        el('div', { className: 'muted' }, new Date(c.call_time * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
+          ' · ' + (c.talkgroup_label || '') + (c.speaker ? ' · ' + c.speaker : '')),
+        c.transcript || el('i', {}, 'No words'))));
+      more.remove();
+    } catch (e) { more.textContent = 'Could not load'; more.disabled = false; }
+  };
+  box.append(more, list);
+  return box;
+}
+
+function byType(shown) {
+  const counts = {};
+  for (const r of shown) counts[r.type] = (counts[r.type] || 0) + 1;
+  const max = Math.max(1, ...Object.values(counts));
+  $('bytype').replaceChildren(...TYPES.filter(([t]) => counts[t]).flatMap(([t, name]) => [
+    el('span', {}, name),
+    el('div', { className: 'bar', style: `width:${100 * counts[t] / max}%;background:${color(t)}` }),
+    el('span', { className: 'num' }, counts[t].toLocaleString())]));
+}
+
+function streetsOf(label) {
+  const place = (label || '').split(',')[0];
+  return place.split(' & ').map(s => s.replace(/^\d+[A-Za-z]?(-\d+)?\s+/, '').trim()).filter(Boolean)
+    .map(s => s + (label.includes(',') ? ',' + label.split(',').slice(1).join(',') : ''));
+}
+function spots(shown) {
+  for (const b of $('spotmode').children) b.classList.toggle('on', b.dataset.mode === spotMode);
+  const groups = new Map();
+  for (const r of shown) {
+    const keys = spotMode === 'street' ? streetsOf(r.label) : [r.label || ''];
+    for (const k of keys) {
+      if (!k) continue;
+      if (!groups.has(k)) groups.set(k, { name: k, n: 0, lat: 0, lon: 0, types: {} });
+      const g = groups.get(k);
+      g.n++; g.lat += r.lat; g.lon += r.lon; g.types[r.type] = (g.types[r.type] || 0) + 1;
+    }
+  }
+  const top = [...groups.values()].sort((a, b) => b.n - a.n).slice(0, 10);
+  const list = $('spots');
+  if (!top.length) { list.replaceChildren(el('li', { className: 'empty' }, 'No incidents with these filters')); return; }
+  list.replaceChildren(...top.map((g, i) => {
+    const mix = el('div', { className: 'mix' }, ...TYPES.filter(([t]) => g.types[t]).map(([t]) =>
+      el('span', { style: `flex:${g.types[t]};background:${color(t)}`, title: `${TYPE_NAME[t]}: ${g.types[t]}` })));
+    const li = el('li', { title: 'Show on the map' }, el('span', { className: 'rank' }, i + 1),
+      el('div', { className: 'name' }, g.name, mix), el('span', { className: 'count' }, g.n.toLocaleString()));
+    li.onclick = () => { pick('map'); map.setView([g.lat / g.n, g.lon / g.n], spotMode === 'street' ? 15 : 17); };
+    return li;
+  }));
+}
+for (const b of $('spotmode').children) b.onclick = () => { spotMode = b.dataset.mode; store('history.spots', spotMode); spots(filtered()); };
+
+function grid(base) {
+  const counts = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  for (const r of base) { const d = new Date(r.time * 1000); counts[d.getDay()][d.getHours()]++; }
+  const max = Math.max(1, ...counts.flat());
+  const head = el('tr', {}, el('th'), ...Array.from({ length: 24 }, (_, h) =>
+    el('th', {}, h % 6 === 0 ? (h === 0 ? '12a' : h === 12 ? '12p' : h < 12 ? h + 'a' : (h - 12) + 'p') : '')));
+  const body = counts.map((hours, d) => el('tr', {}, el('th', {}, DAYS[d]), ...hours.map((n, h) => {
+    const td = el('td', { className: 'c' + (cell && cell.d === d && cell.h === h ? ' sel' : ''),
+      title: `${DAYS[d]} ${h}:00–${h}:59 · ${n} incident${n === 1 ? '' : 's'}` });
+    if (n) td.style.background = `rgba(var(--cell), ${(0.15 + 0.85 * n / max).toFixed(2)})`;
+    td.onclick = () => { cell = cell && cell.d === d && cell.h === h ? null : { d, h }; draw(); };
+    return td;
+  })));
+  $('grid').replaceChildren(el('thead', {}, head), el('tbody', {}, ...body));
+  $('cellnote').textContent = cell ? `· only ${DAYS[cell.d]} ${cell.h}:00–${cell.h}:59` : '';
+}
+
+function byNature(shown) {
+  const counts = {};
+  for (const r of shown) { const n = r.nature || 'Not known'; counts[n] = (counts[n] || 0) + 1; }
+  const top = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 12);
+  const max = Math.max(1, ...top.map(t => t[1]));
+  $('bynature').replaceChildren(...(top.length ? top.flatMap(([n, c]) => {
+    const name = el('a', { href: '#', onclick: e => { e.preventDefault(); if (n !== 'Not known') { $('nature').value = n; save(); draw(); } } }, n);
+    return [name, el('div', { className: 'bar', style: `width:${100 * c / max}%;background:var(--accent)` }),
+      el('span', { className: 'num' }, c.toLocaleString())];
+  }) : [el('span', { className: 'empty' }, 'Nothing yet')]));
+}
+
+// ---- controls
+function save() { store('history.range', $('range').value); store('history.nature', $('nature').value); }
+$('range').onchange = () => { save(); if ($('range').value !== 'custom' || ($('from').value && $('to').value)) load(); else range(); };
+$('from').onchange = $('to').onchange = () => load();
+$('hidden').onchange = () => load();
+$('nature').onchange = () => { save(); draw(); };
+$('csv').onclick = () => {
+  const types = shownTypes.size === TYPES.length ? '' : [...shownTypes].join(',');
+  location.href = 'api/history.csv?' + query({ types, nature: $('nature').value });
+};
+function pick(pane) {
+  for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.pane === pane);
+  for (const p of ['side', 'map']) $(p).classList.toggle('shown', p === pane);
+  if (pane === 'map') setTimeout(() => { map.invalidateSize(); fitOnce(); drawDots(); }, 0);
+}
+for (const b of $('tabs').children) b.onclick = () => pick(b.dataset.pane);
+pick('side');
+if (window.matchMedia('(min-width: 901px)').matches) setTimeout(() => { map.invalidateSize(); drawDots(); }, 0);
+
+typeChips();
+load();
+setInterval(load, 5 * 60 * 1000);
+</script>
+</body>
+</html>

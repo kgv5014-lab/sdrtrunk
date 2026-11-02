@@ -68,6 +68,28 @@ CREATE TABLE IF NOT EXISTS incidents (
 );
 CREATE INDEX IF NOT EXISTS incidents_time ON incidents(last_time);
 
+-- The lasting record of incidents (history.py): copied from incidents as they change, and never
+-- cleared when the map is rebuilt, so the heat map and the CSV cover all history. Keyed by the
+-- incident's first call, which stays the same when the map is rebuilt.
+CREATE TABLE IF NOT EXISTS incident_history (
+    first_call_id INTEGER PRIMARY KEY,
+    incident_id INTEGER,                 -- the incident on the map now, NULL once it is gone from there
+    first_time INTEGER NOT NULL,
+    last_time INTEGER NOT NULL,
+    lat REAL NOT NULL,
+    lon REAL NOT NULL,
+    label TEXT,
+    type TEXT NOT NULL,                  -- fire, ems, police, mva or other, as the map colors it
+    category TEXT,
+    nature TEXT,
+    services TEXT,                       -- "police,fire,ems"
+    calls INTEGER NOT NULL,
+    call_ids TEXT,                       -- "12,15,19"
+    hidden INTEGER NOT NULL DEFAULT 0,   -- removed from the map by hand
+    updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS incident_history_time ON incident_history(first_time);
+
 CREATE TABLE IF NOT EXISTS call_places (
     id INTEGER PRIMARY KEY,
     call_id INTEGER NOT NULL,
@@ -213,6 +235,16 @@ CREATE TABLE IF NOT EXISTS recaps (
     alerted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS recaps_end ON recaps("end");
+
+-- Whisper checker: calls Ken types out straight from the audio, kept apart from the call log's own
+-- transcripts so they score Whisper without being steered by its text.
+CREATE TABLE IF NOT EXISTS checks (
+    call_id INTEGER PRIMARY KEY,
+    picked_at INTEGER NOT NULL,
+    typed TEXT,                          -- what Ken heard, NULL until saved
+    typed_at INTEGER,
+    skipped INTEGER NOT NULL DEFAULT 0   -- couldn't make it out
+);
 """
 
 FTS_SCHEMA = """
@@ -367,7 +399,8 @@ class Database:
         With keep_unplaced, calls the map hasn't looked at yet are kept too, as they may join one."""
         where = ["audio_deleted_at IS NULL", "status NOT IN ('queued', 'processing')",
                  "id NOT IN (SELECT call_id FROM call_places WHERE incident_id IS NOT NULL)",
-                 "id NOT IN (SELECT call_id FROM alerts WHERE call_id IS NOT NULL)"]
+                 "id NOT IN (SELECT call_id FROM alerts WHERE call_id IS NOT NULL)",
+                 "id NOT IN (SELECT call_id FROM checks)"]
         params = []
         if keep_unplaced:
             where.append("map_status IS NOT NULL")
@@ -385,6 +418,48 @@ class Database:
             self._conn.executemany("UPDATE calls SET audio_deleted_at = ? WHERE id = ?",
                                    [(when, call_id) for call_id in call_ids])
             self._conn.commit()
+
+    # ---- Whisper checker
+
+    def pick_checks(self, count: int, since: int, now: int) -> int:
+        """Adds up to count calls to the checker, spread over talkgroups: one random call from each in
+        turn. Only finished calls of 3-30 s with words and audio, not aviation or station IDs."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, COALESCE(talkgroup_label, talkgroup, '') AS tg FROM calls "
+                "WHERE status = 'done' AND COALESCE(transcript, '') != '' AND duration_s BETWEEN 3 AND 30 "
+                "AND audio_deleted_at IS NULL AND air IS NULL AND (error IS NULL OR error != 'station ID') "
+                "AND call_time >= ? AND id NOT IN (SELECT call_id FROM checks) ORDER BY RANDOM()",
+                (since,)).fetchall()
+            by_tg: dict[str, list[int]] = {}
+            for row in rows:
+                by_tg.setdefault(row["tg"], []).append(row["id"])
+            # Busiest talkgroups first, so a short list still covers the main channels.
+            queues = sorted(by_tg.values(), key=len, reverse=True)
+            picked = []
+            while len(picked) < count and any(queues):
+                for q in queues:
+                    if q and len(picked) < count:
+                        picked.append(q.pop())
+            self._conn.executemany("INSERT INTO checks (call_id, picked_at) VALUES (?, ?)",
+                                   [(call_id, now) for call_id in picked])
+            self._conn.commit()
+        return len(picked)
+
+    def checks(self) -> list[dict]:
+        """Every checker call, oldest picked first, with the call it is for."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT k.typed, k.typed_at, k.skipped, k.picked_at, c.* FROM checks k "
+                "JOIN calls c ON c.id = k.call_id ORDER BY k.picked_at, k.call_id").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_check(self, call_id: int, typed: str | None, skipped: bool, when: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("UPDATE checks SET typed = ?, skipped = ?, typed_at = ? WHERE call_id = ?",
+                                     (typed, int(skipped), when, call_id))
+            self._conn.commit()
+        return cur.rowcount > 0
 
     def pending_ids(self) -> list[int]:
         """Calls left unfinished by a previous run, oldest first."""
@@ -590,6 +665,15 @@ class Database:
                 "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
         return [dict(row) for row in rows]
 
+    def incident_audio_calls(self, incident_id: int) -> list[dict]:
+        """Each call of an incident once, oldest first, with where its audio is (Play all)."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT c.id, c.call_time, c.audio_path, c.audio_deleted_at, c.talkgroup, c.talkgroup_label "
+                "FROM call_places p JOIN calls c ON c.id = p.call_id WHERE p.incident_id = ? "
+                "ORDER BY c.call_time, c.id", (incident_id,)).fetchall()
+        return [dict(row) for row in rows]
+
     def incident_of_call(self, call_id: int) -> int | None:
         with self._lock:
             row = self._conn.execute("SELECT incident_id FROM call_places WHERE call_id = ? AND incident_id IS NOT NULL "
@@ -665,6 +749,94 @@ class Database:
             self._conn.execute("DELETE FROM incident_updates")
             self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
             self._conn.commit()
+
+    # ---- incident history (history.py)
+
+    def incident_snapshots(self) -> list[dict]:
+        """Every incident on the map with its call ids, first call first, for copying into the history."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT i.*, GROUP_CONCAT(p.call_id) AS call_ids FROM incidents i "
+                "JOIN call_places p ON p.incident_id = i.id GROUP BY i.id").fetchall()
+        snapshots = []
+        for row in rows:
+            snapshot = dict(row)
+            snapshot["call_ids"] = sorted({int(c) for c in snapshot["call_ids"].split(",")})
+            snapshots.append(snapshot)
+        return snapshots
+
+    def calls_for_services(self, call_ids: list[int]) -> list[dict]:
+        found = []
+        with self._lock:
+            for start in range(0, len(call_ids), 500):
+                chunk = call_ids[start:start + 500]
+                found += [dict(r) for r in self._conn.execute(
+                    f"SELECT id, talkgroup_label, talkgroup_group, transcript FROM calls "
+                    f"WHERE id IN ({', '.join('?' for _ in chunk)})", chunk).fetchall()]
+        return found
+
+    def history_index(self) -> dict[int, dict]:
+        with self._lock:
+            rows = self._conn.execute("SELECT * FROM incident_history").fetchall()
+        return {row["first_call_id"]: dict(row) for row in rows}
+
+    HISTORY_FIELDS = ("first_call_id", "incident_id", "first_time", "last_time", "lat", "lon", "label", "type",
+                      "category", "nature", "services", "calls", "call_ids", "hidden", "updated_at")
+
+    def save_history(self, rows: list[dict], gone: list[int], detached: list[int]):
+        """Writes changed history rows, deletes ones now part of another incident (or removed by hand),
+        and marks ones whose incident left the map."""
+        with self._lock:
+            self._conn.executemany(
+                f"INSERT OR REPLACE INTO incident_history ({', '.join(self.HISTORY_FIELDS)}) "
+                f"VALUES ({', '.join('?' for _ in self.HISTORY_FIELDS)})",
+                [[row.get(n) for n in self.HISTORY_FIELDS] for row in rows])
+            self._conn.executemany("DELETE FROM incident_history WHERE first_call_id = ?", [(i,) for i in gone])
+            self._conn.executemany("UPDATE incident_history SET incident_id = NULL WHERE first_call_id = ?",
+                                   [(i,) for i in detached])
+            self._conn.commit()
+
+    def map_statuses(self, call_ids: list[int]) -> dict[int, str | None]:
+        found = {}
+        with self._lock:
+            for start in range(0, len(call_ids), 500):
+                chunk = call_ids[start:start + 500]
+                found.update({r["id"]: r["map_status"] for r in self._conn.execute(
+                    f"SELECT id, map_status FROM calls WHERE id IN ({', '.join('?' for _ in chunk)})",
+                    chunk).fetchall()})
+        return found
+
+    def history(self, since: int | None = None, until: int | None = None, hidden: bool = False) -> list[dict]:
+        """History rows oldest first."""
+        where, params = [], []
+        if since is not None:
+            where.append("first_time >= ?")
+            params.append(since)
+        if until is not None:
+            where.append("first_time < ?")
+            params.append(until)
+        if not hidden:
+            where.append("hidden = 0")
+        sql = "SELECT * FROM incident_history"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        with self._lock:
+            rows = self._conn.execute(sql + " ORDER BY first_time, first_call_id", params).fetchall()
+        return [dict(row) for row in rows]
+
+    def history_entry(self, first_call_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM incident_history WHERE first_call_id = ?",
+                                     (first_call_id,)).fetchone()
+            if row is None:
+                return None
+            entry = dict(row)
+            ids = [int(c) for c in (entry["call_ids"] or "").split(",") if c][:200]
+            calls = self._conn.execute(
+                f"SELECT id, call_time, talkgroup_label, transcript, speaker FROM calls "
+                f"WHERE id IN ({', '.join('?' for _ in ids)}) ORDER BY call_time, id", ids).fetchall() if ids else []
+            entry["call_list"] = [dict(c) for c in calls]
+        return entry
 
     def geocode_cached(self, query: str) -> dict | None:
         """The saved answer: a dict, {} for "not found", None when never asked."""

@@ -284,6 +284,13 @@ Radio speech is messy, so some calls are missed and some land in the wrong place
 shows its transcript and how it was placed (house address, intersection, landmark, or street only), and
 **Remove from map** hides a wrong one ("Show removed" brings it back).
 
+**Play all.** An incident with more than one call has a **Play all** button at the top of its popup. It
+plays every call in time order with a one second pause between them, highlights the call playing and
+scrolls to it, and has Back, Next and a speed choice (1x to 2x). The PC joins the calls into one MP3
+(kept in `data\incident-audio`, the newest 40), so an iPhone keeps playing with the screen locked, and
+the lock screen's skip buttons go to the next or previous call. Calls whose audio was deleted are
+skipped, and the popup says how many. The friends' map has it too.
+
 **Fixing it by hand.** Under each call in a popup: **Move to…** puts it in another incident nearby in
 time, **Own incident** takes it out into an incident of its own, and **Not an incident** takes it off the
 map. **Merge into…** at the bottom joins two incidents. Fixes are kept when the map is rebuilt.
@@ -293,6 +300,20 @@ After editing `places.csv` by hand, map earlier calls again with (from the same 
 
 Settings are under `[map]` in `config.toml`. The map page loads Leaflet and the map tiles from the
 internet; map data is © OpenStreetMap contributors.
+
+### Incident history and heat map
+
+<http://localhost:3000/history> (the **History** link on the map) shows every incident placed so far as a
+heat map: busy places glow warmer, and zoomed in close each incident is a dot you can click to read its
+calls. Filter by type (Fire, EMS, Police, MVA, Other), by what happened (structure fire, fall, ...) and by
+dates (all history, the last 7/30/90 days, 12 months, or picked dates). The side panel lists the ten
+busiest addresses or streets, a day-of-week by hour-of-day grid (click a square to show only that hour),
+and counts by type. **Download CSV** saves what is shown as a spreadsheet file.
+
+The history is kept in its own table in `calls.db` (`incident_history`). Rebuilding the map clears and
+refills the incidents, but not the history: rows are matched by each incident's first call, so a rebuild
+updates them instead of adding them twice. A row only goes away when its calls are joined into another
+incident, or its first call is taken off the map by hand. Removed incidents show with **Show removed**.
 
 ### Helicopters from ADS-B
 
@@ -530,6 +551,19 @@ To check whether changes help, run **compare-transcripts.bat**. It runs the 50 n
 call you fixed by hand, through Whisper both the old way (no cleanup) and the new way. Then it opens a
 side-by-side report that scores both against your fixes. The transcriber can keep running while it works.
 
+### Whisper check
+
+Fixes made with Edit start from Whisper's own text, so they tend to keep some of its mistakes. For an
+honest score, open **Whisper check** from the call log. Press "Add 30 more calls" to get calls from the
+last two weeks, spread over your talkgroups. Play each one and type what you hear; Whisper's version
+only shows after you save. Press Skip for a call you can't make out. What you type there doesn't change
+the call log, and those calls' audio is never cleaned up.
+
+Then run **whisper-check.bat**. Its report gives the share of words Whisper got wrong, overall and per
+channel, its most common mistakes, and suggested lines for `corrections.csv` and words for
+`vocabulary.txt`. "As logged" is what the service saved at the time. `whisper-check.bat all` also tries
+large-v3, large-v2 and distil-large-v3.5 (they download the first time, about 6 GB in all).
+
 ### Hints learned from your calls
 
 Whisper also gets street and unit names learned from the call log, so nothing needs to be kept up by hand:
@@ -665,6 +699,27 @@ starts them again. The programs keep running when the watchdog window is closed.
 It finds SDRTrunk by looking at the SDRTrunk that is running. If SDRTrunk isn't running when the watchdog
 starts, set `sdrtrunk` under `[watchdog]` in `config.toml` to its `bin\sdr-trunk.bat` (see
 `config.example.toml`), or start SDRTrunk yourself once. The other settings are there too.
+
+### Start everything when the PC boots
+
+Double-click **autostart-on.bat** once. From then on, a minute after you sign in to Windows,
+start-everything.bat starts by itself in a minimized **SDRTrunk watchdog** window. The minute lets the
+dongles, the network, NordVPN and Tailscale finish starting; press a key in that window to skip the wait.
+If a watchdog is already running it does nothing. **autostart-off.bat** turns it off again. (It is a
+shortcut called "SDRTrunk Plus" in your Startup folder, which Task Manager also lists under Startup apps.)
+
+SDRTrunk is a program with a window, so it only starts once someone is signed in. To have the PC come back
+by itself after a power cut or a Windows Update restart, let Windows sign you in by itself:
+
+1. Settings > Accounts > Sign-in options: turn off "For improved security, only allow Windows Hello
+   sign-in for Microsoft accounts on this device".
+2. Press Windows+R, type `netplwiz`, press Enter, untick "Users must enter a user name and password to use
+   this computer", click OK and type your Windows password (for a Microsoft account, its password, not the
+   PIN).
+
+Anyone who can touch the PC then gets in without a password, so only do this if that's fine. To go back,
+tick the box again. For a PC that also loses power, set "Restore on AC power loss" (sometimes "After power
+failure") to On in the BIOS so it turns itself back on.
 
 ## Accuracy tips
 

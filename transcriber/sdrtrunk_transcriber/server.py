@@ -34,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from starlette.datastructures import UploadFile
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import audio, live, share
+from . import audio, incident_audio, live, share
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -50,6 +50,7 @@ from .config import Config
 from .db import Database
 from .geocode import Geocoder
 from .incidents import MapWorker, highlights, services_of
+from .history import TYPES as HISTORY_TYPES, HistoryKeeper, to_csv as history_csv
 from .zones import ZoneWatch, read_zones
 from .speakers import SpeakerBook
 from .recaps import RecapMaker, to_api as recap_to_api
@@ -215,6 +216,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                 # Calls moved between incidents by hand on the map.
                 map_worker.on_changed = lambda ids: [summarizer.incident_changed(i) for i in ids]
             map_worker.start()
+        # A lasting copy of every incident for the heat map (/history), kept when the map is rebuilt.
+        history = HistoryKeeper(db) if map_worker else None
+        if history:
+            history.start()
 
         units = UnitBoard(db, codebook)
         try:
@@ -279,6 +284,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.codebook = codebook
         app.state.corrections = corrections
         app.state.map_worker = map_worker
+        app.state.history = history
         app.state.alerter = alerter
         app.state.summarizer = summarizer
         app.state.recaps = recaps
@@ -297,6 +303,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             aircraft.stop()
         if traffic:
             traffic.stop()
+        if history:
+            history.stop()
         if map_worker:
             map_worker.stop()
         if alerter:
@@ -550,6 +558,22 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             raise HTTPException(404)
         return FileResponse(path)
 
+    @app.get("/api/incidents/{incident_id}/play")
+    async def incident_play(request: Request, incident_id: int):
+        """Play all: where each call starts in the incident's joined audio (made here if needed)."""
+        info = await asyncio.to_thread(incident_audio.build, request.app.state.db, data_path, incident_id)
+        if info is None:
+            raise HTTPException(404)
+        url = f"api/incidents/{incident_id}/audio.mp3?v={info['version']}" if info["file"] else None
+        return {"url": url, "seconds": info["seconds"], "calls": info["calls"], "missing": info["missing"]}
+
+    @app.get("/api/incidents/{incident_id}/audio.mp3")
+    async def incident_play_audio(request: Request, incident_id: int):
+        info = await asyncio.to_thread(incident_audio.build, request.app.state.db, data_path, incident_id)
+        if info is None or info["file"] is None:
+            raise HTTPException(404)
+        return FileResponse(info["file"], media_type="audio/mpeg")
+
     if config.listen.enabled:
         live.add_routes(app, app, data_path, public=False)
 
@@ -575,10 +599,113 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     def map_page():
         return (WEB_DIR / "map.html").read_text(encoding="utf-8")
 
+    # ---- incident history: heat map page and CSV download (history.py)
+
+    @app.get("/history", response_class=HTMLResponse)
+    def history_page():
+        return (WEB_DIR / "history.html").read_text(encoding="utf-8")
+
+    def _history_rows(request: Request, since: int | None, until: int | None, hidden: bool,
+                      types: str | None = None, nature: str | None = None) -> list[dict]:
+        keeper = request.app.state.history
+        if keeper:
+            try:
+                keeper.sync_if_stale()
+            except Exception:
+                log.exception("Incident history: could not save")
+        rows = request.app.state.db.history(since, until, hidden)
+        if types:
+            wanted = set(types.split(","))
+            rows = [r for r in rows if r["type"] in wanted]
+        if nature:
+            rows = [r for r in rows if (r["nature"] or "") == nature]
+        return rows
+
+    @app.get("/api/history")
+    def incident_history(request: Request, since: int | None = None, until: int | None = None,
+                         hidden: bool = False):
+        rows = _history_rows(request, since, until, hidden)
+        oldest = rows[0]["first_time"] if rows else None
+        return {
+            "types": HISTORY_TYPES,
+            "oldest": oldest,
+            # Short rows: years of incidents still load quickly.
+            "fields": ["id", "time", "end", "lat", "lon", "type", "nature", "label", "services", "calls", "hidden",
+                       "incident_id"],
+            "rows": [[r["first_call_id"], r["first_time"], r["last_time"], round(r["lat"], 5), round(r["lon"], 5),
+                      r["type"], r["nature"], r["label"], r["services"] or "", r["calls"], r["hidden"],
+                      r["incident_id"]] for r in rows],
+        }
+
+    @app.get("/api/history.csv")
+    def incident_history_csv(request: Request, since: int | None = None, until: int | None = None,
+                             hidden: bool = False, types: str | None = None, nature: str | None = None):
+        rows = _history_rows(request, since, until, hidden, types, nature)
+        name = f"incident-history-{datetime.now():%Y-%m-%d}.csv"
+        return Response(history_csv(rows), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": f'attachment; filename="{name}"'})
+
+    @app.get("/api/history/{first_call_id}")
+    def incident_history_entry(request: Request, first_call_id: int):
+        entry = request.app.state.db.history_entry(first_call_id)
+        if entry is None:
+            raise HTTPException(404)
+        return entry
+
     def _map_worker(request: Request) -> MapWorker:
         if request.app.state.map_worker is None:
             raise HTTPException(404, "The incident map is turned off in config.toml ([map] enabled)")
         return request.app.state.map_worker
+
+    @app.get("/checker", response_class=HTMLResponse)
+    def checker_page():
+        return (WEB_DIR / "checker.html").read_text(encoding="utf-8")
+
+    @app.get("/api/checker")
+    def checker_calls(request: Request):
+        """The calls Ken types out for the Whisper check. Whisper's text is only sent once he has saved
+        his own, so it can't steer what he hears."""
+        out = []
+        for row in request.app.state.db.checks():
+            done = row["typed_at"] is not None
+            out.append({"id": row["id"], "call_time": row["call_time"], "duration_s": row["duration_s"],
+                        "talkgroup": row["talkgroup_label"] or row["talkgroup"],
+                        "audio": not row["audio_deleted_at"], "done": done, "skipped": bool(row["skipped"]),
+                        "typed": row["typed"], "whisper": row["transcript"] if done else None})
+        return out
+
+    @app.post("/api/checker/pick")
+    async def checker_pick(request: Request):
+        """Adds calls from the last two weeks to the checker (30 unless the body says otherwise)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        count = body.get("count", 30) if isinstance(body, dict) else 30
+        if not isinstance(count, int) or not 1 <= count <= 200:
+            raise HTTPException(400, "count must be 1-200")
+        now = int(time.time())
+        return {"added": request.app.state.db.pick_checks(count, now - 14 * 86400, now)}
+
+    @app.post("/api/checker/{call_id}")
+    async def checker_save(request: Request, call_id: int):
+        """Saves what Ken heard on a checker call, or {"skip": true} when he couldn't make it out."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Expected JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected {\"text\": ...} or {\"skip\": true}")
+        skipped = body.get("skip") is True
+        text = body.get("text")
+        if not skipped and not isinstance(text, str):
+            raise HTTPException(400, "Expected {\"text\": ...} or {\"skip\": true}")
+        typed = None if skipped else re.sub(r"\s+", " ", text).strip()[:4000]
+        db = request.app.state.db
+        if not db.save_check(call_id, typed, skipped, int(time.time())):
+            raise HTTPException(404, "Not a checker call")
+        call = db.get_call(call_id)
+        return {"id": call_id, "typed": typed, "skipped": skipped, "whisper": call["transcript"]}
 
     @app.get("/units", response_class=HTMLResponse)
     def units_page():

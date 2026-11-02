@@ -428,6 +428,33 @@ class SummariesConfig:
 
 
 @dataclass
+class RecapsConfig:
+    # 12-hour summaries: at these times (24-hour clock), a recap of the hours since: counts by type and town,
+    # tone-outs, medevac flights and the biggest incidents, with a few sentences from the [summaries] model.
+    enabled: bool = True
+    times: list = field(default_factory=lambda: ["07:00", "19:00"])
+    hours: int = 12
+    # Send it to the phone ([alerts] set up), listing only important incidents and ones close to home.
+    # Nothing like that in the 12 hours: no alert.
+    phone_alert: bool = True
+    # Incident types that are important. An MVA only counts with injuries, entrapment, a closed road or a
+    # medevac helicopter.
+    important: list = field(default_factory=lambda: [
+        "Structure fire", "Vehicle fire", "Water rescue", "Weapons", "Cardiac arrest", "Gas leak", "MVA"])
+    # Summary tags that make any incident important.
+    important_tags: list = field(default_factory=lambda: [
+        "entrapment", "fatality", "working fire", "fire showing", "weapon", "pursuit", "water rescue", "hazmat",
+        "rescue"])
+    # An incident with this many calls that more than one service worked is important too.
+    important_calls: int = 15
+    # "Close" is within this many miles of home: home_lat and home_lon, or when those are 0, the first
+    # [alerts] zone.
+    close_miles: float = 2.0
+    home_lat: float = 0.0
+    home_lon: float = 0.0
+
+
+@dataclass
 class WatchdogConfig:
     # start-everything.bat starts Ollama (when [summaries] is on), this service and SDRTrunk, and
     # restarts any of them that crashes or freezes (see "Auto-restart" in the README).
@@ -466,6 +493,7 @@ class Config:
     aviation: AviationConfig = field(default_factory=AviationConfig)
     traffic: TrafficConfig = field(default_factory=TrafficConfig)
     summaries: SummariesConfig = field(default_factory=SummariesConfig)
+    recaps: RecapsConfig = field(default_factory=RecapsConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     recordings: RecordingsConfig = field(default_factory=RecordingsConfig)

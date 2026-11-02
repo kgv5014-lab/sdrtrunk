@@ -112,6 +112,23 @@
   @keyframes pulse { 0% { stroke-width: 2; stroke-opacity: 1; } 100% { stroke-width: 18; stroke-opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .pulse { animation: none; stroke-width: 5; } }
   .notice { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; }
+  /* 12-hour summaries: a panel over the right side, the whole screen on a phone. */
+  #recaps { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--bg); border-left: 1px solid var(--line);
+            box-shadow: -4px 0 16px rgba(0,0,0,.18); z-index: 2000; display: flex; flex-direction: column; }
+  #recaps[hidden] { display: none; }
+  #recaps .head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  #recaps .head h2 { font-size: 15px; margin: 0; flex: 1; }
+  #recaps .list { overflow-y: auto; padding: 10px 12px; flex: 1; }
+  .recap { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; }
+  .recap.focus { box-shadow: 0 0 0 2px var(--accent) inset; }
+  .recap .title { font-weight: 600; }
+  .recap .counts { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+  .recap .count { font-size: 12px; border-radius: 10px; padding: 1px 8px; color: #fff; }
+  .recap .text { margin: 6px 0; }
+  .recap .hl { display: block; width: 100%; text-align: left; color: var(--fg); border: 0; border-top: 1px solid var(--line); border-radius: 0; background: none; padding: 6px 0; }
+  .recap .hl .what { font-weight: 600; }
+  .flag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; border-radius: 8px; padding: 0 6px; margin-left: 4px; vertical-align: 1px; color: #fff; }
+  .flag.important { background: var(--fire); } .flag.close { background: var(--accent); }
   /* The shared, view-only map for friends (share.py): no editing, settings or admin pages. */
   html[data-guest] .admin { display: none !important; }
 </style>
@@ -135,6 +152,7 @@
   <label title="Only incidents that more than one of police, fire and EMS were sent to"><input type="checkbox" id="multi"> Several services</label>
   <label class="admin"><input type="checkbox" id="hidden"> Show removed</label>
   <button id="seen" class="admin" hidden>Mark all seen</button>
+  <button id="recaps-open" class="admin" title="A recap of each 12 hours (7 AM and 7 PM)">📋 12-hour summaries</button>
   <span id="status"></span>
 </header>
 <div class="tabs" id="tabs">
@@ -144,6 +162,10 @@
   <div id="list"><h2>Incidents</h2></div>
   <div id="map"></div>
   <div id="feed"><h2>Live calls</h2><div id="feed-items"></div></div>
+</div>
+<div id="recaps" hidden>
+  <div class="head"><h2>12-hour summaries</h2><button id="recaps-now" title="A summary of the last 12 hours, made now">Make one now</button><button id="recaps-close" title="Close">✕</button></div>
+  <div class="list" id="recaps-list"></div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -913,6 +935,97 @@ $('range').addEventListener('change', () => { store('map.range', $('range').valu
 $('hidden').addEventListener('change', () => { incidentsTag = null; load(); });
 $('multi').checked = stored('map.multi', false);
 $('multi').addEventListener('change', () => { store('map.multi', $('multi').checked); render(lastIncidents); });
+
+// ---- 12-hour summaries (recaps.py): made at 7 AM and 7 PM, or with "Make one now".
+let recapFocus = null;
+async function openRecaps(focus) {
+  recapFocus = focus || null;
+  $('recaps').hidden = false;
+  await loadRecaps();
+}
+async function loadRecaps() {
+  const list = $('recaps-list');
+  let recaps;
+  try {
+    const r = await fetch('api/recaps?limit=40');
+    if (!r.ok) { list.replaceChildren(el('div', 'empty', r.status === 404 ? '12-hour summaries are turned off in config.toml ([recaps]).' : 'Could not load the summaries.')); return; }
+    recaps = await r.json();
+  } catch (e) { list.replaceChildren(el('div', 'empty', 'Could not reach the transcriber.')); return; }
+  if (!recaps.length) { list.replaceChildren(el('div', 'empty', 'No summaries yet. The first one is made at the next 7 AM or 7 PM, or press Make one now.')); return; }
+  list.replaceChildren(...recaps.map(recapCard));
+  const focused = list.querySelector('.recap.focus');
+  if (focused) focused.scrollIntoView({ block: 'start' });
+}
+function recapCard(r) {
+  const card = el('div', 'recap' + (r.id === recapFocus ? ' focus' : ''));
+  card.append(el('div', 'title', r.title + (r.kind === 'manual' ? ' (made by hand)' : '')));
+  const c = r.counts || {};
+  card.append(el('div', 'muted', [c.incidents ? c.incidents + ' incident' + (c.incidents === 1 ? '' : 's') : 'No incidents',
+    c.calls ? c.calls + ' calls' : '', c.pages ? c.pages + ' tone-outs' : '',
+    c.medevac_flights ? c.medevac_flights + ' medevac flight' + (c.medevac_flights === 1 ? '' : 's') : '',
+    r.alerted ? 'sent to phone' : ''].filter(Boolean).join(' · ')));
+  const counts = el('div', 'counts');
+  const colors = COLORS();
+  for (const [type, n] of Object.entries(c.types || {})) {
+    const chip = el('span', 'count', n + ' ' + ((TYPES.find(t => t[0] === type) || [, type])[1]));
+    chip.style.background = colors[type] || colors.other;
+    counts.append(chip);
+  }
+  if (counts.childElementCount) card.append(counts);
+  const towns = Object.entries(c.towns || {});
+  if (towns.length) card.append(el('div', 'muted', 'Busiest: ' + towns.map(([t, n]) => t + ' ' + n).join(', ')));
+  if (r.text) {
+    const text = el('div', 'summary text');
+    text.append(el('span', 'ai', 'AI'), document.createTextNode(r.text));
+    card.append(text);
+  }
+  for (const h of r.highlights || []) {
+    const b = el('button', 'hl');
+    const what = el('span', 'what', clock(h.time) + ' ' + (h.nature || (TYPES.find(t => t[0] === h.type) || [, 'Other'])[1]));
+    what.style.color = colors[h.type] || colors.other;
+    b.append(what);
+    if (h.important) b.append(el('span', 'flag important', 'IMPORTANT'));
+    if (h.close) b.append(el('span', 'flag close', h.miles != null ? h.miles + ' MI FROM HOME' : 'CLOSE'));
+    b.append(el('div', '', [h.label, h.calls + ' call' + (h.calls === 1 ? '' : 's'), h.status && h.status !== 'unknown' ? h.status : ''].filter(Boolean).join(' · ')));
+    const note = (h.updates || []).slice(-1)[0];
+    if (h.summary || note) b.append(el('div', 'muted', [h.summary, note ? 'Latest: ' + note : ''].filter(Boolean).join(' ')));
+    b.onclick = () => showRecapIncident(h);
+    card.append(b);
+  }
+  if (r.problem) card.append(el('div', 'muted', r.problem));
+  return card;
+}
+let recapMarker = null;
+function showRecapIncident(h) {
+  if (window.matchMedia('(max-width: 1100px)').matches) $('recaps').hidden = true;
+  if (markers[h.incident_id]) { showIncident(h.incident_id); return; }
+  // Outside the time range shown (or rebuilt since): just show where it was.
+  pick('map');
+  if (recapMarker) recapMarker.remove();
+  recapMarker = L.circleMarker([h.lat, h.lon], { radius: 10, color: COLORS()[h.type] || COLORS().other, weight: 3, fillOpacity: 0.3 }).addTo(map);
+  const pop = el('div', 'pop');
+  pop.append(el('div', 'where', h.label || 'Incident'), el('div', 'muted', time(h.time) + ' · ' + (h.nature || h.type)));
+  if (h.summary) pop.append(el('div', 'summary', h.summary));
+  recapMarker.bindPopup(pop).openPopup();
+  map.setView([h.lat, h.lon], Math.max(map.getZoom(), 15));
+}
+$('recaps-open').onclick = () => $('recaps').hidden ? openRecaps() : ($('recaps').hidden = true);
+$('recaps-close').onclick = () => { $('recaps').hidden = true; };
+$('recaps-now').onclick = async () => {
+  const b = $('recaps-now');
+  b.disabled = true; b.textContent = 'Making it…';
+  try {
+    const r = await fetch('api/recaps', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (r.ok) recapFocus = (await r.json()).id;
+  } catch (e) { /* the list says so */ }
+  b.disabled = false; b.textContent = 'Make one now';
+  await loadRecaps();
+};
+// Opened from the phone alert: map?recap=12
+{
+  const linked = new URLSearchParams(location.search).get('recap');
+  if (linked && !GUEST) openRecaps(Number(linked));
+}
 </script>
 </body>
 </html>

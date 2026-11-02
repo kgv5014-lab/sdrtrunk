@@ -290,6 +290,19 @@ delay_s = 20
 # Incident summaries are kept to about this many words.
 incident_words = 40
 
+[recaps]
+# 12-hour summaries: at 7 AM and 7 PM, a recap of the 12 hours before (counts by type and town, tone-outs,
+# medevac flights, the biggest incidents, and a few sentences from the [summaries] model when it's on).
+# Shown with the 12-hour summaries button on the map and in SDRTrunk's Transcripts > Summaries tab.
+enabled = true
+times = ["07:00", "19:00"]
+# Also send it to the phone ([alerts] on), listing only important incidents and ones close to home.
+phone_alert = true
+# "Close" is within this many miles of home_lat/home_lon, or of the first [alerts] zone when those are 0.
+close_miles = 2.0
+# home_lat = 40.6568
+# home_lon = -75.2837
+
 [tones]
 # Finds two-tone pages in call recordings, for P25 talkgroups SDRTrunk's paging decoder can't hear.
 enabled = true

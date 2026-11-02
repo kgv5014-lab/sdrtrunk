@@ -98,6 +98,76 @@ public class TranscriptionClient
         return get(URI.create(base(baseUrl) + "/api/incidents?since=" + since)).thenApply(TranscriptionClient::parseIncidents);
     }
 
+    /**
+     * One 12-hour summary from the transcription service.
+     * @param id summary id
+     * @param title e.g. "Mon Nov 2, 7 AM to 7 PM"
+     * @param text the whole summary as plain text
+     */
+    public record Recap(long id, String title, String text) {}
+
+    /**
+     * Fetches the 12-hour summaries, newest first.
+     * @param baseUrl service address, e.g. http://localhost:3000
+     */
+    public CompletableFuture<List<Recap>> fetchRecaps(String baseUrl)
+    {
+        return get(URI.create(base(baseUrl) + "/api/recaps?limit=60")).thenApply(TranscriptionClient::parseRecaps);
+    }
+
+    /**
+     * Asks the service to make a summary of the last 12 hours now.  The local AI model can take a while.
+     * @param baseUrl service address, e.g. http://localhost:3000
+     */
+    public CompletableFuture<Void> makeRecap(String baseUrl)
+    {
+        HttpRequest request;
+
+        try
+        {
+            request = HttpRequest.newBuilder(URI.create(base(baseUrl) + "/api/recaps"))
+                .timeout(Duration.ofMinutes(4))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+        }
+        catch(IllegalArgumentException e)
+        {
+            return CompletableFuture.failedFuture(e);
+        }
+
+        return mHttpClient.sendAsync(request, HttpResponse.BodyHandlers.discarding()).thenApply(response -> {
+            if(response.statusCode() != 200)
+            {
+                throw new IllegalStateException("HTTP " + response.statusCode());
+            }
+
+            return null;
+        });
+    }
+
+    /**
+     * Parses the JSON array returned by /api/recaps.
+     */
+    static List<Recap> parseRecaps(String json)
+    {
+        List<Recap> recaps = new ArrayList<>();
+
+        for(JsonElement element : array(json))
+        {
+            if(element.isJsonObject())
+            {
+                JsonObject recap = element.getAsJsonObject();
+                String title = string(recap, "title");
+                String text = string(recap, "plain");
+                recaps.add(new Recap(number(recap, "id", 0L), title != null ? title : "Summary",
+                    text != null ? text : ""));
+            }
+        }
+
+        return recaps;
+    }
+
     private CompletableFuture<String> get(URI uri)
     {
         HttpRequest request;

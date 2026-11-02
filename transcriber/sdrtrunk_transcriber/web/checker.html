@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Whisper check</title>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --good: #1f8a5b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --good: #4cc38a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+  h1 { font-size: 16px; margin: 0; }
+  a { color: var(--accent); }
+  button { background: var(--card); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #progress { color: var(--muted); margin-left: auto; }
+  main { max-width: 760px; margin: 0 auto; padding: 12px 16px 40px; }
+  .note { color: var(--muted); font-size: 13px; }
+  .call { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin: 0 0 12px; }
+  .call .meta { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  audio { width: 100%; margin: 4px 0 8px; }
+  textarea { width: 100%; min-height: 70px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; font: inherit; }
+  .row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+  .done { border-left: 4px solid var(--good); }
+  .done .typed { font-weight: 600; }
+  .whisper { color: var(--muted); margin-top: 4px; }
+  .empty { color: var(--muted); padding: 24px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Whisper check</h1>
+  <a href="./">Call log</a>
+  <span id="progress"></span>
+</header>
+<main>
+  <p class="note">Play each call and type exactly what you hear. Whisper's version is hidden until you save, so it can't
+    steer you. Write numbers the way the call log does (2311, 10-4). If you can't make out a call, press Skip.
+    What you type here doesn't change the call log. When you're done, run <b>whisper-check.bat</b> for the score.</p>
+  <div id="todo"></div>
+  <div class="row"><button id="pick">Add 30 more calls</button></div>
+  <h2 style="font-size:14px;margin-top:24px">Done</h2>
+  <div id="done"></div>
+</main>
+<script>
+// Unsaved typing, kept when the list redraws after another call is saved.
+const drafts = {};
+const $ = id => document.getElementById(id);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function when(c) {
+  return new Date(c.call_time * 1000).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+    + ' · ' + (c.talkgroup || '') + ' · ' + (c.duration_s || 0).toFixed(1) + ' s';
+}
+
+async function save(c, body) {
+  const r = await fetch('api/checker/' + c.id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  if (!r.ok) { alert('Could not save: ' + (await r.text())); return; }
+  load();
+}
+
+function todoCard(c) {
+  const card = el('div', 'call');
+  card.append(el('div', 'meta', when(c)));
+  if (!c.audio) card.append(el('div', 'note', 'The audio for this call is gone. Skip it.'));
+  else { const a = el('audio'); a.controls = true; a.preload = 'none'; a.src = 'api/calls/' + c.id + '/audio'; card.append(a); }
+  const box = el('textarea'); box.placeholder = 'What was said'; box.value = drafts[c.id] || (c.typed || '');
+  box.oninput = () => { drafts[c.id] = box.value; };
+  const row = el('div', 'row');
+  const ok = el('button', 'primary', 'Save'); ok.onclick = () => { if (box.value.trim()) { delete drafts[c.id]; save(c, { text: box.value }); } };
+  const skip = el('button', null, 'Skip'); skip.onclick = () => save(c, { skip: true });
+  box.onkeydown = e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ok.click(); };
+  row.append(ok, skip);
+  card.append(box, row);
+  return card;
+}
+
+function doneCard(c) {
+  const card = el('div', 'call done');
+  card.append(el('div', 'meta', when(c)));
+  card.append(el('div', 'typed', c.skipped ? '(skipped)' : 'You: ' + c.typed));
+  card.append(el('div', 'whisper', 'Whisper: ' + (c.whisper || '(nothing)')));
+  const redo = el('button', null, 'Type again'); redo.onclick = () => { card.replaceWith(todoCard(c)); };
+  const row = el('div', 'row'); row.append(redo); card.append(row);
+  return card;
+}
+
+async function load() {
+  let calls;
+  try { calls = await (await fetch('api/checker')).json(); } catch (e) { $('progress').textContent = 'Could not reach the transcriber'; return; }
+  const todo = calls.filter(c => !c.done), done = calls.filter(c => c.done).reverse();
+  const typed = done.filter(c => !c.skipped).length;
+  $('progress').textContent = typed + ' typed · ' + todo.length + ' to go';
+  $('todo').textContent = ''; $('done').textContent = '';
+  if (!calls.length) $('todo').append(el('div', 'empty', 'No calls picked yet. Press "Add 30 more calls".'));
+  // Only the next few, so the page stays short; the rest show as these are saved.
+  todo.slice(0, 5).forEach(c => $('todo').append(todoCard(c)));
+  if (todo.length > 5) $('todo').append(el('div', 'note', (todo.length - 5) + ' more after these.'));
+  done.forEach(c => $('done').append(doneCard(c)));
+}
+
+$('pick').onclick = async () => {
+  const r = await (await fetch('api/checker/pick', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"count": 30}' })).json();
+  if (!r.added) alert('No more calls to add from the last two weeks.');
+  load();
+};
+load();
+</script>
+</body>
+</html>

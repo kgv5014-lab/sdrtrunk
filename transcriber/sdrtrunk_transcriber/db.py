@@ -196,6 +196,16 @@ CREATE TABLE IF NOT EXISTS helicopter_landings (
     miles REAL
 );
 CREATE INDEX IF NOT EXISTS helicopter_landings_incident ON helicopter_landings(incident_id);
+
+-- Whisper checker: calls Ken types out straight from the audio, kept apart from the call log's own
+-- transcripts so they score Whisper without being steered by its text.
+CREATE TABLE IF NOT EXISTS checks (
+    call_id INTEGER PRIMARY KEY,
+    picked_at INTEGER NOT NULL,
+    typed TEXT,                          -- what Ken heard, NULL until saved
+    typed_at INTEGER,
+    skipped INTEGER NOT NULL DEFAULT 0   -- couldn't make it out
+);
 """
 
 FTS_SCHEMA = """
@@ -350,7 +360,8 @@ class Database:
         With keep_unplaced, calls the map hasn't looked at yet are kept too, as they may join one."""
         where = ["audio_deleted_at IS NULL", "status NOT IN ('queued', 'processing')",
                  "id NOT IN (SELECT call_id FROM call_places WHERE incident_id IS NOT NULL)",
-                 "id NOT IN (SELECT call_id FROM alerts WHERE call_id IS NOT NULL)"]
+                 "id NOT IN (SELECT call_id FROM alerts WHERE call_id IS NOT NULL)",
+                 "id NOT IN (SELECT call_id FROM checks)"]
         params = []
         if keep_unplaced:
             where.append("map_status IS NOT NULL")
@@ -368,6 +379,48 @@ class Database:
             self._conn.executemany("UPDATE calls SET audio_deleted_at = ? WHERE id = ?",
                                    [(when, call_id) for call_id in call_ids])
             self._conn.commit()
+
+    # ---- Whisper checker
+
+    def pick_checks(self, count: int, since: int, now: int) -> int:
+        """Adds up to count calls to the checker, spread over talkgroups: one random call from each in
+        turn. Only finished calls of 3-30 s with words and audio, not aviation or station IDs."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT id, COALESCE(talkgroup_label, talkgroup, '') AS tg FROM calls "
+                "WHERE status = 'done' AND COALESCE(transcript, '') != '' AND duration_s BETWEEN 3 AND 30 "
+                "AND audio_deleted_at IS NULL AND air IS NULL AND (error IS NULL OR error != 'station ID') "
+                "AND call_time >= ? AND id NOT IN (SELECT call_id FROM checks) ORDER BY RANDOM()",
+                (since,)).fetchall()
+            by_tg: dict[str, list[int]] = {}
+            for row in rows:
+                by_tg.setdefault(row["tg"], []).append(row["id"])
+            # Busiest talkgroups first, so a short list still covers the main channels.
+            queues = sorted(by_tg.values(), key=len, reverse=True)
+            picked = []
+            while len(picked) < count and any(queues):
+                for q in queues:
+                    if q and len(picked) < count:
+                        picked.append(q.pop())
+            self._conn.executemany("INSERT INTO checks (call_id, picked_at) VALUES (?, ?)",
+                                   [(call_id, now) for call_id in picked])
+            self._conn.commit()
+        return len(picked)
+
+    def checks(self) -> list[dict]:
+        """Every checker call, oldest picked first, with the call it is for."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT k.typed, k.typed_at, k.skipped, k.picked_at, c.* FROM checks k "
+                "JOIN calls c ON c.id = k.call_id ORDER BY k.picked_at, k.call_id").fetchall()
+        return [dict(row) for row in rows]
+
+    def save_check(self, call_id: int, typed: str | None, skipped: bool, when: int) -> bool:
+        with self._lock:
+            cur = self._conn.execute("UPDATE checks SET typed = ?, skipped = ?, typed_at = ? WHERE call_id = ?",
+                                     (typed, int(skipped), when, call_id))
+            self._conn.commit()
+        return cur.rowcount > 0
 
     def pending_ids(self) -> list[int]:
         """Calls left unfinished by a previous run, oldest first."""

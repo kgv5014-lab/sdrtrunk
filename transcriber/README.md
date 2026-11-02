@@ -530,6 +530,19 @@ To check whether changes help, run **compare-transcripts.bat**. It runs the 50 n
 call you fixed by hand, through Whisper both the old way (no cleanup) and the new way. Then it opens a
 side-by-side report that scores both against your fixes. The transcriber can keep running while it works.
 
+### Whisper check
+
+Fixes made with Edit start from Whisper's own text, so they tend to keep some of its mistakes. For an
+honest score, open **Whisper check** from the call log. Press "Add 30 more calls" to get calls from the
+last two weeks, spread over your talkgroups. Play each one and type what you hear; Whisper's version
+only shows after you save. Press Skip for a call you can't make out. What you type there doesn't change
+the call log, and those calls' audio is never cleaned up.
+
+Then run **whisper-check.bat**. Its report gives the share of words Whisper got wrong, overall and per
+channel, its most common mistakes, and suggested lines for `corrections.csv` and words for
+`vocabulary.txt`. "As logged" is what the service saved at the time. `whisper-check.bat all` also tries
+large-v3, large-v2 and distil-large-v3.5 (they download the first time, about 6 GB in all).
+
 ### Hints learned from your calls
 
 Whisper also gets street and unit names learned from the call log, so nothing needs to be kept up by hand:

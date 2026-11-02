@@ -650,6 +650,56 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             raise HTTPException(404, "The incident map is turned off in config.toml ([map] enabled)")
         return request.app.state.map_worker
 
+    @app.get("/checker", response_class=HTMLResponse)
+    def checker_page():
+        return (WEB_DIR / "checker.html").read_text(encoding="utf-8")
+
+    @app.get("/api/checker")
+    def checker_calls(request: Request):
+        """The calls Ken types out for the Whisper check. Whisper's text is only sent once he has saved
+        his own, so it can't steer what he hears."""
+        out = []
+        for row in request.app.state.db.checks():
+            done = row["typed_at"] is not None
+            out.append({"id": row["id"], "call_time": row["call_time"], "duration_s": row["duration_s"],
+                        "talkgroup": row["talkgroup_label"] or row["talkgroup"],
+                        "audio": not row["audio_deleted_at"], "done": done, "skipped": bool(row["skipped"]),
+                        "typed": row["typed"], "whisper": row["transcript"] if done else None})
+        return out
+
+    @app.post("/api/checker/pick")
+    async def checker_pick(request: Request):
+        """Adds calls from the last two weeks to the checker (30 unless the body says otherwise)."""
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        count = body.get("count", 30) if isinstance(body, dict) else 30
+        if not isinstance(count, int) or not 1 <= count <= 200:
+            raise HTTPException(400, "count must be 1-200")
+        now = int(time.time())
+        return {"added": request.app.state.db.pick_checks(count, now - 14 * 86400, now)}
+
+    @app.post("/api/checker/{call_id}")
+    async def checker_save(request: Request, call_id: int):
+        """Saves what Ken heard on a checker call, or {"skip": true} when he couldn't make it out."""
+        try:
+            body = await request.json()
+        except ValueError:
+            raise HTTPException(400, "Expected JSON")
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected {\"text\": ...} or {\"skip\": true}")
+        skipped = body.get("skip") is True
+        text = body.get("text")
+        if not skipped and not isinstance(text, str):
+            raise HTTPException(400, "Expected {\"text\": ...} or {\"skip\": true}")
+        typed = None if skipped else re.sub(r"\s+", " ", text).strip()[:4000]
+        db = request.app.state.db
+        if not db.save_check(call_id, typed, skipped, int(time.time())):
+            raise HTTPException(404, "Not a checker call")
+        call = db.get_call(call_id)
+        return {"id": call_id, "typed": typed, "skipped": skipped, "whisper": call["transcript"]}
+
     @app.get("/units", response_class=HTMLResponse)
     def units_page():
         return (WEB_DIR / "units.html").read_text(encoding="utf-8")

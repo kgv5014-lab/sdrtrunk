@@ -657,6 +657,22 @@ note, and its tone-outs get the new name. "Fire 17" and "Station 17" are the sam
 counts as a change. Lines you typed yourself are never changed: to keep a name of your own on a learned
 line, delete the "# Learned" note above it.
 
+## 12-hour summaries
+
+At 7 AM and 7 PM (`[recaps] times`) the service writes a recap of the 12 hours before: how many incidents
+of each type, the busiest towns, tone-outs, medevac helicopter landings, and the most important incidents
+with their latest update. With `[summaries]` on, the Ollama model adds a few plain-English sentences; without
+it the recap has the counts and list only. Open it with **📋 12-hour summaries** on the map (each incident
+in it is a link to the map), or in SDRTrunk under Transcripts > Summaries. **Make one now** writes one for
+the last 12 hours straight away.
+
+With phone alerts on, the 7 AM and 7 PM recap also goes to the phone, but it lists only important incidents
+(fires, weapons, water rescues, cardiac arrests, gas leaks, crashes with injuries or entrapment, anything a
+medevac helicopter landed at, long multi-service incidents) and ones within `close_miles` of home. Twelve
+quiet hours send nothing. Home is `home_lat`/`home_lon`, or the first watch zone when those aren't set.
+Recaps are kept in calls.db and survive a map rebuild. A recap missed while the PC was off for more than
+6 hours is skipped rather than made late.
+
 ## Auto-restart
 
 Double-click **start-everything.bat** instead of starting things one by one. It starts Ollama (when

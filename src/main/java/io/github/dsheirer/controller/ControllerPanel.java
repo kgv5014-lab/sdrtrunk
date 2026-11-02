@@ -34,6 +34,7 @@ import io.github.dsheirer.settings.SettingsManager;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.ui.TunerViewPanel;
 import io.github.dsheirer.transcription.IncidentsPanel;
+import io.github.dsheirer.transcription.SummariesPanel;
 import io.github.dsheirer.transcription.TranscriptsPanel;
 import java.awt.Dimension;
 import jiconfont.icons.font_awesome.FontAwesome;
@@ -113,6 +114,7 @@ public class ControllerPanel extends JPanel
         JTabbedPane transcriptsTabs = new JTabbedPane();
         transcriptsTabs.addTab("Calls", mTranscriptsPanel);
         transcriptsTabs.addTab("Incidents", new IncidentsPanel());
+        transcriptsTabs.addTab("Summaries", new SummariesPanel());
         mTabbedPane.addTab("Transcripts", transcriptsTabs);
         mTabbedPane.addTab("Map", mMapPanel);
         mTabbedPane.addTab("Tuners", mTunerManagerPanel);

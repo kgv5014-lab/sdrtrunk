@@ -101,6 +101,17 @@ public class TranscriptionClientTest
     }
 
     @Test
+    public void parsesTwelveHourSummaries()
+    {
+        List<TranscriptionClient.Recap> recaps = TranscriptionClient.parseRecaps(
+            "[{\"id\": 4, \"title\": \"Mon Nov 2, 7 AM to 7 PM\", \"plain\": \"3 incidents: 2 EMS, 1 fire.\"}, {\"id\": 3}]");
+        assertEquals(2, recaps.size());
+        assertEquals(new TranscriptionClient.Recap(4, "Mon Nov 2, 7 AM to 7 PM", "3 incidents: 2 EMS, 1 fire."), recaps.get(0));
+        assertEquals("Summary", recaps.get(1).title());
+        assertEquals("", recaps.get(1).text());
+    }
+
+    @Test
     public void rejectsNonJsonReplies()
     {
         assertThrows(IllegalStateException.class, () -> TranscriptionClient.parseCalls("<html>nope</html>"));

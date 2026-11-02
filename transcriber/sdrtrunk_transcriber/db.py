@@ -219,6 +219,23 @@ CREATE TABLE IF NOT EXISTS helicopter_landings (
 );
 CREATE INDEX IF NOT EXISTS helicopter_landings_incident ON helicopter_landings(incident_id);
 
+-- 12-hour summaries (recaps.py). What they show is copied in, so they outlive a map rebuild.
+CREATE TABLE IF NOT EXISTS recaps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    kind TEXT NOT NULL,                  -- scheduled, or manual (made with the button)
+    start INTEGER NOT NULL,              -- unix seconds, the hours it covers
+    "end" INTEGER NOT NULL,
+    made_at INTEGER NOT NULL,
+    text TEXT,                           -- the model's few sentences, "" without Ollama
+    model TEXT,
+    ms INTEGER,
+    problem TEXT,
+    counts TEXT,                         -- JSON
+    highlights TEXT,                     -- JSON list of incidents
+    alerted INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS recaps_end ON recaps("end");
+
 -- Whisper checker: calls Ken types out straight from the audio, kept apart from the call log's own
 -- transcripts so they score Whisper without being steered by its text.
 CREATE TABLE IF NOT EXISTS checks (
@@ -926,6 +943,64 @@ class Database:
                 "WHERE c.status = 'done' AND c.call_time >= ? AND s.ref_id IS NULL ORDER BY c.id",
                 (since,)).fetchall()
         return [row["id"] for row in rows if len((row["transcript"] or "").split()) >= min_words]
+
+    # ---- 12-hour summaries
+
+    RECAP_FIELDS = ("kind", "start", "end", "made_at", "text", "model", "ms", "problem", "counts", "highlights",
+                    "alerted")
+
+    def add_recap(self, recap: dict) -> int:
+        # "end" is an SQL word, so every name is quoted.
+        columns = ['"' + n + '"' for n in self.RECAP_FIELDS]
+        with self._lock:
+            cur = self._conn.execute(
+                f"INSERT INTO recaps ({', '.join(columns)}) "
+                f"VALUES ({', '.join('?' for _ in self.RECAP_FIELDS)})", [recap.get(n) for n in self.RECAP_FIELDS])
+            self._conn.commit()
+            return cur.lastrowid
+
+    def recap_for_slot(self, end: float) -> dict | None:
+        """The scheduled recap ending at this time, if made."""
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM recaps WHERE kind = 'scheduled' AND \"end\" = ?",
+                                     (int(end),)).fetchone()
+        return dict(row) if row else None
+
+    def recaps(self, limit: int = 30, before: int | None = None) -> list[dict]:
+        """Newest first."""
+        sql, params = "SELECT * FROM recaps", []
+        if before is not None:
+            sql += " WHERE id < ?"
+            params.append(before)
+        sql += " ORDER BY \"end\" DESC, id DESC LIMIT ?"
+        params.append(max(1, min(limit, 500)))
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(sql, params).fetchall()]
+
+    def get_recap(self, recap_id: int) -> dict | None:
+        with self._lock:
+            row = self._conn.execute("SELECT * FROM recaps WHERE id = ?", (recap_id,)).fetchone()
+        return dict(row) if row else None
+
+    def mark_recap_alerted(self, recap_id: int):
+        with self._lock:
+            self._conn.execute("UPDATE recaps SET alerted = 1 WHERE id = ?", (recap_id,))
+            self._conn.commit()
+
+    def landings_between(self, start: float, end: float) -> list[dict]:
+        """Every helicopter landing in [start, end), oldest first, with what the helicopter is known as now."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT l.*, h.kind AS hand_kind, h.operator, h.hospital_landings, h.incident_landings, "
+                "h.radio_name, h.radio_calls FROM helicopter_landings l LEFT JOIN helicopters h ON h.hex = l.hex "
+                "WHERE l.landing_time >= ? AND l.landing_time < ? ORDER BY l.landing_time", (start, end)).fetchall()
+        return [dict(row) for row in rows]
+
+    def count_calls(self, start: float, end: float) -> int:
+        """County calls in [start, end) (not airport or helicopter radio)."""
+        with self._lock:
+            return self._conn.execute("SELECT COUNT(*) FROM calls WHERE call_time >= ? AND call_time < ? "
+                                      "AND air IS NULL", (start, end)).fetchone()[0]
 
     # ---- phone alerts
 

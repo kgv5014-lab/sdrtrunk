@@ -53,6 +53,7 @@ from .incidents import MapWorker, highlights, services_of
 from .history import TYPES as HISTORY_TYPES, HistoryKeeper, to_csv as history_csv
 from .zones import ZoneWatch, read_zones
 from .speakers import SpeakerBook
+from .recaps import RecapMaker, to_api as recap_to_api
 from .summaries import Summarizer, attach as attach_summary, attach_updates, incident_basis
 from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
@@ -271,6 +272,9 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             traffic.start()
         if summarizer:
             summarizer.start()
+        recaps = RecapMaker(config, db, alerter) if config.recaps.enabled and config.map.enabled else None
+        if recaps:
+            recaps.start()
         recordings = RecordingCleanup(config, db)
         if recordings.enabled:
             recordings.start()
@@ -283,6 +287,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         app.state.history = history
         app.state.alerter = alerter
         app.state.summarizer = summarizer
+        app.state.recaps = recaps
         app.state.aircraft = aircraft
         app.state.aviation = aviation
         app.state.traffic = traffic
@@ -306,6 +311,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             alerter.stop()
         if summarizer:
             summarizer.stop()
+        if recaps:
+            recaps.stop()
         db.close()
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
@@ -867,6 +874,40 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         worker = request.app.state.map_worker
         mileposts = worker.gazetteer.mileposts if worker else None
         return {"markers": mileposts.markers() if mileposts else []}
+
+    # 12-hour summaries (recaps.py).
+
+    def _recaps(request: Request) -> RecapMaker:
+        if request.app.state.recaps is None:
+            raise HTTPException(404, "12-hour summaries are off ([recaps] enabled, and [map] must be on)")
+        return request.app.state.recaps
+
+    @app.get("/api/recaps")
+    def list_recaps(request: Request, limit: int = 30, before: int | None = None):
+        _recaps(request)
+        return _json_unless_unchanged(request, [recap_to_api(r) for r in request.app.state.db.recaps(limit, before)])
+
+    @app.get("/api/recaps/{recap_id}")
+    def get_recap(request: Request, recap_id: int):
+        _recaps(request)
+        row = request.app.state.db.get_recap(recap_id)
+        if row is None:
+            raise HTTPException(404)
+        return recap_to_api(row)
+
+    @app.post("/api/recaps")
+    async def make_recap(request: Request):
+        """Makes one now, for the last `hours` (12 when not given). No phone alert."""
+        maker = _recaps(request)
+        try:
+            body = await request.json()
+        except ValueError:
+            body = {}
+        hours = body.get("hours", config.recaps.hours) if isinstance(body, dict) else config.recaps.hours
+        if not isinstance(hours, (int, float)) or not 1 <= hours <= 24 * 31:
+            raise HTTPException(400, "send {\"hours\": 1 to 744}")
+        now = time.time()
+        return await asyncio.to_thread(maker.make, now - hours * 3600, now)
 
     if config.alerts.enabled:
         # The two addresses the ntfy phone app asks, at this PC's address plus the topic name.

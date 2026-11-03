@@ -91,6 +91,7 @@
   <span id="custom" hidden><input type="date" id="from" title="From"> to <input type="date" id="to" title="To (included)"></span>
   <div class="types" id="types"></div>
   <select id="nature" title="What happened"></select>
+  <select id="outcome" title="How the incident ended (from the AI summary)"><option value="">Any outcome</option></select>
   <label title="Incidents taken off the map by hand, and accidental dials and no-emergency calls"><input type="checkbox" id="hidden"> Show removed</label>
   <button id="csv" title="Everything shown, as a spreadsheet file">Download CSV</button>
   <span id="status"></span>
@@ -137,6 +138,9 @@ let spotMode = stored('history.spots', 'place');
 let cell = null;             // {d, h}: only that day of the week and hour
 $('range').value = stored('history.range', 'all');
 $('nature').dataset.want = stored('history.nature', '');
+// How incidents ended (summaries.OUTCOMES); the list comes from the server.
+let OUTCOMES = {};
+let wantOutcome = stored('history.outcome', '');
 
 // ---- map
 const map = L.map('map', { zoomControl: true }).setView([40.66, -75.35], 11);
@@ -185,7 +189,12 @@ async function load() {
     const f = Object.fromEntries(data.fields.map((name, i) => [name, i]));
     rows = data.rows.map(r => ({ id: r[f.id], time: r[f.time], end: r[f.end], lat: r[f.lat], lon: r[f.lon], type: r[f.type],
       nature: r[f.nature], label: r[f.label], services: r[f.services] ? r[f.services].split(',') : [], calls: r[f.calls],
-      hidden: r[f.hidden], live: r[f.incident_id], dismissed: r[f.dismissed] }));
+      hidden: r[f.hidden], live: r[f.incident_id], dismissed: r[f.dismissed], outcome: r[f.outcome] || 'unknown' }));
+    if (data.outcomes && !Object.keys(OUTCOMES).length) {
+      OUTCOMES = data.outcomes;
+      for (const [key, name] of Object.entries(OUTCOMES)) $('outcome').append(new Option(name, key));
+      $('outcome').value = wantOutcome;
+    }
     $('status').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   } catch (e) {
     $('status').textContent = 'Could not load the history';
@@ -218,7 +227,8 @@ function natureOptions() {
 }
 function filtered(ignoreCell = false) {
   const nature = $('nature').value;
-  return rows.filter(r => shownTypes.has(r.type) && (!nature || r.nature === nature) &&
+  const outcome = $('outcome').value;
+  return rows.filter(r => shownTypes.has(r.type) && (!nature || r.nature === nature) && (!outcome || r.outcome === outcome) &&
     (ignoreCell || !cell || (new Date(r.time * 1000).getDay() === cell.d && new Date(r.time * 1000).getHours() === cell.h)));
 }
 
@@ -227,8 +237,9 @@ function draw() {
   const shown = filtered();
   // Counts on the type buttons: what each type would add with the other filters as they are.
   const nature = $('nature').value;
+  const outcome = $('outcome').value;
   for (const [type] of TYPES) {
-    const n = rows.filter(r => r.type === type && (!nature || r.nature === nature)).length;
+    const n = rows.filter(r => r.type === type && (!nature || r.nature === nature) && (!outcome || r.outcome === outcome)).length;
     const span = $('n-' + type);
     if (span) span.textContent = n.toLocaleString();
   }
@@ -288,7 +299,7 @@ function popup(r) {
   const box = el('div', { className: 'pop' });
   box.append(el('div', { className: 'where' }, r.label || 'Unknown place'),
     el('div', {}, el('span', { className: 'dot', style: `background:${color(r.type)};margin-right:5px` }),
-      [TYPE_NAME[r.type], r.nature].filter(Boolean).join(' · ')),
+      [TYPE_NAME[r.type], r.nature, r.outcome !== 'unknown' ? OUTCOMES[r.outcome] : ''].filter(Boolean).join(' · ')),
     el('div', { className: 'muted' }, when(r.time) + (r.end > r.time + 60 ? ' – ' + new Date(r.end * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '')),
     el('div', { style: 'margin-top:3px' }, ...r.services.map(s => el('span', { className: 'svc ' + s }, s === 'ems' ? 'EMS' : s[0].toUpperCase() + s.slice(1))),
       `${r.calls} call${r.calls === 1 ? '' : 's'}`, r.hidden ? ' · ' + (r.dismissed ? r.dismissed.toLowerCase() + ', taken off the map' : 'removed from the map') : ''));
@@ -385,9 +396,10 @@ $('range').onchange = () => { save(); if ($('range').value !== 'custom' || ($('f
 $('from').onchange = $('to').onchange = () => load();
 $('hidden').onchange = () => load();
 $('nature').onchange = () => { save(); draw(); };
+$('outcome').onchange = () => { wantOutcome = $('outcome').value; store('history.outcome', wantOutcome); draw(); };
 $('csv').onclick = () => {
   const types = shownTypes.size === TYPES.length ? '' : [...shownTypes].join(',');
-  location.href = 'api/history.csv?' + query({ types, nature: $('nature').value });
+  location.href = 'api/history.csv?' + query({ types, nature: $('nature').value, outcome: $('outcome').value });
 };
 function pick(pane) {
   for (const b of $('tabs').children) b.classList.toggle('on', b.dataset.pane === pane);

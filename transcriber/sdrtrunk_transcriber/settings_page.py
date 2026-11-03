@@ -27,13 +27,13 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from .codes import SIGNAL, TEN_CODE, UNIT_NUMBER, _agency, _code_key
+from . import webapp
 from .corrections import FIELDS as CORRECTION_FIELDS
 from .worker import load_vocabulary
 from .zones import METRES_PER_MILE
 
 log = logging.getLogger(__name__)
 
-WEB_DIR = Path(__file__).parent / "web"
 OVERRIDES_FILE = "settings-from-page.json"
 CODE_FIELDS = ("type", "code", "meaning", "applies_to", "prompt", "source")
 CODE_TYPES = ("ten-code", "signal", "station", "unit-suffix", "police-esn", "call-type", "acronym")
@@ -288,7 +288,7 @@ def add_routes(app: FastAPI, config):
 
     @app.get("/settings", response_class=HTMLResponse)
     def settings_page():
-        return (WEB_DIR / "settings.html").read_text(encoding="utf-8")
+        return webapp.page("settings.html")
 
     @app.get("/api/settings")
     def get_settings(request: Request):

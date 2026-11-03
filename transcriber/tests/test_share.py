@@ -73,12 +73,15 @@ def test_guest_signs_in_and_sees_the_map_read_only(make_client, tmp_path):
 
         assert sign_in(guest, prefix, "nope").status_code == 401
         signed = sign_in(guest, prefix)
-        assert signed.status_code == 303 and signed.headers["location"] == prefix + "/map"
+        assert signed.status_code == 303 and signed.headers["location"] == prefix + "/app"
         cookie = signed.headers["set-cookie"].lower()
         assert "httponly" in cookie and "secure" in cookie and f"path={prefix.lower()}/" in cookie
 
         page = guest.get(prefix + "/map")
         assert page.status_code == 200 and 'data-guest="1"' in page.text
+        app = guest.get(prefix + "/app")
+        assert app.status_code == 200 and 'data-guest="1"' in app.text and "app-theme.css" in app.text
+        assert guest.get(prefix + "/manifest.webmanifest").status_code == 200
         assert guest.get(prefix + "/").status_code == 200
         assert guest.get(prefix + "/listen").status_code == 200
         calls = guest.get(prefix + "/api/calls?limit=5000")
@@ -157,4 +160,17 @@ def test_private_listen_page_shows_the_friends_link(make_client, tmp_path):
     with client:
         assert client.get("/api/listen/link").json()["share_path"] is None
         share.set_password(data, PASSWORD)
-        assert client.get("/api/listen/link").json()["share_path"] == f"/g/{share.read_path(data)}/map"
+        assert client.get("/api/listen/link").json()["share_path"] == f"/g/{share.read_path(data)}/app"
+
+
+def test_one_app_page_and_its_files(make_client):
+    client, _ = make_client()
+    with client:
+        app = client.get("/app")
+        assert app.status_code == 200 and 'data-tab="summaries"' in app.text
+        for page in ("/", "/map", "/aviation", "/history", "/listen", "/app"):
+            text = client.get(page).text
+            assert 'rel="manifest"' in text and "app-frame.js" in text, page
+        assert client.get("/app-theme.css").headers["content-type"].startswith("text/css")
+        assert client.get("/app-icon-180.png").content[:4] == b"\x89PNG"
+        assert client.get("/manifest.webmanifest").json()["start_url"] == "app"

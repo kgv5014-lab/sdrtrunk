@@ -216,6 +216,15 @@ unit reading back its orders as a new dispatch, and a unit talking without sayin
 incident it is on. The unit board gives "on scene" to the unit that said it, not every unit named.
 Settings are under `[speakers]` in config.toml.
 
+## One app with tabs
+
+Open `/app` (for example `http://localhost:3000/app`, or your Tailscale address followed by `/app`) for
+everything in one place: Map, Calls, Listen, Aviation, History and Summaries as tabs, in a dark look.
+A Settings tab shows up once a settings page exists. Tabs stay open in the background, so live audio
+keeps playing while you look at the map. On an iPhone, open it in Safari, tap Share, then
+**Add to Home Screen**; it then opens full screen with its own icon. The friends' link opens the same
+app with only Map, Calls and Listen. The old addresses (`/map`, `/listen` and so on) still work.
+
 ## Incident map
 
 <http://localhost:3000/map> shows possible incidents on a street map, built from the transcripts. It

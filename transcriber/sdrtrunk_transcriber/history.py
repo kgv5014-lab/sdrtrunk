@@ -17,6 +17,7 @@ import time
 
 from .db import Database
 from .incidents import services_of
+from .summaries import OUTCOMES
 
 log = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ def incident_type(nature: str | None, category: str | None) -> str:
 def _fingerprint(row: dict) -> tuple:
     return (row["incident_id"], row["first_time"], row["last_time"], round(row["lat"], 6), round(row["lon"], 6),
             row["label"], row["category"], row["nature"], int(row["hidden"] or 0), row["calls"],
-            row.get("dismissed"))
+            row.get("dismissed"), row.get("outcome"))
 
 
 class HistoryKeeper:
@@ -72,6 +73,7 @@ class HistoryKeeper:
             index = self.db.history_index()
             owner: dict[int, int] = {}          # call id -> first call of the incident it is in now
             changed = []
+            outcomes = {i: s.get("outcome") for i, s in self.db.summaries("incident", [s["id"] for s in snapshots]).items()}
             for snap in snapshots:
                 ids = snap["call_ids"]
                 first = ids[0]
@@ -84,6 +86,8 @@ class HistoryKeeper:
                        "call_ids": ",".join(map(str, ids)), "hidden": int(snap["hidden"] or 0),
                        "dismissed": snap.get("dismissed"), "updated_at": now}
                 old = index.get(first)
+                # A rebuild clears summaries; the outcome already saved stays until a new one is written.
+                row["outcome"] = outcomes.get(snap["id"]) or (old or {}).get("outcome")
                 if old is None or _fingerprint(old) != _fingerprint(row):
                     changed.append(row)
             if changed:
@@ -110,7 +114,7 @@ class HistoryKeeper:
 
 
 CSV_COLUMNS = ("start", "end", "type", "nature", "address", "latitude", "longitude", "services", "calls",
-               "removed_from_map", "first_call_id")
+               "removed_from_map", "outcome", "first_call_id")
 
 
 def _local(t: int) -> str:
@@ -126,5 +130,6 @@ def to_csv(rows: list[dict]) -> str:
                          row["label"] or "", f"{row['lat']:.6f}", f"{row['lon']:.6f}",
                          (row["services"] or "").replace(",", " "), row["calls"],
                          (row.get("dismissed") or "yes") if row["hidden"] else "",
+                         OUTCOMES.get(row.get("outcome") or "", ""),
                          row["first_call_id"]])
     return out.getvalue()

@@ -574,6 +574,9 @@ def load_config(path: Path | None) -> Config:
     config = Config()
     if path is not None:
         _load_file(config, path)
+        # Department names and alert distances changed on the Settings page.
+        from .settings_page import apply_overrides, overrides_path, read_overrides
+        apply_overrides(config, read_overrides(overrides_path(config)))
     # use-whisper-gpu.bat found the card by name and left Whisper only that one to see
     index = os.environ.get("WHISPER_DEVICE_INDEX", "")
     if index.isdigit():

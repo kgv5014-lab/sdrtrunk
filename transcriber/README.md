@@ -545,6 +545,21 @@ the carrier rather than by signal strength, so live listening is even too.
 To add your own air hints (airline call signs you hear a lot), put one per line in `air-vocabulary.txt`
 next to `config.toml` and restart the transcriber.
 
+## Settings page
+
+Open **Settings** from the call log or the map (`/settings`) to change things without opening files on the PC:
+
+- **New codes heard**: 10-codes, signals and fire/EMS station numbers heard at least twice that aren't in
+  codes.csv yet, with example calls to play. Type what one means and tap Add; Ignore hides mishearings
+  (kept in `data\ignored-codes.txt`).
+- **Vocabulary**, **Unit codes** (codes.csv) and **Learned corrections** (corrections.csv): apply at once.
+- **Fire Scan department names** and **phone alert distance** (the first `[alerts]` watch zone and the
+  12-hour summary's "close to home"): apply at once, and are kept in `settings-from-page.json` next to
+  config.toml, which wins over the same settings in config.toml.
+
+Each save copies the old file to `data\settings-backups` first (the last 20 of each). The page is not on
+the friends' share link, so guests can't open or change it.
+
 ## Fixing transcripts
 
 Each call on the call log page has an **Edit** button. Type the right words and press Save. The words

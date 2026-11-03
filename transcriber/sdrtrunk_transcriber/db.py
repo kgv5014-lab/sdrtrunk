@@ -584,6 +584,14 @@ class Database:
                 "WHERE call_time >= ? AND call_time < ? AND status = 'done' AND transcript IS NOT NULL "
                 "ORDER BY call_time", (start, end)).fetchall()]
 
+    def transcripts_since(self, since: float) -> list[dict]:
+        """Transcribed calls from `since` on, for the Settings page's list of codes not in codes.csv."""
+        with self._lock:
+            return [dict(row) for row in self._conn.execute(
+                "SELECT id, call_time, talkgroup, talkgroup_label, transcript, air FROM calls "
+                "WHERE call_time >= ? AND status = 'done' AND transcript IS NOT NULL "
+                "ORDER BY call_time", (since,)).fetchall()]
+
     # ---- incident map
 
     def calls_to_map(self) -> list[int]:

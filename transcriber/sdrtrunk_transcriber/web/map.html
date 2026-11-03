@@ -114,6 +114,7 @@
   .pop .cams button { font-size: 12px; padding: 2px 6px; }
   .stag { font-size: 11px; border: 1px solid var(--line); border-radius: 10px; padding: 0 6px; color: var(--muted); }
   .stag.status { color: var(--accent); border-color: var(--accent); }
+  .outcome { font-size: 11px; border-radius: 10px; padding: 0 6px; background: var(--accent); color: #fff; white-space: nowrap; }
   .pop mark { background: var(--mark); color: inherit; padding: 0 2px; border-radius: 3px; }
   .pulse { animation: pulse 1.4s ease-out infinite; }
   @keyframes pulse { 0% { stroke-width: 2; stroke-opacity: 1; } 100% { stroke-width: 18; stroke-opacity: 0; } }
@@ -160,6 +161,9 @@
     <option value="2592000">Last 30 days</option>
   </select>
   <div class="types" id="types"></div>
+  <select id="outcome" title="How the incident ended (from the AI summary)">
+    <option value="">Any outcome</option>
+  </select>
   <label title="Only incidents that more than one of police, fire and EMS were sent to"><input type="checkbox" id="multi"> Several services</label>
   <label class="admin"><input type="checkbox" id="hidden"> Show removed</label>
   <button id="seen" class="admin" hidden>Mark all seen</button>
@@ -266,6 +270,12 @@ function describe(incident) {
   return box;
 }
 
+// How an incident ended, as the summary model labelled it (summaries.OUTCOMES).
+const OUTCOMES = { 'transported': 'Transported', 'refused': 'Refused / no transport', 'canceled': 'Cancelled',
+  'under control': 'Fire out / under control', 'cleared': 'Units cleared', 'unknown': 'Still going / unknown' };
+function outcomeOf(incident) { return incident.outcome || 'unknown'; }
+for (const [key, name] of Object.entries(OUTCOMES)) $('outcome').append(new Option(name, key));
+
 // The Ollama summary and tags, when [summaries] is turned on.
 function summary(incident, withTags) {
   const box = el('div', 'summary' + (incident.summary_current === false ? ' stale' : ''));
@@ -274,7 +284,8 @@ function summary(incident, withTags) {
   const tags = [...(incident.summary_tags || [])];
   if (withTags && (tags.length || incident.summary_status)) {
     const row = el('div', 'stags');
-    if (incident.summary_status && incident.summary_status !== 'unknown') row.append(el('span', 'stag status', incident.summary_status));
+    if (outcomeOf(incident) !== 'unknown') row.append(el('span', 'outcome', OUTCOMES[incident.outcome]));
+    else if (incident.summary_status && incident.summary_status !== 'unknown') row.append(el('span', 'stag status', incident.summary_status));
     tags.forEach(t => row.append(el('span', 'stag', t)));
     box.append(row);
   }
@@ -493,7 +504,9 @@ function render(incidents) {
   items = {};
   const list = $('list');
   list.querySelectorAll('.item, .empty').forEach(n => n.remove());
-  const shown = incidents.filter(i => shownTypes.has(i.type || 'other') && (!$('multi').checked || (i.services || []).length > 1));
+  const wantOutcome = $('outcome').value;
+  const shown = incidents.filter(i => shownTypes.has(i.type || 'other') && (!$('multi').checked || (i.services || []).length > 1)
+    && (!wantOutcome || outcomeOf(i) === wantOutcome));
   const fresh = incidents.filter(isNew);
   document.title = (fresh.length ? '(' + fresh.length + ') ' : '') + 'Incident map';
   $('seen').hidden = !fresh.length;
@@ -530,6 +543,7 @@ function render(incidents) {
     if (incident.category || incident.nature) meta.append(describe(incident), ' · ');
     meta.append(incident.calls.length + ' call' + (incident.calls.length === 1 ? '' : 's'));
     if (incident.channel) meta.append(' · ', el('span', 'channel', incident.channel));
+    if (outcomeOf(incident) !== 'unknown') meta.append(' ', el('span', 'outcome', OUTCOMES[incident.outcome]));
     item.append(meta);
     const heli = helicoptersAt(incident);
     if (heli) item.append(el('div', 'heli-note', heli));
@@ -1046,6 +1060,8 @@ $('range').addEventListener('change', () => { store('map.range', $('range').valu
 $('hidden').addEventListener('change', () => { incidentsTag = null; load(); });
 $('multi').checked = stored('map.multi', false);
 $('multi').addEventListener('change', () => { store('map.multi', $('multi').checked); render(lastIncidents); });
+$('outcome').value = stored('map.outcome', '');
+$('outcome').addEventListener('change', () => { store('map.outcome', $('outcome').value); render(lastIncidents); });
 
 // ---- 12-hour summaries (recaps.py): made at 7 AM and 7 PM, or with "Make one now".
 let recapFocus = null;

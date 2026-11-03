@@ -5,7 +5,8 @@ The incidents table is cleared whenever the map is rebuilt (after the street lis
 changes how calls are placed), then filled again from the transcripts. The history table is not cleared.
 Each row is keyed by the incident's first call, which is the same before and after a rebuild, so a
 rebuild updates rows instead of adding them twice. A row goes away only when its calls became part of
-another incident, or when its first call was taken off the map by hand.
+another incident, or when its first call was taken off the map by hand. Incidents that came off the
+map by themselves as an accidental dial or no emergency stay, marked with why (shown with "Show removed").
 """
 
 import csv
@@ -30,7 +31,8 @@ def incident_type(nature: str | None, category: str | None) -> str:
 
 def _fingerprint(row: dict) -> tuple:
     return (row["incident_id"], row["first_time"], row["last_time"], round(row["lat"], 6), round(row["lon"], 6),
-            row["label"], row["category"], row["nature"], int(row["hidden"] or 0), row["calls"])
+            row["label"], row["category"], row["nature"], int(row["hidden"] or 0), row["calls"],
+            row.get("dismissed"))
 
 
 class HistoryKeeper:
@@ -79,7 +81,8 @@ class HistoryKeeper:
                        "last_time": snap["last_time"], "lat": snap["lat"], "lon": snap["lon"],
                        "label": snap["label"], "type": incident_type(snap["nature"], snap["category"]),
                        "category": snap["category"], "nature": snap["nature"], "calls": len(ids),
-                       "call_ids": ",".join(map(str, ids)), "hidden": int(snap["hidden"] or 0), "updated_at": now}
+                       "call_ids": ",".join(map(str, ids)), "hidden": int(snap["hidden"] or 0),
+                       "dismissed": snap.get("dismissed"), "updated_at": now}
                 old = index.get(first)
                 if old is None or _fingerprint(old) != _fingerprint(row):
                     changed.append(row)
@@ -121,6 +124,7 @@ def to_csv(rows: list[dict]) -> str:
     for row in rows:
         writer.writerow([_local(row["first_time"]), _local(row["last_time"]), row["type"], row["nature"] or "",
                          row["label"] or "", f"{row['lat']:.6f}", f"{row['lon']:.6f}",
-                         (row["services"] or "").replace(",", " "), row["calls"], "yes" if row["hidden"] else "",
+                         (row["services"] or "").replace(",", " "), row["calls"],
+                         (row.get("dismissed") or "yes") if row["hidden"] else "",
                          row["first_call_id"]])
     return out.getvalue()

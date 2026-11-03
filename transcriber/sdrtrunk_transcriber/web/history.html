@@ -91,7 +91,7 @@
   <span id="custom" hidden><input type="date" id="from" title="From"> to <input type="date" id="to" title="To (included)"></span>
   <div class="types" id="types"></div>
   <select id="nature" title="What happened"></select>
-  <label title="Incidents taken off the map by hand"><input type="checkbox" id="hidden"> Show removed</label>
+  <label title="Incidents taken off the map by hand, and accidental dials and no-emergency calls"><input type="checkbox" id="hidden"> Show removed</label>
   <button id="csv" title="Everything shown, as a spreadsheet file">Download CSV</button>
   <span id="status"></span>
 </header>
@@ -185,7 +185,7 @@ async function load() {
     const f = Object.fromEntries(data.fields.map((name, i) => [name, i]));
     rows = data.rows.map(r => ({ id: r[f.id], time: r[f.time], end: r[f.end], lat: r[f.lat], lon: r[f.lon], type: r[f.type],
       nature: r[f.nature], label: r[f.label], services: r[f.services] ? r[f.services].split(',') : [], calls: r[f.calls],
-      hidden: r[f.hidden], live: r[f.incident_id] }));
+      hidden: r[f.hidden], live: r[f.incident_id], dismissed: r[f.dismissed] }));
     $('status').textContent = 'Updated ' + new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   } catch (e) {
     $('status').textContent = 'Could not load the history';
@@ -291,7 +291,7 @@ function popup(r) {
       [TYPE_NAME[r.type], r.nature].filter(Boolean).join(' · ')),
     el('div', { className: 'muted' }, when(r.time) + (r.end > r.time + 60 ? ' – ' + new Date(r.end * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '')),
     el('div', { style: 'margin-top:3px' }, ...r.services.map(s => el('span', { className: 'svc ' + s }, s === 'ems' ? 'EMS' : s[0].toUpperCase() + s.slice(1))),
-      `${r.calls} call${r.calls === 1 ? '' : 's'}`, r.hidden ? ' · removed from the map' : ''));
+      `${r.calls} call${r.calls === 1 ? '' : 's'}`, r.hidden ? ' · ' + (r.dismissed ? r.dismissed.toLowerCase() + ', taken off the map' : 'removed from the map') : ''));
   const list = el('div', { className: 'calls' });
   const more = el('button', { style: 'margin-top:6px;font-size:12px;padding:2px 8px' }, 'Show calls');
   more.onclick = async () => {

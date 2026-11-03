@@ -34,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from starlette.datastructures import UploadFile
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import audio, incident_audio, live, share
+from . import audio, incident_audio, live, share, webapp
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -457,9 +457,21 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
                    limit: int = 200):
         return request.app.state.db.pages(since, until, q, limit)
 
+    # ---- the one app with tabs, its dark look and home-screen icon (webapp.py)
+
+    @app.get("/app", response_class=HTMLResponse)
+    def app_page():
+        return webapp.page("app.html")
+
+    for asset_name in webapp.ASSETS:
+        def serve_asset(name: str = asset_name):
+            body, media = webapp.asset(name)
+            return Response(body, media_type=media, headers={"Cache-Control": "no-cache"})
+        app.add_api_route("/" + asset_name, serve_asset, methods=["GET"], include_in_schema=False)
+
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        return webapp.page("index.html")
 
     @app.get("/api/calls")
     def list_calls(request: Request, q: str = "", talkgroup: str = "", source: str = "",
@@ -487,7 +499,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/aviation", response_class=HTMLResponse)
     def aviation_page():
-        return (WEB_DIR / "aviation.html").read_text(encoding="utf-8")
+        return webapp.page("aviation.html")
 
     @app.get("/api/aviation/calls")
     def list_aviation_calls(request: Request, q: str = "", talkgroup: str = "", before_id: int | None = None,
@@ -589,7 +601,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             key = live.read_key(data_path)
             base = config.listen.public_url.rstrip("/")
             # The friends' map link (share.py), once setup-share-link.bat has set a password.
-            share_path = f"/g/{share.read_path(data_path)}/map" if share.is_on(data_path) else None
+            share_path = f"/g/{share.read_path(data_path)}/app" if share.is_on(data_path) else None
             return {"key": key, "port": config.listen.public_port,
                     "url": f"{base}/listen?key={key}" if base and config.listen.public_port else None,
                     "share_path": share_path,
@@ -603,13 +615,13 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/map", response_class=HTMLResponse)
     def map_page():
-        return (WEB_DIR / "map.html").read_text(encoding="utf-8")
+        return webapp.page("map.html")
 
     # ---- incident history: heat map page and CSV download (history.py)
 
     @app.get("/history", response_class=HTMLResponse)
     def history_page():
-        return (WEB_DIR / "history.html").read_text(encoding="utf-8")
+        return webapp.page("history.html")
 
     def _history_rows(request: Request, since: int | None, until: int | None, hidden: bool,
                       types: str | None = None, nature: str | None = None) -> list[dict]:
@@ -665,7 +677,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/checker", response_class=HTMLResponse)
     def checker_page():
-        return (WEB_DIR / "checker.html").read_text(encoding="utf-8")
+        return webapp.page("checker.html")
 
     @app.get("/api/checker")
     def checker_calls(request: Request):
@@ -715,7 +727,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/units", response_class=HTMLResponse)
     def units_page():
-        return (WEB_DIR / "units.html").read_text(encoding="utf-8")
+        return webapp.page("units.html")
 
     @app.get("/api/units")
     def list_units(request: Request, hours: float = 12):

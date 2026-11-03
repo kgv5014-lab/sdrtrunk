@@ -33,6 +33,8 @@ from urllib.parse import parse_qsl, urlencode
 
 from starlette.responses import HTMLResponse, RedirectResponse, Response
 
+from . import webapp
+
 log = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).parent / "web"
@@ -50,7 +52,7 @@ ALL_LOCK_S = 15 * 60
 WRONG_DELAY_S = 1.0
 
 # The pages guests can open, and the main service's addresses those pages read (GET only).
-PAGES = {"": "index.html", "map": "map.html", "listen": "listen.html"}
+PAGES = {"": "index.html", "app": "app.html", "map": "map.html", "listen": "listen.html"}
 GUEST_API = re.compile(r"^/(api/calls|api/calls/\d+/audio|api/pages|api/incidents|api/incidents/\d+/play|api/incidents/\d+/audio\.mp3|api/map/status|api/map/mileposts|api/traffic"
                        r"|api/traffic/cameras/\d+/image|listen/talkgroups|listen/stream\.mp3|listen/now)$")
 # Query values guests may not set: removed incidents stay hidden.
@@ -259,8 +261,12 @@ class ShareGate:
             return not_found
         rest = path[len(prefix):]
         if rest == "":
-            return RedirectResponse(prefix + "/map", status_code=302)
+            return RedirectResponse(prefix + "/app", status_code=302)
         method = scope["method"]
+        # The app's look and home-screen icon: nothing secret, and the phone fetches the icon without the cookie.
+        found = webapp.asset(rest.lstrip("/")) if method in ("GET", "HEAD") else None
+        if found:
+            return Response(found[0], media_type=found[1], headers={"Cache-Control": "no-cache"})
 
         if rest == "/login":
             if method == "POST":
@@ -283,7 +289,7 @@ class ShareGate:
         return not_found
 
     def _page(self, name: str) -> Response:
-        text = (WEB_DIR / name).read_text(encoding="utf-8")
+        text = webapp.page(name)
         text = text.replace('<html lang="en">', '<html lang="en" data-guest="1">', 1)
         text = text.replace("<head>", '<head>\n<meta name="referrer" content="no-referrer">', 1)
         return HTMLResponse(text, headers={"Cache-Control": "no-store"})
@@ -322,7 +328,7 @@ class ShareGate:
             return self._login_page(prefix, "Wrong password.", 401)
         self.lockout.right(ip)
         log.info("Share link: a guest signed in from %s", ip)
-        response = RedirectResponse(f"{prefix}/map", status_code=303)
+        response = RedirectResponse(f"{prefix}/app", status_code=303)
         response.set_cookie(COOKIE, self._new_session(), max_age=SESSION_DAYS * 86400, path=prefix + "/",
                             secure=True, httponly=True, samesite="lax")
         return response
@@ -379,7 +385,7 @@ def link(data_path: Path, public_url: str = "") -> str:
     if not base:
         name = _tailscale_name()
         base = f"https://{name}:8443" if name else "https://<this PC's Tailscale name>:8443"
-    return f"{base}/g/{read_path(data_path)}/map"
+    return f"{base}/g/{read_path(data_path)}/app"
 
 
 def setup(data_path: Path, public_url: str = "") -> int:

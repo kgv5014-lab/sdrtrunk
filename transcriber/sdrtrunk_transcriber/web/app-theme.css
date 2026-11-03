@@ -1,0 +1,23 @@
+/* The shared dark look for every page (added last by webapp.dress, so it wins over each page's colors). */
+:root {
+  color-scheme: dark;
+  --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --line: #262d37; --card: #161b22; --accent: #58a6ff;
+  --warn: #f0a640; --good: #4cc38a; --danger: #ff6b5e; --live: #ff6b5e; --medevac: #ff6b5e; --sel: #1b2840;
+  --fire: #ff6b5e; --ems: #4cc38a; --police: #6ea2ff; --mva: #ffa13d; --other: #a0a0a8; --mark: #6b5310;
+  --cell: 88, 166, 255;
+  --dispatched: #ff6b5e; --responding: #ffa13d; --onscene: #6ea2ff; --transporting: #c38be0; --hospital: #4cc38a; --available: #a0a0a8;
+}
+body { -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent; }
+header { background: #10151c !important; }
+button, select, input { border-radius: 8px; }
+button:not(:disabled):hover { border-color: var(--accent); }
+::selection { background: #264f78; }
+* { scrollbar-color: #30363d transparent; }
+/* Leaflet popups and buttons to match. */
+.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--card); color: var(--fg); box-shadow: 0 4px 18px rgba(0,0,0,.5); }
+.leaflet-bar a, .leaflet-control-layers { background: var(--card); color: var(--fg); border-color: var(--line); }
+.leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+.leaflet-control-attribution { background: rgba(13,17,23,.75) !important; color: var(--muted); }
+.leaflet-control-attribution a { color: var(--muted); }
+/* Inside the app's tabs: the links to other tabs are in the tab bar instead. */
+.in-app .app-tab-link { display: none !important; }

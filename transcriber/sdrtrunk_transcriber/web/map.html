@@ -1029,6 +1029,11 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
   // Opened from the unit board: map#incident-12
   const linked = /^#incident-(\d+)$/.exec(location.hash);
   if (linked) showIncident(Number(linked[1]));
+  // Inside the app, another tab can point the map at an incident without reloading it.
+  window.addEventListener('hashchange', () => {
+    const m = /^#incident-(\d+)$/.exec(location.hash);
+    if (m) showIncident(Number(m[1]));
+  });
   loadFeed();
   setInterval(loadFeed, 5000);
   if (watchingAircraft) setInterval(loadAircraft, 5000);

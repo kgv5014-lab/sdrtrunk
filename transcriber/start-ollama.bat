@@ -3,7 +3,7 @@ rem Starts Ollama on the GTX 1070 for call summaries (see "Call summaries" in th
 rem start-transcriber.bat gives Whisper the 1070 Ti by UUID; this window picks the 1070 the same way.
 rem GPU_NAME must match a line of `nvidia-smi -L` up to " (UUID". "GTX 1070" does not match the 1070 Ti.
 set GPU_NAME=GTX 1070
-set MODEL=qwen2.5:7b
+set MODEL=qwen3.5:9b-q4_K_M
 
 where ollama >nul 2>&1
 if errorlevel 1 (
@@ -38,7 +38,7 @@ timeout /t 5 /nobreak >nul
 
 ollama list | findstr /c:"%MODEL%" >nul
 if errorlevel 1 (
-  echo Downloading %MODEL% once, about 5 GB...
+  echo Downloading %MODEL% once, about 6.6 GB. Needs a recent Ollama; if it fails, update Ollama from https://ollama.com/download...
   ollama pull %MODEL%
 )
 echo Ollama is running in its own window (minimized). Leave it open while the transcriber runs.

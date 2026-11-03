@@ -120,7 +120,7 @@ def test_incidents_and_long_calls_get_summaries(tmp_path, ollama):
     assert status["summaries"]["enabled"] and status["summaries"]["reachable"] is True
     url, body = ollama.requests[0]
     assert url == "http://127.0.0.1:11434/api/chat"
-    assert body["model"] == "qwen2.5:7b" and body["stream"] is False and body["keep_alive"] == -1
+    assert body["model"] == "qwen3.5:9b-q4_K_M" and body["stream"] is False and body["keep_alive"] == -1 and body["think"] is False
     assert body["format"]["properties"]["tags"]["items"]["enum"] == list(summaries.TAGS)
 
 
@@ -294,7 +294,7 @@ def test_a_model_still_downloading_is_tried_again(tmp_path, monkeypatch):
         def post(self, url, json=None, timeout=None):
             if not self.requests:
                 self.requests.append((url, json))
-                return FakeResponse({"error": "model 'qwen2.5:7b' not found"}, status_code=404)
+                return FakeResponse({"error": "model 'qwen3.5:9b-q4_K_M' not found"}, status_code=404)
             return super().post(url, json, timeout)
 
     fake = Downloading()

@@ -157,6 +157,9 @@ class OllamaClient:
             "format": schema,
             "stream": False,
             "keep_alive": self.keep_alive,
+            # Qwen 3.5 thinks out loud before answering unless told not to, which is slow and adds nothing
+            # to a short summary. Models that can't think ignore it.
+            "think": False,
             "options": {"temperature": 0.2, "num_ctx": 4096},
         })
         if response.status_code == 404 and "not found" in response.text:

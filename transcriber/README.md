@@ -617,7 +617,7 @@ Setting it up, once:
 1. Install Ollama for Windows from <https://ollama.com/download>.
 2. Double-click **start-ollama.bat** in the transcriber folder. It finds the GTX 1070 by its UUID
    (start-transcriber.bat does the same for the 1070 Ti, so the two never share a card), starts Ollama on it in a minimized window, and the first time downloads the model
-   (`qwen2.5:7b`, about 5 GB). It also turns off Ollama's Vulkan support, which would otherwise see the 1070 Ti too, and closes the Ollama tray app, which would otherwise use the wrong card.
+   (`qwen3.5:9b-q4_K_M`, Qwen 3.5 9B, about 6.6 GB; update Ollama first if yours is older than early 2026). It also turns off Ollama's Vulkan support, which would otherwise see the 1070 Ti too, and closes the Ollama tray app, which would otherwise use the wrong card.
 3. In `config.toml`, add the `[summaries]` section from `config.example.toml` and set `enabled = true`.
    Restart the transcriber. The log says "Summaries: using Ollama" after the first one.
 
@@ -627,7 +627,7 @@ summaries catch up within a minute of Ollama starting. On start the transcriber 
 24 hours of incidents that have none yet.
 
 To check that Ollama is on the 1070, run `nvidia-smi` while a summary is being written: `ollama.exe` should
-be listed on the GTX 1070 with about 5 GB of memory.
+be listed on the GTX 1070 with about 7 GB of memory.
 
 ### Tone-outs on P25 talkgroups
 

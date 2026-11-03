@@ -418,7 +418,7 @@ class SummariesConfig:
     # Short summaries and tags for incidents and long calls, from a local Ollama model (see the README).
     enabled: bool = False
     url: str = "http://127.0.0.1:11434"
-    model: str = "qwen2.5:7b"
+    model: str = "qwen3.5:9b-q4_K_M"
     # Calls with at least this many words also get their own one-line summary. 0 = incidents only.
     call_min_words: int = 25
     # Wait this long after a call joins an incident before summarizing it, so a burst is read together.

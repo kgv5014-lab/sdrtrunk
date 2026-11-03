@@ -463,3 +463,19 @@ def test_old_incidents_are_rebuilt_after_an_update(tmp_path):
     db.create_incident({"first_time": 1, "last_time": 1, "lat": 40.6, "lon": -75.2, "label": "y"})
     db.close()
     assert len(Database(tmp_path / "calls.db").incidents()) == 1     # only once
+
+
+def test_not_found_lookups_are_asked_again_once_the_area_grew(tmp_path):
+    import sqlite3
+    db = Database(tmp_path / "calls.db")
+    db.geocode_store("12 broadway, bangor", {})
+    db.geocode_store("12 northampton street, easton", {"lat": 40.69, "lon": -75.21, "kind": "address"})
+    db.close()
+    conn = sqlite3.connect(tmp_path / "calls.db")
+    conn.execute("PRAGMA user_version = 6")
+    conn.commit()
+    conn.close()
+
+    db = Database(tmp_path / "calls.db")
+    assert db.geocode_cached("12 broadway, bangor") is None
+    assert db.geocode_cached("12 northampton street, easton")["lat"] == 40.69

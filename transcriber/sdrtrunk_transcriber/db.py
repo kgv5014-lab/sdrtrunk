@@ -275,7 +275,9 @@ END;
 # 4: police, fire and EMS dispatches to the same scene joined.
 # 5: who is talking (speakers.py): a unit's own words aren't a dispatch, and join by the unit talking.
 # 6: highway mile markers ("337.5 Route 22 East") placed (mileposts.py).
-MAP_VERSION = 6
+# 7: the map's area grew north to Blue Mountain (Bangor, Pen Argyl, Wind Gap); "not found" lookups made
+#    with the old, smaller area are asked again.
+MAP_VERSION = 7
 
 CALL_FIELDS = (
     "call_time", "received_at", "system_id", "system_label", "talkgroup", "talkgroup_label",
@@ -372,6 +374,8 @@ class Database:
             self._conn.execute("DELETE FROM summaries WHERE kind = 'incident'")
             self._conn.execute("DELETE FROM incident_updates")
             self._conn.execute("UPDATE calls SET map_status = NULL WHERE map_status IS NOT NULL")
+            if version < 7:
+                self._conn.execute("DELETE FROM geocode_cache WHERE lat IS NULL")
             self._conn.execute(f"PRAGMA user_version = {MAP_VERSION}")
 
     def close(self):

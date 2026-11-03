@@ -1,7 +1,7 @@
 """Builds places.csv (and places-geo.json for the map) from OpenStreetMap.
 
-    python -m sdrtrunk_transcriber.fetch_places            # Easton to Allentown, PA
-    python -m sdrtrunk_transcriber.fetch_places --bbox 40.50,-75.62,40.78,-75.17
+    python -m sdrtrunk_transcriber.fetch_places            # the map's area from config.toml
+    python -m sdrtrunk_transcriber.fetch_places --bbox 40.50,-75.62,40.93,-75.05
 
 Downloads named roads, numbered routes, landmarks and town boundaries for the area from the Overpass
 API (three requests), works out which town each one is in, ranks roads by size and length, and writes:
@@ -10,6 +10,7 @@ API (three requests), works out which town each one is in, ranks roads by size a
     places-geo.json  road lines, landmark points and town outlines, for the incident map
 
 then downloads house-number ranges from the US Census and writes address-ranges.json (see tiger.py).
+If the transcriber is running, it is then asked to place every call on the map again with the new list.
 
 Rows in an existing places.csv whose source isn't "osm" or "example" are hand-made and are kept.
 """
@@ -28,6 +29,8 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+from .config import MAP_AREA, load_config
+
 log = logging.getLogger(__name__)
 
 # Public Overpass servers, tried in order.
@@ -37,8 +40,9 @@ OVERPASS_MIRRORS = [
     "https://overpass.private.coffee/api/interpreter",
 ]
 CACHE_SECONDS = 24 * 3600
-# Easton (east) to Allentown (west), Pennsylvania: south, west, north, east.
-DEFAULT_BBOX = (40.50, -75.62, 40.78, -75.17)
+# Used when there is no config.toml: the map's own default area (Allentown to Easton and north to
+# Blue Mountain), south, west, north, east.
+DEFAULT_BBOX = MAP_AREA
 USER_AGENT = "sdrtrunk-transcriber/1 (places list for a scanner)"
 
 ROAD_CLASSES = {
@@ -348,7 +352,8 @@ def write(path: Path, rows: list[dict]):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Build places.csv from OpenStreetMap.")
-    parser.add_argument("--bbox", help="south,west,north,east (default: Easton to Allentown, PA)")
+    parser.add_argument("--bbox", help="south,west,north,east (default: [map] area in config.toml)")
+    parser.add_argument("--config", default="config.toml", help="settings file the map's area is read from")
     parser.add_argument("--out", default="places.csv", help="CSV to write (default places.csv)")
     parser.add_argument("--geo", default="places-geo.json", help="map geometry to write")
     parser.add_argument("--url", help="Overpass API address (default: try the public servers in turn)")
@@ -360,7 +365,14 @@ def main(argv=None):
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
-    bbox = tuple(float(v) for v in args.bbox.split(",")) if args.bbox else DEFAULT_BBOX
+    config = None
+    if Path(args.config).exists():
+        try:
+            config = load_config(Path(args.config))
+        except Exception as e:  # a broken config.toml shouldn't stop the street list
+            log.warning("Couldn't read %s (%s); using the default area.", args.config, e)
+    bbox = tuple(float(v) for v in args.bbox.split(",")) if args.bbox else \
+        tuple(config.map.area) if config else DEFAULT_BBOX
     if len(bbox) != 4:
         parser.error("--bbox needs four numbers: south,west,north,east")
 
@@ -397,7 +409,23 @@ def main(argv=None):
     if args.ranges:
         # The street list is done either way; a Census hiccup only leaves the house-number check as it was.
         fetch_ranges(args, geo, bbox)
+    ask_map_rebuild(config)
     return 0
+
+
+def ask_map_rebuild(config) -> bool:
+    """Asks a running transcriber to place every call again, so calls heard before the new street list
+    (e.g. from towns that were outside the old area) land on the map. Nothing happens if it isn't running."""
+    port = config.server.port if config else 3000
+    request = urllib.request.Request(f"http://127.0.0.1:{port}/api/map/rebuild", data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=10):
+            pass
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
+        log.info("The transcriber isn't running; the map uses the new list when it starts.")
+        return False
+    log.info("Asked the transcriber to place every call on the map again with the new list.")
+    return True
 
 
 def fetch_ranges(args, geo: dict, bbox) -> bool:

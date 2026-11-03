@@ -354,3 +354,25 @@ def test_spoken_exits_only_for_exits_in_the_list(tmp_path):
     assert book.normalize("crash at exit seventy five westbound") == "crash at Exit 75 westbound"
     assert book.normalize("disabled at exit fifty one b") == "disabled at Exit 51B"
     assert book.normalize("take the exit two miles up") == "take the exit two miles up"
+
+
+def test_old_map_area_in_config_is_moved_north(tmp_path):
+    from sdrtrunk_transcriber.config import MAP_AREA, load_config
+    old = tmp_path / "config.toml"
+    old.write_text("[map]\narea = [40.50, -75.62, 40.78, -75.17]\n")
+    assert load_config(old).map.area == list(MAP_AREA)
+    own = tmp_path / "own.toml"
+    own.write_text("[map]\narea = [40.4, -75.7, 40.8, -75.1]\n")
+    assert load_config(own).map.area == [40.4, -75.7, 40.8, -75.1]     # a box picked by hand stays
+    assert MAP_AREA[2] > 40.87 and MAP_AREA[3] > -75.10                # Bangor, Pen Argyl, Portland
+
+
+def test_fetch_uses_the_maps_area_and_asks_for_a_rebuild(tmp_path, monkeypatch):
+    (tmp_path / "config.toml").write_text("[map]\narea = [40.5, -75.6, 40.9, -75.1]\n[server]\nport = 3999\n")
+    seen, asked = [], []
+    monkeypatch.setattr(fetch_places, "cached", lambda d, name, query, f: seen.append(query) or {"elements": []})
+    monkeypatch.setattr(fetch_places, "ask_map_rebuild", lambda config: asked.append(config.server.port))
+    monkeypatch.chdir(tmp_path)
+    assert fetch_places.main(["--ranges", ""]) == 0
+    assert all("40.50000,-75.60000,40.90000,-75.10000" in q for q in seen)
+    assert asked == [3999]

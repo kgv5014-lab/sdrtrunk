@@ -995,7 +995,7 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
 
 (async () => {
   const s = await status();
-  const area = (s && s.area) || [40.50, -75.62, 40.78, -75.17];
+  const area = (s && s.area) || [40.50, -75.62, 40.93, -75.05];
   map.fitBounds([[area[0], area[1]], [area[2], area[3]]]);
   L.tileLayer((s && s.tiles_url) || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',

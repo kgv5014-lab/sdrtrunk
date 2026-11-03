@@ -419,6 +419,9 @@ class SummariesConfig:
     enabled: bool = False
     url: str = "http://127.0.0.1:11434"
     model: str = "qwen3.5:9b-q4_K_M"
+    # The context size to ask Ollama for. 0 = whatever the model was made with. Ollama reloads a model
+    # that is asked for a different size, so leave it at 0 when another program shares the same model.
+    num_ctx: int = 0
     # Calls with at least this many words also get their own one-line summary. 0 = incidents only.
     call_min_words: int = 25
     # Wait this long after a call joins an incident before summarizing it, so a burst is read together.

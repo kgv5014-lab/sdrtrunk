@@ -124,7 +124,7 @@ class RecapMaker:
         self.client = None
         if config.summaries.enabled:
             self.client = OllamaClient(config.summaries.url, config.summaries.model, config.summaries.timeout_s,
-                                       config.summaries.keep_alive, session)
+                                       config.summaries.keep_alive, session, config.summaries.num_ctx)
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, name="recaps", daemon=True)

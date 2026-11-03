@@ -139,9 +139,10 @@ def clip_words(text: str, words: int) -> str:
 
 
 class OllamaClient:
-    def __init__(self, url: str, model: str, timeout_s: float, keep_alive: str, session=None):
+    def __init__(self, url: str, model: str, timeout_s: float, keep_alive: str, session=None, num_ctx: int = 0):
         self.url = url.rstrip("/")
         self.model = model
+        self.num_ctx = num_ctx
         self.timeout_s = timeout_s
         # Ollama takes a number of seconds (-1 = keep loaded) or a duration such as "30m".
         try:
@@ -151,6 +152,9 @@ class OllamaClient:
         self.session = session or requests.Session()
 
     def ask(self, prompt: str, schema: dict, system: str = SYSTEM) -> dict:
+        options = {"temperature": 0.2}
+        if self.num_ctx > 0:
+            options["num_ctx"] = self.num_ctx
         response = self.session.post(f"{self.url}/api/chat", timeout=self.timeout_s, json={
             "model": self.model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
@@ -160,7 +164,7 @@ class OllamaClient:
             # Qwen 3.5 thinks out loud before answering unless told not to, which is slow and adds nothing
             # to a short summary. Models that can't think ignore it.
             "think": False,
-            "options": {"temperature": 0.2, "num_ctx": 4096},
+            "options": options,
         })
         if response.status_code == 404 and "not found" in response.text:
             raise NotReady(f"Ollama has no model {self.model} yet (still downloading? start-ollama.bat gets it)")
@@ -177,7 +181,7 @@ class Summarizer:
         self.settings = config.summaries
         self.db = db
         self.client = OllamaClient(self.settings.url, self.settings.model, self.settings.timeout_s,
-                                   self.settings.keep_alive, session)
+                                   self.settings.keep_alive, session, self.settings.num_ctx)
         # (kind, id) -> when it is due (time.monotonic()).
         self._pending: dict[tuple[str, int], float] = {}
         self._busy = 0

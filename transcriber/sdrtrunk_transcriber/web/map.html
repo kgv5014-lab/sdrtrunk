@@ -52,6 +52,7 @@
   .fixed { color: var(--accent); }
   .item { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--other); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; cursor: pointer; }
   .item.hidden-item { opacity: 0.55; }
+  .dismissed-note { font-size: 12px; font-weight: 600; color: var(--warn); flex-basis: 100%; }
   .item .where { font-weight: 600; }
   .muted { color: var(--muted); font-size: 12px; }
   .empty { color: var(--muted); padding: 12px; }
@@ -336,6 +337,8 @@ function popup(incident) {
   });
   if (GUEST) return box;
   const actions = el('div', 'actions');
+  if (incident.dismissed) actions.append(el('div', 'dismissed-note', incident.dismissed +
+    (incident.hidden ? ': taken off the map by itself.' : ': you put it back, so it stays.')));
   const btn = el('button', '', incident.hidden ? 'Put back on the map' : 'Remove from map');
   btn.onclick = async () => {
     await fetch('api/incidents/' + incident.id + (incident.hidden ? '/restore' : ''), { method: incident.hidden ? 'POST' : 'DELETE' });
@@ -518,6 +521,7 @@ function render(incidents) {
     if (isNew(incident)) where.append(el('span', 'new-badge', 'NEW'));
     where.append(incident.label || 'Unknown place');
     item.append(where);
+    if (incident.dismissed) item.append(el('div', 'dismissed-note', incident.dismissed + (incident.hidden ? ' · taken off the map' : '')));
     const meta = el('div', 'muted', time(incident.last_time) + ' · ');
     if ((incident.services || []).length > 1) meta.append(services(incident));
     if (incident.category || incident.nature) meta.append(describe(incident), ' · ');

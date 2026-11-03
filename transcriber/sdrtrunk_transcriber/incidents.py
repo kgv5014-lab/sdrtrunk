@@ -96,6 +96,45 @@ ALL_CLEAR = re.compile(r"\ball (the |of the )?(units|apparatus)\b.{0,40}\b(avail
                        r"terminated|\bclose (it|this) out\b|\bterminating command", re.IGNORECASE)
 
 
+# Radio traffic saying the call was nothing: a 911 call dialed by accident, or no emergency found there.
+# Whisper writes 911 several ways ("9-1-1", "nine one one") and "misdial" as one or two words.
+_911 = r"(?:9-?1-?1|nine[- ]one[- ]one)"
+ACCIDENTAL_DIAL = re.compile(
+    r"(?<!not )(?<!n't )(?<!not an )(?<!n't an )\baccidental(?:ly)?\b[\s,]*(?:an? )?"
+    r"(?:dial(?:ed|ing|s)?|call(?:ed|ing)?|" + _911 + r"(?: call| hang[- ]?up)?|hang[- ]?up)\b|"
+    r"\b(?:pocket|butt|mis)[- ]?dial(?:ed|ing|s)?\b|\bdialed (?:it |" + _911 + r" )?by (?:accident|mistake)\b|"
+    r"\b(?:kids?|child|children|juveniles?|toddler)\b.{0,15}\bplaying (?:with|on) (?:the |a |her |his |their )?phone\b",
+    re.IGNORECASE)
+ACCIDENTAL_ALARM = re.compile(r"(?<!not )\baccidental(?:ly)? (?:alarm |activation|set off|tripped)", re.IGNORECASE)
+NO_EMERGENCY = re.compile(
+    r"\bnegative (?:on (?:the |an |any )?)?emergenc(?:y|ies)\b|"
+    r"\bno (?:emergency|emergencies)\b(?! (?:lights|mode|response|traffic|run|status|operation))|"
+    r"\bunfounded\b|\bnothing (?:found|showing) (?:on|at) (?:scene|location)\b",
+    re.IGNORECASE)
+# "Respond no emergency" is how to drive there, not what was found.
+HOW_TO_GO = re.compile(r"\b(?:respond|responding|proceed|proceeding|go|going|run|running|continue|continuing|"
+                       r"downgrade|downgraded|en route|enroute|come in)\W+(?:\w+\W+)?$", re.IGNORECASE)
+
+
+def no_emergency(text: str) -> bool:
+    return any(not HOW_TO_GO.search(text[max(0, m.start() - 30):m.start()]) for m in NO_EMERGENCY.finditer(text))
+
+
+def dismissal(calls: list[dict]) -> str | None:
+    """Why an incident is nothing, from what was said about it: "Accidental dial", "Accidental alarm",
+    "No emergency" or None. Units say so once they get there ("accidental dial, we'll be clearing"),
+    or dispatch does after calling back ("caller states it was a pocket dial")."""
+    for c in reversed(calls):
+        text = c.get("transcript") or ""
+        if ACCIDENTAL_DIAL.search(text):
+            return "Accidental dial"
+        if ACCIDENTAL_ALARM.search(text):
+            return "Accidental alarm"
+        if no_emergency(text):
+            return "No emergency"
+    return None
+
+
 UNIT = re.compile(r"\b(engine|medic|ems|e-m-s|a?ms|pms|mb\.?|ladder|truck|tanker|rescue|squad|ambulance|chief|"
                   r"brush|utility|qrs|tower|battalion|deputy|car|unit)[\s-]*#?\s*(\d{1,4}(?:[- ]\d{1,2}(?![\d-]))?)\b", re.IGNORECASE)
 # A fire unit, as opposed to an EMS one (EMS_UNIT) on a shared Fire / EMS talkgroup.
@@ -418,6 +457,9 @@ class MapWorker:
         """Places every call again, e.g. after the street list changed. Fixes made by hand are kept."""
         with self.lock:
             self.db.clear_map()
+            # Units and channels heard before belong to the old incidents; the calls are heard again in order.
+            self._claims.clear()
+            self._released.clear()
         self._backlog_loaded = False
         self._load_backlog()
 
@@ -640,8 +682,20 @@ class MapWorker:
                                                         until=calls[0]["call_time"] + 60, limit=1):
             category = "fire"      # a tone-out just before, and nothing else to go on
         channel, channel_time = channel_of(calls, self._followed)
-        self.db.update_incident(incident_id, category=category, nature=nature, channel=channel,
-                                channel_time=channel_time)
+        changes = {"category": category, "nature": nature, "channel": channel, "channel_time": channel_time}
+        # An accidental dial or no emergency found comes off the map by itself, once. If it is put back
+        # by hand it stays (dismissed is kept, so this doesn't hide it again).
+        reason = dismissal(calls)
+        incident = self.db.get_incident(incident_id)
+        if incident is not None and reason != incident.get("dismissed"):
+            if reason and not incident.get("dismissed"):
+                changes.update(dismissed=reason, hidden=1)
+                log.info("Incident map: incident %d taken off the map (%s)", incident_id, reason.lower())
+            elif reason:
+                changes["dismissed"] = reason       # the wording changed; hidden stays as the user left it
+            else:
+                changes.update(dismissed=None, hidden=0)    # that call was moved out by hand
+        self.db.update_incident(incident_id, **changes)
 
     # ---- fixes by hand from the map page. Each is remembered in map_edits so a rebuild keeps it.
 

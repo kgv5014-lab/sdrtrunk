@@ -5,10 +5,13 @@ import io
 import json
 import time
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.history import HistoryKeeper, to_csv
+from sdrtrunk_transcriber.incidents import dismissal
 from sdrtrunk_transcriber.server import create_app
 
 from test_grouping import call, make_worker
@@ -108,3 +111,61 @@ def test_history_page_and_api(tmp_path):
     assert len(csv_mva.text.strip().split("\r\n")) == 2 and "MVA" in csv_mva.text
     assert page.status_code == 200 and "leaflet-heat" in page.text
     assert missing.status_code == 404
+
+
+def test_accidental_dial_comes_off_the_map_and_stays_in_history_marked(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    fire, ems = two_incidents(worker)
+    incident = worker.db.incident_of_call(ems)
+    # The unit names no place; it joins by unit and says it was nothing.
+    call(worker, "Medic 49 to county, that was an accidental dial, we'll be clearing.", 420)
+    row = worker.db.get_incident(incident)
+    assert row["hidden"] == 1 and row["dismissed"] == "Accidental dial"
+    assert [i["id"] for i in worker.db.incidents()] == [worker.db.incident_of_call(fire)]
+
+    keeper = HistoryKeeper(worker.db)
+    keeper.sync()
+    assert [r["first_call_id"] for r in worker.db.history()] == [fire]
+    kept = {r["first_call_id"]: r for r in worker.db.history(hidden=True)}
+    assert kept[ems]["dismissed"] == "Accidental dial" and kept[ems]["hidden"] == 1
+    lines = list(csv.DictReader(io.StringIO(to_csv(worker.db.history(hidden=True)))))
+    assert [l["removed_from_map"] for l in lines] == ["", "Accidental dial"]
+
+    # Put back by hand, it stays back even when more calls come in.
+    worker.db.update_incident(incident, hidden=0)
+    call(worker, "Medic 49, negative emergency, back in service.", 480)
+    assert worker.db.get_incident(incident)["hidden"] == 0
+
+    # A rebuild takes it off again by itself (the radio traffic still says so).
+    worker.db.clear_map()
+    worker._claims.clear()
+    worker._released.clear()        # as rebuild() does
+    for call_id in range(fire, ems + 3):
+        worker.process(call_id)
+    assert worker.db.get_incident(worker.db.incident_of_call(ems))["hidden"] == 1
+
+
+def test_no_emergency_found(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    fire, _ = two_incidents(worker)
+    call(worker, "Engine 41, North 3rd and Northampton, negative emergency, odor of burnt food.", 200)
+    assert worker.db.get_incident(worker.db.incident_of_call(fire))["dismissed"] == "No emergency"
+
+
+@pytest.mark.parametrize("text, reason", [
+    ("Engine 41 to county, accidental dial, we are clearing", "Accidental dial"),
+    ("Caller states it was a pocket dial", "Accidental dial"),
+    ("she accidentally called 9-1-1", "Accidental dial"),
+    ("County, child was playing with the phone", "Accidental dial"),
+    ("Alarm company advises accidental activation", "Accidental alarm"),
+    ("Medic 49, negative emergency, back in service", "No emergency"),
+    ("PD on location, no emergency found", "No emergency"),
+    ("Unfounded, clearing", "No emergency"),
+    ("Units respond, 911 hang-up, 12 Main Street", None),     # the dispatch itself is not the answer
+    ("Station 4 respond no emergency for the alarm", None),   # how to drive there
+    ("This was not accidental, she needs help", None),
+    ("MVA accident call Route 22", None),
+    ("no emergency traffic on this channel", None),
+])
+def test_dismissal_words(text, reason):
+    assert dismissal([{"transcript": text}]) == reason

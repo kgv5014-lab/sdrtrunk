@@ -631,10 +631,10 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             "oldest": oldest,
             # Short rows: years of incidents still load quickly.
             "fields": ["id", "time", "end", "lat", "lon", "type", "nature", "label", "services", "calls", "hidden",
-                       "incident_id"],
+                       "incident_id", "dismissed"],
             "rows": [[r["first_call_id"], r["first_time"], r["last_time"], round(r["lat"], 5), round(r["lon"], 5),
                       r["type"], r["nature"], r["label"], r["services"] or "", r["calls"], r["hidden"],
-                      r["incident_id"]] for r in rows],
+                      r["incident_id"], r.get("dismissed")] for r in rows],
         }
 
     @app.get("/api/history.csv")

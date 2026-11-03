@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS incidents (
     nature TEXT,                         -- "Structure fire", from words in the calls
     hidden INTEGER NOT NULL DEFAULT 0,   -- removed from the map by the user
     channel TEXT,                        -- the channel it was moved to, "Tac 2"
-    channel_time INTEGER                 -- when that was heard
+    channel_time INTEGER,                -- when that was heard
+    dismissed TEXT                       -- "Accidental dial" or "No emergency": taken off the map by itself
 );
 CREATE INDEX IF NOT EXISTS incidents_time ON incidents(last_time);
 
@@ -85,7 +86,8 @@ CREATE TABLE IF NOT EXISTS incident_history (
     services TEXT,                       -- "police,fire,ems"
     calls INTEGER NOT NULL,
     call_ids TEXT,                       -- "12,15,19"
-    hidden INTEGER NOT NULL DEFAULT 0,   -- removed from the map by hand
+    hidden INTEGER NOT NULL DEFAULT 0,   -- removed from the map, by hand or as nothing (dismissed)
+    dismissed TEXT,                      -- "Accidental dial" or "No emergency"
     updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS incident_history_time ON incident_history(first_time);
@@ -354,6 +356,12 @@ class Database:
         if "channel" not in incident_columns:
             self._conn.execute("ALTER TABLE incidents ADD COLUMN channel TEXT")
             self._conn.execute("ALTER TABLE incidents ADD COLUMN channel_time INTEGER")
+        if "dismissed" not in incident_columns:
+            # Accidental dials and no-emergency calls come off the map by themselves (incidents.dismissal).
+            self._conn.execute("ALTER TABLE incidents ADD COLUMN dismissed TEXT")
+        history_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incident_history)")}
+        if "dismissed" not in history_columns:
+            self._conn.execute("ALTER TABLE incident_history ADD COLUMN dismissed TEXT")
         # Crashes were called "Vehicle crash" before they became MVA.
         self._conn.execute("UPDATE incidents SET nature = 'MVA' WHERE nature = 'Vehicle crash'")
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
@@ -781,7 +789,7 @@ class Database:
         return {row["first_call_id"]: dict(row) for row in rows}
 
     HISTORY_FIELDS = ("first_call_id", "incident_id", "first_time", "last_time", "lat", "lon", "label", "type",
-                      "category", "nature", "services", "calls", "call_ids", "hidden", "updated_at")
+                      "category", "nature", "services", "calls", "call_ids", "hidden", "dismissed", "updated_at")
 
     def save_history(self, rows: list[dict], gone: list[int], detached: list[int]):
         """Writes changed history rows, deletes ones now part of another incident (or removed by hand),

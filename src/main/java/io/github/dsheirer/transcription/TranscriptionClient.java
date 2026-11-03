@@ -322,10 +322,33 @@ public class TranscriptionClient
                 number(incident, "last_time", 0L), decimal(incident, "lat"), decimal(incident, "lon"),
                 string(incident, "label"), string(incident, "category"), string(incident, "nature"),
                 string(incident, "type"), calls, pages, string(incident, "summary"), summaryTags,
-                string(incident, "summary_status"), services, helicopters, updates));
+                statusOrOutcome(incident), services, helicopters, updates));
         }
 
         return incidents;
+    }
+
+    /**
+     * How the incident ended (transported, cancelled, ...) when the AI model has said so, else its latest status.
+     */
+    private static String statusOrOutcome(JsonObject incident)
+    {
+        String outcome = string(incident, "outcome");
+
+        if(outcome != null)
+        {
+            switch(outcome)
+            {
+                case "transported": return "Transported";
+                case "refused": return "Refused / no transport";
+                case "canceled": return "Cancelled";
+                case "under control": return "Fire out / under control";
+                case "cleared": return "Units cleared";
+                default: break;
+            }
+        }
+
+        return string(incident, "summary_status");
     }
 
     private static JsonArray array(String json)

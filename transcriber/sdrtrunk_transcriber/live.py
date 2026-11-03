@@ -26,7 +26,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from . import audio
+from . import audio, webapp
 
 log = logging.getLogger(__name__)
 
@@ -230,7 +230,9 @@ def add_routes(app: FastAPI, main_app: FastAPI, data_path: Path, public: bool):
     @app.get("/listen", response_class=HTMLResponse)
     def listen_page(request: Request):
         check(request)
-        return (WEB_DIR / "listen.html").read_text(encoding="utf-8")
+        text = (WEB_DIR / "listen.html").read_text(encoding="utf-8")
+        # The public listen link stays plain; on the PC, Tailscale and the friends' link it gets the app look.
+        return text if public else webapp.dress(text)
 
     @app.get("/listen/talkgroups")
     def listen_talkgroups(request: Request):

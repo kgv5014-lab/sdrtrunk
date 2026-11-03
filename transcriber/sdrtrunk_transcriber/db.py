@@ -88,6 +88,7 @@ CREATE TABLE IF NOT EXISTS incident_history (
     call_ids TEXT,                       -- "12,15,19"
     hidden INTEGER NOT NULL DEFAULT 0,   -- removed from the map, by hand or as nothing (dismissed)
     dismissed TEXT,                      -- "Accidental dial" or "No emergency"
+    outcome TEXT,                        -- how it ended (summaries.OUTCOMES), kept through map rebuilds
     updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS incident_history_time ON incident_history(first_time);
@@ -143,6 +144,7 @@ CREATE TABLE IF NOT EXISTS summaries (
     made_at INTEGER NOT NULL,
     ms INTEGER,                          -- how long the model took
     last_call_id INTEGER,                -- incidents: newest call it read, so later calls count as new
+    outcome TEXT,                        -- incidents: how it ended, from summaries.OUTCOMES
     PRIMARY KEY (kind, ref_id)
 );
 
@@ -348,6 +350,8 @@ class Database:
         summary_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(summaries)")}
         if "last_call_id" not in summary_columns:
             self._conn.execute("ALTER TABLE summaries ADD COLUMN last_call_id INTEGER")
+        if "outcome" not in summary_columns:
+            self._conn.execute("ALTER TABLE summaries ADD COLUMN outcome TEXT")
         if "air" not in columns:
             # Aviation channels (aviation.py): aviation or medevac, else NULL for a county call; and the
             # aircraft the call was matched to on ADS-B, as JSON.
@@ -364,6 +368,8 @@ class Database:
         history_columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(incident_history)")}
         if "dismissed" not in history_columns:
             self._conn.execute("ALTER TABLE incident_history ADD COLUMN dismissed TEXT")
+        if "outcome" not in history_columns:
+            self._conn.execute("ALTER TABLE incident_history ADD COLUMN outcome TEXT")
         # Crashes were called "Vehicle crash" before they became MVA.
         self._conn.execute("UPDATE incidents SET nature = 'MVA' WHERE nature = 'Vehicle crash'")
         version = self._conn.execute("PRAGMA user_version").fetchone()[0]
@@ -793,7 +799,8 @@ class Database:
         return {row["first_call_id"]: dict(row) for row in rows}
 
     HISTORY_FIELDS = ("first_call_id", "incident_id", "first_time", "last_time", "lat", "lon", "label", "type",
-                      "category", "nature", "services", "calls", "call_ids", "hidden", "dismissed", "updated_at")
+                      "category", "nature", "services", "calls", "call_ids", "hidden", "dismissed", "outcome",
+                      "updated_at")
 
     def save_history(self, rows: list[dict], gone: list[int], detached: list[int]):
         """Writes changed history rows, deletes ones now part of another incident (or removed by hand),
@@ -872,7 +879,7 @@ class Database:
     # ---- summaries
 
     SUMMARY_FIELDS = ("kind", "ref_id", "basis", "summary", "tags", "status", "model", "made_at", "ms",
-                      "last_call_id")
+                      "last_call_id", "outcome")
 
     def store_summary(self, summary: dict):
         with self._lock:
@@ -943,7 +950,7 @@ class Database:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT i.id FROM incidents i LEFT JOIN summaries s ON s.kind = 'incident' AND s.ref_id = i.id "
-                "WHERE i.last_time >= ? AND (s.ref_id IS NULL OR s.made_at < i.last_time) "
+                "WHERE i.last_time >= ? AND (s.ref_id IS NULL OR s.made_at < i.last_time OR s.outcome IS NULL) "
                 "ORDER BY i.last_time", (since,)).fetchall()
         return [row["id"] for row in rows]
 

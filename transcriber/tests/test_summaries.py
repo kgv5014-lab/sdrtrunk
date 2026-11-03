@@ -334,3 +334,32 @@ def test_a_context_size_is_sent_only_when_set():
     assert "num_ctx" not in session.body["options"]
     summaries.OllamaClient("http://x", "qwen-re", 5, "-1", session, num_ctx=8192).ask("hi", {})
     assert session.body["options"]["num_ctx"] == 8192
+
+
+def test_incident_outcome_is_asked_and_shown(tmp_path, ollama):
+    config = make_config(tmp_path)
+    db = Database(tmp_path / "calls.db")
+    t = int(time.time())
+    incident_id = db.create_incident({"first_time": t, "last_time": t, "lat": 40.69, "lon": -75.21,
+                                      "label": "Main Street", "category": "ems", "nature": "Fall"})
+    call_id = db.insert_call({"call_time": t, "received_at": t, "talkgroup": "1", "talkgroup_label": "EMS",
+                              "audio_path": "x.mp3"})
+    db.update_call(call_id, status="done", transcript="Medic 2081 transporting BLS to St. Luke's.")
+    db.add_call_place({"call_id": call_id, "incident_id": incident_id, "kind": "address", "precision": "address"})
+    # A summary from before outcomes were asked for is done again, once.
+    db.store_summary({"kind": "incident", "ref_id": incident_id, "basis": summaries.incident_basis(
+        db.incident_calls_for_summary(incident_id)), "summary": "Old.", "tags": "", "status": "active",
+        "made_at": t, "last_call_id": call_id})
+    assert incident_id in db.incidents_needing_summary(t - 10)
+    ollama.answers = [{"summary": "Fall, patient transported.", "tags": ["transport"], "status": "cleared",
+                       "outcome": "transported"}]
+    summarizer = Summarizer(config, db)
+    summarizer.summarize_incident(incident_id)
+    summarizer.summarize_incident(incident_id)
+    assert len(ollama.prompts) == 1 and '"outcome"' in ollama.prompts[0]
+    assert "outcome" in ollama.requests[0][1]["format"]["required"]
+    assert db.get_summary("incident", incident_id)["outcome"] == "transported"
+    assert incident_id not in db.incidents_needing_summary(t - 10)
+    item = {"id": incident_id}
+    summaries.attach(db.summaries("incident", [incident_id]), item)
+    assert item["outcome"] == "transported"

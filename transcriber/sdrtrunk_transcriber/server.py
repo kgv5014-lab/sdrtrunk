@@ -34,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from starlette.datastructures import UploadFile
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import audio, incident_audio, live, share
+from . import audio, incident_audio, live, share, webapp
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -54,7 +54,7 @@ from .history import TYPES as HISTORY_TYPES, HistoryKeeper, to_csv as history_cs
 from .zones import ZoneWatch, read_zones
 from .speakers import SpeakerBook
 from .recaps import RecapMaker, to_api as recap_to_api
-from .summaries import Summarizer, attach as attach_summary, attach_updates, incident_basis
+from .summaries import OUTCOMES, Summarizer, attach as attach_summary, attach_updates, incident_basis
 from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
 from .scan_focus import toned_out
@@ -463,9 +463,21 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         """Smart Fire Scan: the departments SDRTrunk's Fire Scan stays on, because they were toned out."""
         return toned_out(request.app.state.db, config.channels)
 
+    # ---- the one app with tabs, its dark look and home-screen icon (webapp.py)
+
+    @app.get("/app", response_class=HTMLResponse)
+    def app_page():
+        return webapp.page("app.html")
+
+    for asset_name in webapp.ASSETS:
+        def serve_asset(name: str = asset_name):
+            body, media = webapp.asset(name)
+            return Response(body, media_type=media, headers={"Cache-Control": "no-cache"})
+        app.add_api_route("/" + asset_name, serve_asset, methods=["GET"], include_in_schema=False)
+
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return (WEB_DIR / "index.html").read_text(encoding="utf-8")
+        return webapp.page("index.html")
 
     @app.get("/api/calls")
     def list_calls(request: Request, q: str = "", talkgroup: str = "", source: str = "",
@@ -493,7 +505,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/aviation", response_class=HTMLResponse)
     def aviation_page():
-        return (WEB_DIR / "aviation.html").read_text(encoding="utf-8")
+        return webapp.page("aviation.html")
 
     @app.get("/api/aviation/calls")
     def list_aviation_calls(request: Request, q: str = "", talkgroup: str = "", before_id: int | None = None,
@@ -595,7 +607,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             key = live.read_key(data_path)
             base = config.listen.public_url.rstrip("/")
             # The friends' map link (share.py), once setup-share-link.bat has set a password.
-            share_path = f"/g/{share.read_path(data_path)}/map" if share.is_on(data_path) else None
+            share_path = f"/g/{share.read_path(data_path)}/app" if share.is_on(data_path) else None
             return {"key": key, "port": config.listen.public_port,
                     "url": f"{base}/listen?key={key}" if base and config.listen.public_port else None,
                     "share_path": share_path,
@@ -609,16 +621,17 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/map", response_class=HTMLResponse)
     def map_page():
-        return (WEB_DIR / "map.html").read_text(encoding="utf-8")
+        return webapp.page("map.html")
 
     # ---- incident history: heat map page and CSV download (history.py)
 
     @app.get("/history", response_class=HTMLResponse)
     def history_page():
-        return (WEB_DIR / "history.html").read_text(encoding="utf-8")
+        return webapp.page("history.html")
 
     def _history_rows(request: Request, since: int | None, until: int | None, hidden: bool,
-                      types: str | None = None, nature: str | None = None) -> list[dict]:
+                      types: str | None = None, nature: str | None = None,
+                      outcome: str | None = None) -> list[dict]:
         keeper = request.app.state.history
         if keeper:
             try:
@@ -631,6 +644,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             rows = [r for r in rows if r["type"] in wanted]
         if nature:
             rows = [r for r in rows if (r["nature"] or "") == nature]
+        if outcome:
+            rows = [r for r in rows if (r.get("outcome") or "unknown") == outcome]
         return rows
 
     @app.get("/api/history")
@@ -641,18 +656,20 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         return {
             "types": HISTORY_TYPES,
             "oldest": oldest,
+            "outcomes": OUTCOMES,
             # Short rows: years of incidents still load quickly.
             "fields": ["id", "time", "end", "lat", "lon", "type", "nature", "label", "services", "calls", "hidden",
-                       "incident_id", "dismissed"],
+                       "incident_id", "dismissed", "outcome"],
             "rows": [[r["first_call_id"], r["first_time"], r["last_time"], round(r["lat"], 5), round(r["lon"], 5),
                       r["type"], r["nature"], r["label"], r["services"] or "", r["calls"], r["hidden"],
-                      r["incident_id"], r.get("dismissed")] for r in rows],
+                      r["incident_id"], r.get("dismissed"), r.get("outcome")] for r in rows],
         }
 
     @app.get("/api/history.csv")
     def incident_history_csv(request: Request, since: int | None = None, until: int | None = None,
-                             hidden: bool = False, types: str | None = None, nature: str | None = None):
-        rows = _history_rows(request, since, until, hidden, types, nature)
+                             hidden: bool = False, types: str | None = None, nature: str | None = None,
+                             outcome: str | None = None):
+        rows = _history_rows(request, since, until, hidden, types, nature, outcome)
         name = f"incident-history-{datetime.now():%Y-%m-%d}.csv"
         return Response(history_csv(rows), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})
@@ -671,7 +688,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/checker", response_class=HTMLResponse)
     def checker_page():
-        return (WEB_DIR / "checker.html").read_text(encoding="utf-8")
+        return webapp.page("checker.html")
 
     @app.get("/api/checker")
     def checker_calls(request: Request):
@@ -721,7 +738,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     @app.get("/units", response_class=HTMLResponse)
     def units_page():
-        return (WEB_DIR / "units.html").read_text(encoding="utf-8")
+        return webapp.page("units.html")
 
     @app.get("/api/units")
     def list_units(request: Request, hours: float = 12):

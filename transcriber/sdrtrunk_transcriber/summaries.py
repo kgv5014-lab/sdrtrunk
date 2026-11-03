@@ -33,6 +33,15 @@ TAGS = (
     "under control", "cleared",
 )
 STATUSES = ("active", "under control", "cleared", "canceled", "unknown")
+# How an incident ended, for the map and heat map filters. Keys are stored; values are what Ken sees.
+OUTCOMES = {
+    "transported": "Transported",
+    "refused": "Refused / no transport",
+    "canceled": "Cancelled",
+    "under control": "Fire out / under control",
+    "cleared": "Units cleared",
+    "unknown": "Still going / unknown",
+}
 
 INCIDENT_SCHEMA = {
     "type": "object",
@@ -40,14 +49,15 @@ INCIDENT_SCHEMA = {
         "summary": {"type": "string"},
         "tags": {"type": "array", "items": {"type": "string", "enum": list(TAGS)}},
         "status": {"type": "string", "enum": list(STATUSES)},
+        "outcome": {"type": "string", "enum": list(OUTCOMES)},
     },
-    "required": ["summary", "tags", "status"],
+    "required": ["summary", "tags", "status", "outcome"],
 }
 # A later pass also says what changed, for the incident's update notes.
 INCIDENT_UPDATE_SCHEMA = {
     "type": "object",
     "properties": {**INCIDENT_SCHEMA["properties"], "update": {"type": "string"}},
-    "required": ["summary", "tags", "status", "update"],
+    "required": ["summary", "tags", "status", "outcome", "update"],
 }
 CALL_SCHEMA = {
     "type": "object",
@@ -66,11 +76,20 @@ SYSTEM = (
     "Answer in JSON."
 )
 
+OUTCOME_ASK = (
+    "Set \"outcome\" to how the incident ended: transported (a patient was taken to a hospital or flown "
+    "out), refused (the patient refused or there was no transport), canceled (canceled, recalled or nothing "
+    "found before units did anything), under control (fire out, knocked down or under control), cleared "
+    "(units cleared or went back in service with none of those), or unknown (still going, or the calls "
+    "don't say)."
+)
+
 INCIDENT_PROMPT = (
     "These radio calls are about one incident{place}{what}.\n{pages}\n{calls}\n\n"
     "Write \"summary\": one or two short sentences, at most {words} words, saying what happened, where, "
     "which units responded and the latest status. Pick \"tags\" that the calls clearly support (none is "
-    "fine). Set \"status\" from the latest calls: active, under control, cleared, canceled, or unknown."
+    "fine). Set \"status\" from the latest calls: active, under control, cleared, canceled, or unknown.\n"
+    + OUTCOME_ASK
 )
 
 INCIDENT_UPDATE_PROMPT = (
@@ -80,6 +99,7 @@ INCIDENT_UPDATE_PROMPT = (
     "Write \"summary\": one or two short sentences, at most {words} words, saying what happened, where, "
     "which units responded and the latest status. Pick \"tags\" that the calls clearly support (none is "
     "fine). Set \"status\" from the latest calls: active, under control, cleared, canceled, or unknown.\n"
+    + OUTCOME_ASK + "\n"
     "Write \"update\": if the NEW calls change the incident in an important way, one short line of at most "
     "12 words saying what changed, for example \"Second alarm called.\", \"Fire knocked down.\", "
     "\"Patient transported to St. Luke's Anderson.\", \"Entrapment, extrication under way.\", "
@@ -322,7 +342,7 @@ class Summarizer:
             return
         basis = incident_basis(calls)
         stored = self.db.get_summary("incident", incident_id)
-        if stored and stored["basis"] == basis:
+        if stored and stored["basis"] == basis and stored.get("outcome"):
             return
         # Calls after the last summary are new; the first summary has nothing to compare with.
         last_seen = stored.get("last_call_id") if stored and stored["summary"] else None
@@ -359,10 +379,11 @@ class Summarizer:
         answer = self.client.ask(prompt, schema)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         status = answer.get("status") if answer.get("status") in STATUSES else "unknown"
+        outcome = answer.get("outcome") if answer.get("outcome") in OUTCOMES else "unknown"
         self.db.store_summary({
             "kind": "incident", "ref_id": incident_id, "basis": basis,
             "summary": clip_words(answer.get("summary", ""), self.settings.incident_words),
-            "tags": ",".join(clean_tags(answer.get("tags"))), "status": status,
+            "tags": ",".join(clean_tags(answer.get("tags"))), "status": status, "outcome": outcome,
             "model": self.settings.model, "made_at": int(time.time()), "ms": elapsed_ms,
             "last_call_id": max(c["id"] for c in calls),
         })
@@ -459,6 +480,8 @@ def attach(summaries: dict, item: dict, basis: str | None = None):
     item["summary"] = stored["summary"]
     item["summary_tags"] = [t for t in (stored["tags"] or "").split(",") if t]
     item["summary_status"] = stored["status"]
+    if stored.get("outcome"):
+        item["outcome"] = stored["outcome"]
     item["summary_current"] = basis is None or stored["basis"] == basis
 
 

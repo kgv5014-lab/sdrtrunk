@@ -54,7 +54,7 @@ from .history import TYPES as HISTORY_TYPES, HistoryKeeper, to_csv as history_cs
 from .zones import ZoneWatch, read_zones
 from .speakers import SpeakerBook
 from .recaps import RecapMaker, to_api as recap_to_api
-from .summaries import Summarizer, attach as attach_summary, attach_updates, incident_basis
+from .summaries import OUTCOMES, Summarizer, attach as attach_summary, attach_updates, incident_basis
 from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
 from .tones import ToneFinder
@@ -612,7 +612,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         return (WEB_DIR / "history.html").read_text(encoding="utf-8")
 
     def _history_rows(request: Request, since: int | None, until: int | None, hidden: bool,
-                      types: str | None = None, nature: str | None = None) -> list[dict]:
+                      types: str | None = None, nature: str | None = None,
+                      outcome: str | None = None) -> list[dict]:
         keeper = request.app.state.history
         if keeper:
             try:
@@ -625,6 +626,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             rows = [r for r in rows if r["type"] in wanted]
         if nature:
             rows = [r for r in rows if (r["nature"] or "") == nature]
+        if outcome:
+            rows = [r for r in rows if (r.get("outcome") or "unknown") == outcome]
         return rows
 
     @app.get("/api/history")
@@ -635,18 +638,20 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         return {
             "types": HISTORY_TYPES,
             "oldest": oldest,
+            "outcomes": OUTCOMES,
             # Short rows: years of incidents still load quickly.
             "fields": ["id", "time", "end", "lat", "lon", "type", "nature", "label", "services", "calls", "hidden",
-                       "incident_id", "dismissed"],
+                       "incident_id", "dismissed", "outcome"],
             "rows": [[r["first_call_id"], r["first_time"], r["last_time"], round(r["lat"], 5), round(r["lon"], 5),
                       r["type"], r["nature"], r["label"], r["services"] or "", r["calls"], r["hidden"],
-                      r["incident_id"], r.get("dismissed")] for r in rows],
+                      r["incident_id"], r.get("dismissed"), r.get("outcome")] for r in rows],
         }
 
     @app.get("/api/history.csv")
     def incident_history_csv(request: Request, since: int | None = None, until: int | None = None,
-                             hidden: bool = False, types: str | None = None, nature: str | None = None):
-        rows = _history_rows(request, since, until, hidden, types, nature)
+                             hidden: bool = False, types: str | None = None, nature: str | None = None,
+                             outcome: str | None = None):
+        rows = _history_rows(request, since, until, hidden, types, nature, outcome)
         name = f"incident-history-{datetime.now():%Y-%m-%d}.csv"
         return Response(history_csv(rows), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": f'attachment; filename="{name}"'})

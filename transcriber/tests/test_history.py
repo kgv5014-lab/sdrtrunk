@@ -169,3 +169,25 @@ def test_no_emergency_found(tmp_path, gaz):
 ])
 def test_dismissal_words(text, reason):
     assert dismissal([{"transcript": text}]) == reason
+
+
+def test_outcome_is_kept_in_history_and_csv(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    fire, ems = two_incidents(worker)
+    ems_incident = worker.db.incident_of_call(ems)
+    worker.db.store_summary({"kind": "incident", "ref_id": ems_incident, "basis": "x", "summary": "Fall.",
+                             "tags": "", "status": "cleared", "outcome": "transported", "made_at": int(time.time())})
+    keeper = HistoryKeeper(worker.db)
+    keeper.sync()
+    rows = {r["first_call_id"]: r for r in worker.db.history()}
+    assert rows[ems]["outcome"] == "transported" and rows[fire]["outcome"] is None
+    lines = {int(r["first_call_id"]): r for r in csv.DictReader(io.StringIO(to_csv(worker.db.history())))}
+    assert lines[ems]["outcome"] == "Transported" and lines[fire]["outcome"] == ""
+
+    # A rebuild clears the summaries; the saved outcome stays.
+    worker.db.clear_map()
+    keeper.sync()
+    for call_id in range(fire, ems + 1):
+        worker.process(call_id)
+    keeper.sync()
+    assert {r["first_call_id"]: r["outcome"] for r in worker.db.history()}[ems] == "transported"

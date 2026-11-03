@@ -1,0 +1,112 @@
+"""Plays the live calls on this PC's speakers when SDRTrunk runs with no window.
+
+    python -m sdrtrunk_transcriber.pc_speakers --config config.toml        (start-speakers.bat)
+
+Started before Windows sign-in (boot-on.bat), SDRTrunk can't reach the speakers: Windows only gives
+sound to someone signed in. So this small player starts when you sign in and plays the same live
+stream as the phone's Listen page, from this PC's transcriber. While edit-mode.bat has the normal
+SDRTrunk window open, that window plays the calls itself, so this one goes quiet.
+"""
+
+import argparse
+import logging
+import time
+from pathlib import Path
+from urllib.parse import urlencode
+
+log = logging.getLogger("pc_speakers")
+
+HOME = Path(__file__).resolve().parent.parent
+EDIT_FLAG = HOME / "edit-mode.flag"
+# Sound cards all take 48 kHz; the stream is resampled to it.
+RATE = 48000
+RETRY_S = 15
+# Name on the Listen page's "who is listening" list, and in the transcriber log.
+LISTENER_ID = "pc-speakers"
+
+
+def stream_url(config) -> str:
+    query = {"id": LISTENER_ID}
+    talkgroups = [str(t).strip() for t in config.pc_speakers.talkgroups if str(t).strip()]
+    if talkgroups:
+        query["tg"] = ",".join(talkgroups)
+    host = config.server.host if config.server.host not in ("0.0.0.0", "::", "") else "127.0.0.1"
+    return f"http://{host}:{config.server.port}/listen/stream.mp3?{urlencode(query)}"
+
+
+def find_device(sd, name: str):
+    """The output device whose name contains `name`, or None for the Windows default."""
+    if not name:
+        return None
+    for index, device in enumerate(sd.query_devices()):
+        if device.get("max_output_channels", 0) > 0 and name.lower() in device["name"].lower():
+            return index
+    log.warning('No sound output named like "%s"; using the Windows default', name)
+    return None
+
+
+def play(url: str, device, editing=EDIT_FLAG.exists):
+    """Plays the stream until it breaks. Returns normally only if the stream ends."""
+    import av
+    import sounddevice as sd
+
+    container = av.open(url, timeout=(15, 60))
+    try:
+        resampler = av.AudioResampler(format="s16", layout="mono", rate=RATE)
+        with sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16", device=device) as out:
+            log.info("Playing the live calls on the PC speakers")
+            quiet = False
+            for frame in container.decode(audio=0):
+                for piece in resampler.resample(frame):
+                    data = piece.to_ndarray().tobytes()
+                    if editing():
+                        if not quiet:
+                            log.info("Edit mode: the SDRTrunk window plays the calls, so this goes quiet")
+                        quiet = True
+                        data = bytes(len(data))
+                    elif quiet:
+                        log.info("Edit mode is over; playing again")
+                        quiet = False
+                    out.write(data)
+    finally:
+        container.close()
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="sdrtrunk_transcriber.pc_speakers")
+    parser.add_argument("--config", type=Path, default=Path("config.toml"))
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    from .config import load_config
+
+    config = load_config(args.config if args.config.exists() else None)
+    if not config.listen.enabled:
+        log.error("[listen] is off in config.toml, so there are no live calls to play. Turn it on first.")
+        return
+    try:
+        import sounddevice as sd
+    except (ImportError, OSError) as e:
+        log.error("Can't reach the sound card (%s). Run the updater or install.bat again.", e)
+        return
+
+    url = stream_url(config)
+    device = find_device(sd, config.pc_speakers.device)
+    log.info("PC speakers: playing %s. Close this window to stop.", url.split("?")[0])
+    told = False
+    while True:
+        try:
+            play(url, device)
+            told = False
+        except KeyboardInterrupt:
+            return
+        except Exception as e:
+            if not told:
+                log.warning("No live calls to play yet (%s). Trying again every %d s "
+                            "(the transcriber may still be starting).", e, RETRY_S)
+                told = True
+        time.sleep(RETRY_S)
+
+
+if __name__ == "__main__":
+    main()

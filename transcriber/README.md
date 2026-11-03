@@ -722,8 +722,36 @@ dongles, the network, NordVPN and Tailscale finish starting; press a key in that
 If a watchdog is already running it does nothing. **autostart-off.bat** turns it off again. (It is a
 shortcut called "SDRTrunk Plus" in your Startup folder, which Task Manager also lists under Startup apps.)
 
-SDRTrunk is a program with a window, so it only starts once someone is signed in. To have the PC come back
-by itself after a power cut or a Windows Update restart, let Windows sign you in by itself:
+That only starts once someone is signed in. To have everything come back by itself after a power cut or
+a Windows Update restart, with nobody signing in, use the boot mode below, or let Windows sign you in by
+itself (further down).
+
+### Start before sign-in (no windows)
+
+Double-click **boot-on.bat** once. Windows asks for permission and then for your Windows password (for a
+Microsoft account, its password, not the PIN). From then on, a minute after the PC boots, Windows starts
+the watchdog, Ollama, the transcriber and SDRTrunk in the background, whether anyone is signed in or not.
+SDRTrunk runs with no window (its own built-in mode): it loads the playlist and starts the auto-start
+channels by itself, and tries a channel again every 30 seconds for 5 minutes if its dongle wasn't ready.
+Recording, streaming, the map, the phone pages and alerts all work as usual. It replaces autostart-on.bat
+(its shortcut is removed) and Ollama's own start at sign-in, which would use the wrong GPU.
+
+* **Sound:** Windows only gives the speakers to someone signed in, so SDRTrunk can't play them at boot.
+  When you sign in, **start-speakers.bat** starts by itself (a minimized "PC speakers" window) and plays
+  the live calls, the same stream as the phone's Listen page, about 3 seconds after each call ends.
+  Close that window to stop the sound. `[pc_speakers]` in config.toml can limit it to some talkgroups or
+  pick a sound output.
+* **Changing channels or settings:** run **edit-mode.bat**. It stops the no-window SDRTrunk and opens the
+  normal window. Make your changes, close the window, and the no-window copy starts again within a
+  minute. The PC speakers player goes quiet meanwhile, because the window plays the calls itself.
+* **What's happening:** watchdog.log in this folder, and SDRTrunk's own log (View > Application Log Files
+  in edit mode). Task Manager shows the programs under Details.
+* **Updates:** the updater closes everything, then starts the boot task again when it's done.
+* **boot-off.bat** goes back to the normal way (run autostart-on.bat for start at sign-in).
+
+### Auto sign-in instead
+
+The simpler choice, with no background mode: let Windows sign you in by itself:
 
 1. Settings > Accounts > Sign-in options: turn off "For improved security, only allow Windows Hello
    sign-in for Microsoft accounts on this device".

@@ -384,3 +384,12 @@ enabled = true
 public_port = 3001
 # The public address shown with the secret link. Empty: the Tailscale address plus port 8443.
 public_url = ""
+
+[pc_speakers]
+# When SDRTrunk runs with no window (boot-on.bat), this PC's speakers play the live calls through
+# start-speakers.bat, which starts by itself when you sign in. Needs [listen] on. Calls play about
+# 3 seconds after they end. Turn it down or off with the Windows volume mixer ("PC speakers").
+# Only these talkgroups, e.g. ["10000", "Countywide"]. Empty = all of them.
+talkgroups = []
+# Part of the sound output's name, e.g. "Speakers". Empty = the Windows default.
+device = ""

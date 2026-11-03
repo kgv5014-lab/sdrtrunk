@@ -357,6 +357,16 @@ class ListenConfig:
 
 
 @dataclass
+class PcSpeakersConfig:
+    # The PC speakers player (start-speakers.bat), for when SDRTrunk runs with no window (boot-on.bat):
+    # it plays the live calls on this PC's speakers while you're signed in. Needs [listen] on.
+    # Only these talkgroups (numbers or names, as on the Listen page). Empty = all of them.
+    talkgroups: list = field(default_factory=list)
+    # Part of the name of the sound output to use, e.g. "Speakers" or "Headphones". Empty = Windows' default.
+    device: str = ""
+
+
+@dataclass
 class AlertsConfig:
     # Phone alerts through the ntfy app, answered by this service itself (see the README).
     enabled: bool = False
@@ -508,6 +518,7 @@ class Config:
     watchdog: WatchdogConfig = field(default_factory=WatchdogConfig)
     recordings: RecordingsConfig = field(default_factory=RecordingsConfig)
     listen: ListenConfig = field(default_factory=ListenConfig)
+    pc_speakers: PcSpeakersConfig = field(default_factory=PcSpeakersConfig)
     channels: ChannelsConfig = field(default_factory=ChannelsConfig)
     base_dir: Path = Path(".")
 

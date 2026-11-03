@@ -133,6 +133,10 @@ tasks.withType(JavaCompile).configureEach {
  */
 def jvmArgsWindows =
         ['--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED', //Needed for controls-fx.jar
+         '-Xms1g', //Start with 1 GB so the heap doesn't keep growing in small steps (default start is only 8 MB)
+         '-Xmx3g', //Fixed ceiling. A busy setup uses ~0.5 GB, so this leaves lots of room without taking 1/4 of RAM
+         '-XX:-UseCompactObjectHeaders', //JDK 27 turns these on by default; linked to JVM crashes (access violations)
+         '-XX:+ExitOnOutOfMemoryError', //If memory ever runs out, exit cleanly so the watchdog restarts it
          '--add-exports=java.desktop/com.sun.java.swing.plaf.windows=ALL-UNNAMED', //windows users for JIDE
          '--add-modules=jdk.incubator.vector',   //Project Panama vector API is still in incubator
          '--enable-preview', //Project Panama Vector API is still in incubator
@@ -146,6 +150,10 @@ def jvmArgsWindows =
  */
 def jvmArgsLinux =
         ['--add-exports=javafx.base/com.sun.javafx.event=ALL-UNNAMED', //Needed for controls-fx.jar
+         '-Xms1g', //Start with 1 GB so the heap doesn't keep growing in small steps (default start is only 8 MB)
+         '-Xmx3g', //Fixed ceiling. A busy setup uses ~0.5 GB, so this leaves lots of room without taking 1/4 of RAM
+         '-XX:-UseCompactObjectHeaders', //JDK 27 turns these on by default; linked to JVM crashes (access violations)
+         '-XX:+ExitOnOutOfMemoryError', //If memory ever runs out, exit cleanly so the watchdog restarts it
          '--add-modules=jdk.incubator.vector',   //Project Panama vector API is still in incubator
          '--enable-preview', //Project Panama Vector & Foreign Function APIs remain in incubator
          '--sun-misc-unsafe-memory-access=allow', //JDK24 - suppress sun.misc.Unsafe::allocateMemory warning

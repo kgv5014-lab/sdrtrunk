@@ -96,6 +96,8 @@ public class SpectralDisplayPanel extends JPanel
     private int mZoom = 0;
     private int mDFTZoomWindowOffset = 0;
 
+    private java.util.function.Consumer<Boolean> mDisplayShownListener;
+
     private JScrollPane mScrollPane;
     private JLayeredPane mLayeredPanel;
     private SpectrumPanel mSpectrumPanel;
@@ -424,6 +426,11 @@ public class SpectralDisplayPanel extends JPanel
     {
         clearTuner();
 
+        if(mDisplayShownListener != null)
+        {
+            mDisplayShownListener.accept(true);
+        }
+
         mComplexDftProcessor.clearBuffer();
 
         mComplexDftProcessor.start();
@@ -448,6 +455,30 @@ public class SpectralDisplayPanel extends JPanel
                 process(SourceEvent.frequencyChange(null, mTuner.getTunerController().getFrequency()));
                 process(SourceEvent.sampleRateChange(mTuner.getTunerController().getSampleRate()));
             }
+        }
+    }
+
+    /**
+     * Registers a listener that is told when the display should be shown (true) or hidden (false), so the main
+     * window can give the space to the channel list when the spectrum and waterfall are turned off.
+     */
+    public void setDisplayShownListener(java.util.function.Consumer<Boolean> listener)
+    {
+        mDisplayShownListener = listener;
+    }
+
+    /**
+     * Turns the spectrum and waterfall off: stops the FFT processing, remembers the choice across restarts and
+     * hides the panel.
+     */
+    public void hideDisplay()
+    {
+        io.github.dsheirer.properties.SystemProperties.getInstance().set(SPECTRAL_DISPLAY_ENABLED, false);
+        clearTuner();
+
+        if(mDisplayShownListener != null)
+        {
+            mDisplayShownListener.accept(false);
         }
     }
 

@@ -1,0 +1,37 @@
+"""The PC speakers player: which stream it asks for and which sound output it picks."""
+
+from sdrtrunk_transcriber import pc_speakers
+from sdrtrunk_transcriber.config import Config
+
+
+def test_url_for_all_talkgroups():
+    config = Config()
+    assert pc_speakers.stream_url(config) == "http://127.0.0.1:3000/listen/stream.mp3?id=pc-speakers"
+
+
+def test_url_for_some_talkgroups_and_any_host():
+    config = Config()
+    config.server.host = "0.0.0.0"
+    config.pc_speakers.talkgroups = ["10000", " Countywide ", ""]
+    assert pc_speakers.stream_url(config) == \
+        "http://127.0.0.1:3000/listen/stream.mp3?id=pc-speakers&tg=10000%2CCountywide"
+
+
+class FakeSd:
+    @staticmethod
+    def query_devices():
+        return [{"name": "Microphone (USB)", "max_output_channels": 0},
+                {"name": "Speakers (Realtek)", "max_output_channels": 2},
+                {"name": "Headphones", "max_output_channels": 2}]
+
+
+def test_device_by_part_of_its_name():
+    assert pc_speakers.find_device(FakeSd, "") is None
+    assert pc_speakers.find_device(FakeSd, "realtek") == 1
+    assert pc_speakers.find_device(FakeSd, "Microphone") is None
+
+
+def test_edit_mode_uses_the_configured_sdrtrunk_first():
+    from sdrtrunk_transcriber import editmode
+    assert editmode.find_bat(r" E:\SDR\bin\sdr-trunk.bat ", []) == r"E:\SDR\bin\sdr-trunk.bat"
+    assert editmode.find_bat("", []) == ""

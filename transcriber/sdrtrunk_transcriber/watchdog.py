@@ -2,6 +2,12 @@
 that crashes or freezes, with a phone alert each time.
 
     python -m sdrtrunk_transcriber.watchdog --config config.toml        (start-everything.bat)
+    python -m sdrtrunk_transcriber.watchdog --config config.toml --background   (boot-start.bat)
+
+--background is for the boot job (boot-on.bat), which runs everything before anyone signs in to
+Windows: SDRTrunk is then started with no window. While edit-mode.bat has the normal SDRTrunk window
+open (edit-mode.flag exists), SDRTrunk is left alone, and the no-window copy is started again as soon
+as the window is closed.
 
 Ollama and this service are checked by asking their web address for an answer. SDRTrunk has no web
 address, so it is checked the way Task Manager does: is its java process there, and is its window
@@ -32,6 +38,10 @@ WATCHDOG_ENV = "SDRTRUNK_WATCHDOG"
 SETTLE_S = 5
 # A program restarted too often is left alone this long.
 PAUSE_S = 3600
+# Made by edit-mode.bat while the normal SDRTrunk window is open for changes.
+EDIT_FLAG = HOME / "edit-mode.flag"
+# Makes SDRTrunk start with no window (its own built-in mode: playlist loaded, channels auto-started).
+HEADLESS_OPTS = "-Djava.awt.headless=true"
 
 # Lists running SDRTrunk java processes as "pid|responding|java.exe path".
 SDRTRUNK_QUERY = (
@@ -57,9 +67,9 @@ class System:
         except requests.RequestException:
             return False
 
-    def launch(self, bat: str, cwd: str) -> int:
+    def launch(self, bat: str, cwd: str, extra_env: dict | None = None) -> int:
         """Runs a batch file in its own console window, as a double-click would. Returns its pid."""
-        env = dict(os.environ, **{WATCHDOG_ENV: "1"})
+        env = dict(os.environ, **{WATCHDOG_ENV: "1"}, **(extra_env or {}))
         flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)
         return subprocess.Popen(["cmd", "/c", bat], cwd=cwd, env=env, creationflags=flags).pid
 
@@ -83,6 +93,10 @@ class System:
 
     def exists(self, path: str) -> bool:
         return os.path.exists(path)
+
+    def editing(self) -> bool:
+        """Is edit-mode.bat showing the normal SDRTrunk window right now?"""
+        return EDIT_FLAG.exists()
 
 
 def listening_pids(netstat: str, port: int) -> set[int]:
@@ -186,11 +200,13 @@ class Transcriber(Program):
 class SDRTrunk(Program):
     name = "SDRTrunk"
 
-    def __init__(self, system, bat: str):
+    def __init__(self, system, bat: str, headless: bool = False):
         super().__init__(system)
         self.bat = bat
+        self.headless = headless
         self.java_pids = []
         self.told_no_bat = False
+        self.editing = False
 
     def check(self):
         found = self.system.sdrtrunk_processes()
@@ -216,7 +232,12 @@ class SDRTrunk(Program):
     def start(self):
         if not self.bat:
             return False
-        self.pid = self.system.launch(self.bat, ntpath.dirname(self.bat))
+        if self.headless:
+            # The launcher adds JAVA_OPTS to java's settings.
+            opts = (os.environ.get("JAVA_OPTS", "") + " " + HEADLESS_OPTS).strip()
+            self.pid = self.system.launch(self.bat, ntpath.dirname(self.bat), {"JAVA_OPTS": opts})
+        else:
+            self.pid = self.system.launch(self.bat, ntpath.dirname(self.bat))
         return True
 
     def stop(self):
@@ -227,7 +248,7 @@ class SDRTrunk(Program):
 
 
 class Watchdog:
-    def __init__(self, config, system: System | None = None, notify=None):
+    def __init__(self, config, system: System | None = None, notify=None, background: bool = False):
         self.settings = config.watchdog
         self.system = system or System()
         self.notify = notify or (lambda title, message: None)
@@ -235,7 +256,7 @@ class Watchdog:
         if config.summaries.enabled:
             self.programs.append(Ollama(self.system, config.summaries.url))
         self.programs.append(Transcriber(self.system, config.server.port))
-        self.programs.append(SDRTrunk(self.system, self.settings.sdrtrunk.strip()))
+        self.programs.append(SDRTrunk(self.system, self.settings.sdrtrunk.strip(), headless=background))
 
     def start_all(self):
         """Starts whatever isn't running yet, Ollama first and SDRTrunk last, so each finds the one
@@ -259,6 +280,8 @@ class Watchdog:
                 continue
             if now < program.paused_until:
                 continue
+            if isinstance(program, SDRTrunk) and self._editing(program):
+                continue
             state = program.check()
             if state in ("ok", "unknown"):
                 if program.fails:
@@ -272,6 +295,24 @@ class Watchdog:
                         program.fails, self.settings.fail_checks)
             if program.fails >= self.settings.fail_checks:
                 self.restart(program, state)
+
+    def _editing(self, program: "SDRTrunk") -> bool:
+        """True while edit-mode.bat has the SDRTrunk window open. When it closes, the no-window copy is
+        started right away instead of after several failed checks."""
+        if self.system.editing():
+            if not program.editing:
+                log.info("Edit mode: SDRTrunk's window is open, so SDRTrunk isn't watched until it closes")
+            program.editing = True
+            program.fails = 0
+            return True
+        if program.editing:
+            program.editing = False
+            log.info("Edit mode is over")
+            if program.check() == "down" and program.start():
+                log.info("Started SDRTrunk again")
+                program.started_at = self.system.now()
+            return True
+        return False
 
     def restart(self, program: Program, state: str):
         now = self.system.now()
@@ -313,6 +354,8 @@ class Watchdog:
 def main():
     parser = argparse.ArgumentParser(prog="sdrtrunk_transcriber.watchdog")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
+    parser.add_argument("--background", action="store_true",
+                        help="started at boot before sign-in: run SDRTrunk with no window")
     args = parser.parse_args()
 
     handlers = [logging.StreamHandler(),
@@ -330,8 +373,13 @@ def main():
         if config.watchdog.alert and alerts.enabled and alerts.bark_key:
             bark_push(alerts, title, message)
 
+    if args.background:
+        # Left over from an edit-mode window that was open when the PC went down.
+        EDIT_FLAG.unlink(missing_ok=True)
+        log.info("Background mode: SDRTrunk runs with no window (edit-mode.bat opens the normal one)")
+
     try:
-        Watchdog(config, notify=notify).run()
+        Watchdog(config, notify=notify, background=args.background).run()
     except KeyboardInterrupt:
         pass
 

@@ -16,6 +16,8 @@ class FakeSystem:
         self.killed = []
         self.port = set()
         self.next_pid = 100
+        self.envs = []
+        self.edit = False
 
     def now(self):
         return self.time
@@ -26,9 +28,10 @@ class FakeSystem:
     def answers(self, url, timeout=20):
         return self.up["ollama" if "11434" in url else "transcriber"]
 
-    def launch(self, bat, cwd):
+    def launch(self, bat, cwd, extra_env=None):
         name = bat.replace("\\", "/").rsplit("/", 1)[-1]
         self.launched.append(name)
+        self.envs.append(extra_env)
         self.next_pid += 1
         if name == "start-transcriber.bat":
             self.up["transcriber"] = True
@@ -50,14 +53,18 @@ class FakeSystem:
     def exists(self, path):
         return path == BAT
 
+    def editing(self):
+        return self.edit
 
-def make(sdrtrunk_bat="", summaries=True):
+
+def make(sdrtrunk_bat="", summaries=True, background=False):
     config = Config()
     config.summaries.enabled = summaries
     config.watchdog.sdrtrunk = sdrtrunk_bat
     system = FakeSystem()
     alerts = []
-    dog = watchdog.Watchdog(config, system, notify=lambda title, message: alerts.append((title, message)))
+    dog = watchdog.Watchdog(config, system, notify=lambda title, message: alerts.append((title, message)),
+                            background=background)
     return dog, system, alerts
 
 
@@ -194,3 +201,32 @@ def test_parse_sdrtrunk():
     text = "12345|True|E:\\SDR\\bin\\java.exe\r\n678|False|E:\\SDR\\bin\\java.exe\r\n\r\n"
     assert watchdog.parse_sdrtrunk(text) == [(12345, True, JAVA.replace("image\\", "")),
                                              (678, False, JAVA.replace("image\\", ""))]
+
+
+def test_background_mode_starts_sdrtrunk_with_no_window():
+    dog, system, _ = make(sdrtrunk_bat=BAT, background=True)
+    system.sdrtrunk = []
+    dog.start_all()
+    assert system.launched[-1] == "sdr-trunk.bat"
+    assert "-Djava.awt.headless=true" in system.envs[-1]["JAVA_OPTS"]
+
+
+def test_normal_mode_starts_sdrtrunk_with_its_window():
+    dog, system, _ = make(sdrtrunk_bat=BAT)
+    system.sdrtrunk = []
+    dog.start_all()
+    assert system.launched[-1] == "sdr-trunk.bat" and system.envs[-1] is None
+
+
+def test_edit_mode_leaves_sdrtrunk_alone_then_starts_it_right_away():
+    dog, system, alerts = make(sdrtrunk_bat=BAT, background=True)
+    dog.start_all()
+    run_checks(dog, system, 7)
+    system.edit = True
+    system.sdrtrunk = []          # edit-mode.bat stopped the no-window copy
+    run_checks(dog, system, 20)
+    assert system.launched == [] and alerts == []
+    system.edit = False           # the window was closed
+    run_checks(dog, system, 1)
+    assert system.launched == ["sdr-trunk.bat"] and alerts == []
+    assert "-Djava.awt.headless=true" in system.envs[-1]["JAVA_OPTS"]

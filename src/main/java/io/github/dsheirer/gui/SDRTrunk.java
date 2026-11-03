@@ -215,7 +215,12 @@ public class SDRTrunk implements Listener<TunerEvent>
         DuplicateCallDetector duplicateCallDetector = new DuplicateCallDetector(mUserPreferences);
 
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(duplicateCallDetector);
-        mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(audioPlaybackManager);
+        //With no window (started before Windows sign-in) there are no speakers to play to; the transcriber's
+        //PC speakers player plays the calls once someone signs in, so don't play them here as well.
+        if(!headless)
+        {
+            mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(audioPlaybackManager);
+        }
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioRecordingManager);
         mPlaylistManager.getChannelProcessingManager().addAudioSegmentListener(mAudioStreamingManager);
 
@@ -310,17 +315,30 @@ public class SDRTrunk implements Listener<TunerEvent>
         {
             if(GraphicsEnvironment.isHeadless())
             {
-                for(Channel channel: channels)
+                List<Channel> failed = startChannels(channels);
+
+                //Started at boot, a dongle can still be getting ready. With no window nobody would see that a
+                //channel didn't start, so try the ones that failed again a few times.
+                if(!failed.isEmpty())
                 {
-                    try
-                    {
-                        mLog.info("Auto-starting channel " + channel.getName());
-                        mPlaylistManager.getChannelProcessingManager().start(channel);
-                    }
-                    catch(ChannelException ce)
-                    {
-                        mLog.error("Channel: " + channel.getName() + " auto-start failed: " + ce.getMessage());
-                    }
+                    Thread retry = new Thread(() -> {
+                        List<Channel> remaining = failed;
+                        for(int attempt = 1; attempt <= 10 && !remaining.isEmpty(); attempt++)
+                        {
+                            try
+                            {
+                                Thread.sleep(30_000);
+                            }
+                            catch(InterruptedException ie)
+                            {
+                                return;
+                            }
+                            mLog.info("Trying again to start " + remaining.size() + " channel(s), attempt " + attempt + " of 10");
+                            remaining = startChannels(remaining);
+                        }
+                    }, "sdrtrunk-auto-start-retry");
+                    retry.setDaemon(true);
+                    retry.start();
                 }
             }
             else
@@ -328,6 +346,36 @@ public class SDRTrunk implements Listener<TunerEvent>
                 new ChannelAutoStartFrame(mPlaylistManager.getChannelProcessingManager(), channels, mUserPreferences);
             }
         }
+    }
+
+    /**
+     * Starts each channel (no window mode).
+     * @return the channels that could not be started
+     */
+    private List<Channel> startChannels(List<Channel> channels)
+    {
+        List<Channel> failed = new java.util.ArrayList<>();
+
+        for(Channel channel: channels)
+        {
+            if(channel.isProcessing())
+            {
+                continue;
+            }
+
+            try
+            {
+                mLog.info("Auto-starting channel " + channel.getName());
+                mPlaylistManager.getChannelProcessingManager().start(channel);
+            }
+            catch(ChannelException ce)
+            {
+                mLog.error("Channel: " + channel.getName() + " auto-start failed: " + ce.getMessage());
+                failed.add(channel);
+            }
+        }
+
+        return failed;
     }
 
     /**

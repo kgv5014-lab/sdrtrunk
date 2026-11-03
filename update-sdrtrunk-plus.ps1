@@ -192,4 +192,16 @@ Pop-Location
 
 Write-Host ''
 Write-Host "Done. Updated $($old.Substring(0, 7)) to $($new.Substring(0, 7))." -ForegroundColor Green
-Write-Host 'Start SDRTrunk and the transcriber again with your usual batch file.' -ForegroundColor Green
+$bootTask = Get-ScheduledTask -TaskName 'SDRTrunk Plus (boot)' -ErrorAction SilentlyContinue
+if ($bootTask) {
+    # boot-on.bat is in use: start everything again the same way, with no windows.
+    try {
+        Start-ScheduledTask -TaskName 'SDRTrunk Plus (boot)' -ErrorAction Stop
+        Write-Host 'Everything is starting again in the background (no windows), as at boot.' -ForegroundColor Green
+        Write-Host 'Run start-speakers.bat in the transcriber folder for sound on the PC speakers.' -ForegroundColor Green
+    } catch {
+        Write-Host 'Restart the PC to start everything again in the background.' -ForegroundColor Green
+    }
+} else {
+    Write-Host 'Start SDRTrunk and the transcriber again with your usual batch file.' -ForegroundColor Green
+}

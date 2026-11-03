@@ -626,6 +626,11 @@ Run start-ollama.bat before start-transcriber.bat each time, or use start-everyt
 summaries catch up within a minute of Ollama starting. On start the transcriber also summarizes the last
 24 hours of incidents that have none yet.
 
+To use another Ollama model, set `model` under `[summaries]` in config.toml; start-ollama.bat reads it from
+there. A model you made yourself with `ollama create` works too. The transcriber doesn't ask for a context
+size (`num_ctx = 0`), so it uses the model's own and shares the loaded copy with other programs using the
+same model; asking for a different size would make Ollama load it again.
+
 To check that Ollama is on the 1070, run `nvidia-smi` while a summary is being written: `ollama.exe` should
 be listed on the GTX 1070 with about 7 GB of memory.
 

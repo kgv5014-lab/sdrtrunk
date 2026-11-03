@@ -64,7 +64,7 @@ class SelfCheck:
         self.ollama = None
         if self.sc.ollama and config.summaries.enabled:
             s = config.summaries
-            self.ollama = OllamaClient(s.url, s.model, self.sc.ollama_timeout_s, s.keep_alive, session)
+            self.ollama = OllamaClient(s.url, s.model, self.sc.ollama_timeout_s, s.keep_alive, session, s.num_ctx)
         self._ollama_down_until = 0.0
 
     def problems(self, transcript: str | None, confidence: float | None, speech_s: float,

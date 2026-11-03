@@ -122,6 +122,8 @@ def test_incidents_and_long_calls_get_summaries(tmp_path, ollama):
     assert url == "http://127.0.0.1:11434/api/chat"
     assert body["model"] == "qwen3.5:9b-q4_K_M" and body["stream"] is False and body["keep_alive"] == -1 and body["think"] is False
     assert body["format"]["properties"]["tags"]["items"]["enum"] == list(summaries.TAGS)
+    # No context size is sent, so a model shared with another program isn't reloaded at a different size.
+    assert "num_ctx" not in body["options"]
 
 
 def test_an_incident_is_summarized_again_only_when_its_calls_change(tmp_path, ollama):
@@ -315,3 +317,20 @@ def test_a_model_still_downloading_is_tried_again(tmp_path, monkeypatch):
 
     assert db.get_summary("call", call_id)["summary"] == "A long call."
     assert summarizer.reachable is True and summarizer.last_error is None
+
+
+def test_a_context_size_is_sent_only_when_set():
+    class Session:
+        def post(self, url, timeout, json):
+            self.body = json
+            class R:
+                status_code = 200
+                text = ""
+                def raise_for_status(self): pass
+                def json(self): return {"message": {"content": "{}"}}
+            return R()
+    session = Session()
+    summaries.OllamaClient("http://x", "qwen-re", 5, "-1", session).ask("hi", {})
+    assert "num_ctx" not in session.body["options"]
+    summaries.OllamaClient("http://x", "qwen-re", 5, "-1", session, num_ctx=8192).ask("hi", {})
+    assert session.body["options"]["num_ctx"] == 8192

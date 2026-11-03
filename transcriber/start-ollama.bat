@@ -3,7 +3,11 @@ rem Starts Ollama on the GTX 1070 for call summaries (see "Call summaries" in th
 rem start-transcriber.bat gives Whisper the 1070 Ti by UUID; this window picks the 1070 the same way.
 rem GPU_NAME must match a line of `nvidia-smi -L` up to " (UUID". "GTX 1070" does not match the 1070 Ti.
 set GPU_NAME=GTX 1070
+rem The model comes from [summaries] in config.toml; this one is used if that can't be read.
 set MODEL=qwen3.5:9b-q4_K_M
+if exist .venv\Scripts\python.exe (
+  for /f "delims=" %%m in ('.venv\Scripts\python.exe -m sdrtrunk_transcriber.ollama_model config.toml 2^>nul') do set MODEL=%%m
+)
 
 where ollama >nul 2>&1
 if errorlevel 1 (
@@ -40,6 +44,7 @@ ollama list | findstr /c:"%MODEL%" >nul
 if errorlevel 1 (
   echo Downloading %MODEL% once, about 6.6 GB. Needs a recent Ollama; if it fails, update Ollama from https://ollama.com/download...
   ollama pull %MODEL%
+  if errorlevel 1 echo Could not download %MODEL%. If it is a model you made yourself, create it with "ollama create" first.
 )
 echo Ollama is running in its own window (minimized). Leave it open while the transcriber runs.
 timeout /t 10

@@ -635,6 +635,61 @@ class Gazetteer:
         """Street names in these words."""
         return self._mentions(w)
 
+    def suggest(self, typed: str, limit: int = 10) -> list[dict]:
+        """Streets and landmarks for the address box on the map ("Needs an address"): each word typed
+        starts a word of the name or town. A house number typed first is put back in front."""
+        self.reload_if_changed()
+        m = re.match(r"\s*(\d+[a-z]?)\s+(.*)", typed or "", re.I)
+        number, rest = (m.group(1), m.group(2)) if m else ("", typed or "")
+        # Each typed word as typed ("stre", "third") and as the street list writes it ("3rd").
+        wanted = [(t, set(words(t))) for t in re.findall(r"[a-z0-9]+", rest.lower())]
+        if not wanted:
+            return []
+        rank = {"motorway": 0, "trunk": 1, "primary": 2, "secondary": 3, "tertiary": 4, "residential": 5}
+
+        # The words of each name, worked out once per street list (it is about 15,000 streets).
+        if getattr(self, "_suggest_for", None) is not self.streets:
+            self._suggest_words, self._suggest_for = {}, self.streets
+        cache = self._suggest_words
+
+        def fits(name: str, town: str) -> bool:
+            have = cache.get((name, town))
+            if have is None:
+                text = f"{name} {town}"
+                have = cache[(name, town)] = set(words(text)) | set(re.findall(r"[a-z0-9]+", text.lower()))
+            # Started as typed ("stre", "bushk"), or whole the way the list writes it ("third" = "3rd").
+            return all(any(h.startswith(raw) for h in have) or bool(have & normal) for raw, normal in wanted)
+
+        first = wanted[0][0]
+
+        def starts(name: str) -> int:
+            """0 when the name itself starts with the first word typed, so those come first."""
+            head = re.findall(r"[a-z0-9]+", name.lower())[:1]
+            return 0 if head and head[0].startswith(first) else 1
+
+        found = []
+        for street in self.streets:
+            if fits(street.name, street.town):
+                found.append(((starts(street.name), rank.get(street.road_class, 6), street.name), "street", street))
+        seen = set()
+        for marks in self.landmarks.values():
+            for mark in marks:
+                if id(mark) in seen or mark.lat is None:
+                    continue
+                seen.add(id(mark))
+                if fits(mark.name, mark.town):
+                    found.append(((starts(mark.name), 7, mark.name), "landmark", mark))
+        found.sort(key=lambda f: f[0])
+        out = []
+        for _, kind, item in found[:limit]:
+            point = (item.lat, item.lon) if kind == "landmark" else self.middle(item)
+            text = item.name + (f", {item.town}" if item.town else "")
+            if number and kind == "street":
+                text = f"{number} {text}"
+            out.append({"text": text, "kind": kind, "lat": point[0] if point else None,
+                        "lon": point[1] if point else None})
+        return out
+
     def distance_to(self, streets: list[Street], lat: float, lon: float) -> float | None:
         """Metres from a point to the nearest of these streets, None without shapes."""
         x, y = self.proj.xy(lat, lon)

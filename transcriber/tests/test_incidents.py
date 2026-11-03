@@ -484,3 +484,58 @@ def test_not_found_lookups_are_asked_again_once_the_area_grew(tmp_path):
     db = Database(tmp_path / "calls.db")
     assert db.geocode_cached("12 broadway, bangor") is None
     assert db.geocode_cached("12 northampton street, easton")["lat"] == 40.69
+
+
+def test_dispatches_with_no_address_can_be_placed_by_hand(tmp_path, gaz):
+    worker = make_worker(tmp_path, gaz)
+    db = worker.db
+    t = 1_800_000_000
+    lost = log_call(db, "Medic 2081 respond for a fall, caller unsure of the address", t)
+    chatter = log_call(db, "Copy, en route", t + 30)                     # no dispatch: not on the list
+    unheard = log_call(db, "Engine 41 respond 12 Nowhere Street for a fire alarm", t + 60)
+    db.insert_page({"page_time": t - 20, "received_at": t - 20, "tone_a": 349.0, "label": "Forks Fire"})
+    for call_id in (lost, chatter, unheard):
+        worker.process(call_id)
+    worker.process(later := log_call(db, "Medic 2081 on scene", t + 400))
+    assert db.incidents() == []
+
+    needs = worker.needs_address(t - 3600)
+    assert [c["id"] for c in needs] == [unheard, lost]
+    assert needs[1]["tones"] == ["Forks Fire"]
+
+    # Suggestions from the street list, with the house number kept in front.
+    suggestions = gaz.suggest("15 freemans")
+    assert suggestions[0]["text"] == "15 Freemansburg Avenue, Palmer Township" and suggestions[0]["lat"]
+    assert gaz.suggest("easton hosp")[0]["text"] == "Easton Hospital, Easton"
+
+    # Typed and found like a transcript would be...
+    incident_id = worker.assign_address(lost, "North 3rd and Northampton")
+    incident = db.incidents()[0]
+    assert incident["id"] == incident_id and incident["label"] == "North 3rd Street & Northampton Street, Easton"
+    # ...and the unit's later call joins it now.
+    assert [c["id"] for c in incident["calls"]] == [lost, later]
+    assert incident["category"] == "ems"
+
+    # Not found by name: the picked suggestion's point is used.
+    with pytest.raises(ValueError):
+        worker.assign_address(unheard, "somewhere odd")
+    other = log_call(db, "Engine 41 respond for a brush fire off the trail", t + 7200)
+    worker.process(other)
+    pick = gaz.suggest("short la")[0]
+    assert pick["text"] == "Short Lane, Wilson"
+    placed = worker.assign_address(other, pick["text"], pick["lat"], pick["lon"])
+    assert db.get_incident(placed)["label"] == "Short Lane, Wilson"
+    worker.not_an_incident(unheard)
+    assert worker.needs_address(t - 3600) == []
+
+    # Kept when the map is rebuilt.
+    worker.rebuild()
+    worker.start()
+    try:
+        assert worker.wait_idle()
+    finally:
+        worker.stop()
+    rebuilt = db.incidents()
+    assert sorted(i["label"] for i in rebuilt) == [incident["label"], "Short Lane, Wilson"]
+    fall = next(i for i in rebuilt if i["label"] == incident["label"])
+    assert {c["id"] for c in fall["calls"]} == {lost, later}

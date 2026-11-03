@@ -344,6 +344,18 @@ def dispatch_call(call: dict) -> bool:
     return not by_unit(call) and is_dispatch(call.get("transcript"))
 
 
+SENDING = re.compile(r"\b(respond|responding|dispatch|dispatched|en route to)\b", re.I)
+
+
+def needs_address_call(call: dict) -> bool:
+    """A dispatch for "Needs an address": dispatch_call, or a call sending units ("respond") that names
+    what it is for ("fire alarm"), not said by a unit."""
+    if dispatch_call(call):
+        return True
+    text = call.get("transcript") or ""
+    return not by_unit(call) and bool(SENDING.search(text)) and nature_of(text)[0] is not None
+
+
 def talker(call: dict) -> str:
     """Who said a call, for units_in: the talker alias, and the unit speakers.py found ("17-81" -> "1781")."""
     unit = re.sub(r"(?<=\d)-(?=\d)", "", call.get("speaker") or "") if call.get("speaker_kind") == "unit" else ""
@@ -726,6 +738,61 @@ class MapWorker:
         self.db.add_call_place(place)
         self.refresh(incident_id)
         self.db.set_map_status(call["id"], "placed")
+
+    # ---- "Needs an address": dispatches the map couldn't place, for the user to listen to and place.
+
+    def needs_address(self, since: int) -> list[dict]:
+        """Dispatch calls since then that are on no incident, newest first, each with the tone-outs
+        just before it."""
+        calls = [c for c in self.db.calls_without_place(since) if not c.get("air") and needs_address_call(c)]
+        for call in calls:
+            pages = self.db.pages(call["call_time"] - 600, call["call_time"] + 60, limit=5)
+            call["tones"] = list(dict.fromkeys(p["label"] for p in pages if p.get("label")))
+        return calls
+
+    def assign_address(self, call_id: int, typed: str, lat: float | None = None,
+                       lon: float | None = None) -> int:
+        """Puts a dispatch on the map where the user said it was, as an incident of its own. `typed` is
+        looked up like a transcript; lat/lon (from a picked suggestion) is used when that finds nothing.
+        Later calls the map couldn't place are looked at again, so units on it join. Returns the incident."""
+        typed = " ".join((typed or "").split())[:200]
+        if not typed:
+            raise ValueError("Type an address")
+        with self.lock:
+            call = self.db.get_call(call_id)
+            if call is None or call["status"] != "done":
+                raise KeyError("no such call")
+            found = self.gazetteer.find(typed)
+            point, _ = self.place(found, call["call_time"]) if found else (None, None)
+            label = found.label if found and point else typed
+            if point is None and lat is not None and lon is not None:
+                point = (lat, lon)
+            if point is None:
+                raise ValueError("Could not find that address. Pick one of the suggestions.")
+            self.db.forget_call_places(call_id)
+            self.db.set_map_edits([call_id], call_id, point[0], point[1], label)
+            self.process(call_id)
+            incident_id = self.db.incident_of_call(call_id)
+            window = self.config.map.incident_window_minutes * 60
+            for later in sorted(self.db.calls_without_place(call["call_time"], call["call_time"] + window),
+                                key=lambda c: (c["call_time"], c["id"])):
+                if later["id"] != call_id:
+                    self.db.forget_call_places(later["id"])
+                    self.process(later["id"])
+            if incident_id is not None:
+                self.refresh(incident_id)
+        if self.on_changed and incident_id is not None:
+            self.on_changed([incident_id])
+        return incident_id
+
+    def not_an_incident(self, call_id: int):
+        """Takes a dispatch off the "Needs an address" list for good."""
+        with self.lock:
+            if self.db.get_call(call_id) is None:
+                raise KeyError("no such call")
+            self.db.forget_call_places(call_id)
+            self.db.set_map_edits([call_id], None)
+            self.db.set_map_status(call_id, "removed")
 
     def move_call(self, call_id: int, incident_id: int) -> list[int]:
         """Moves a call into another incident. Returns the incidents changed."""

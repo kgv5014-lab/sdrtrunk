@@ -17,8 +17,12 @@ import requests
 
 from .config import Config
 from .db import Database
+from .progress import Progress
 
 log = logging.getLogger(__name__)
+
+# Name of the catch-up job in progress.py (/api/progress).
+BACKLOG_JOB = "summaries"
 
 # Tags the model picks from, so the same thing is always tagged the same way.
 TAGS = (
@@ -188,6 +192,8 @@ class Summarizer:
         self._cond = threading.Condition()
         self._stopping = False
         self._thread = threading.Thread(target=self._run, name="summaries", daemon=True)
+        # Incidents and calls summarized after a restart (progress.py; the server shares one).
+        self.progress = Progress()
         # Whether Ollama answered last time; only a change is logged, so a stopped Ollama doesn't fill the log.
         self.reachable = None
         self.last_error = None
@@ -197,11 +203,12 @@ class Summarizer:
 
     def start(self):
         since = int(time.time()) - self.settings.backlog_hours * 3600
-        for incident_id in self.db.incidents_needing_summary(since):
-            self._schedule("incident", incident_id, 0)
+        backlog = [("incident", i) for i in self.db.incidents_needing_summary(since)]
         if self.settings.call_min_words > 0:
-            for call_id in self.db.calls_needing_summary(since, self.settings.call_min_words):
-                self._schedule("call", call_id, 0)
+            backlog += [("call", c) for c in self.db.calls_needing_summary(since, self.settings.call_min_words)]
+        self.progress.start(BACKLOG_JOB, "Catching up on summaries", backlog)
+        for kind, ref_id in backlog:
+            self._schedule(kind, ref_id, 0)
         self._thread.start()
 
     def stop(self, timeout: float = 10):
@@ -268,6 +275,7 @@ class Summarizer:
                 else:
                     self.summarize_call(ref_id)
                 self._set_reachable(True)
+                self.progress.step(BACKLOG_JOB, key)
             except requests.ConnectionError:
                 self._set_reachable(False, f"Ollama is not reachable at {self.settings.url}; is start-ollama.bat running?")
                 self._schedule(kind, ref_id, RETRY_S)
@@ -280,6 +288,7 @@ class Summarizer:
             except Exception as e:
                 self.last_error = str(e)[:300]
                 log.warning("Summaries: %s %d failed: %s", kind, ref_id, e)
+                self.progress.step(BACKLOG_JOB, key)
             finally:
                 with self._cond:
                     self._busy -= 1

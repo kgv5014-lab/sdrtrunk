@@ -17,8 +17,12 @@ from .corrections import CorrectionBook
 from .db import Database
 from .junk import remove_junk
 from .places import PlaceBook
+from .progress import Progress
 
 log = logging.getLogger(__name__)
+
+# Name of the catch-up job in progress.py (/api/progress).
+BACKLOG_JOB = "transcribe"
 
 
 # Whisper keeps only the last ~224 tokens of a prompt; Ken's 800-character prompts were 291 tokens, so
@@ -81,6 +85,8 @@ class TranscriptionWorker:
         self._order = itertools.count()
         self._thread = threading.Thread(target=self._run, name="transcriber", daemon=True)
         self.ready = threading.Event()
+        # Calls that waited while the transcriber was closed (progress.py; the server shares one).
+        self.progress = Progress()
         self.codebook = codebook
         self.placebook = placebook or PlaceBook(None)
         self.corrections = corrections or CorrectionBook(None)
@@ -119,7 +125,9 @@ class TranscriptionWorker:
         return ", ".join(self.prompt_terms(*context, call=call))
 
     def start(self):
-        for call_id in self.db.pending_ids():
+        pending = list(self.db.pending_ids())
+        self.progress.start(BACKLOG_JOB, "Transcribing calls that waited", pending)
+        for call_id in pending:
             self.submit(call_id)
         self._thread.start()
 
@@ -174,6 +182,7 @@ class TranscriptionWorker:
                 log.exception("Call %s failed", call_id)
                 self.db.update_call(call_id, status="failed", error=str(e)[:500])
             finally:
+                self.progress.step(BACKLOG_JOB, call_id)
                 self._queue.task_done()
 
     def _process(self, call_id: int):

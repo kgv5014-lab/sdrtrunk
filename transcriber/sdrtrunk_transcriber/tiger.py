@@ -275,8 +275,10 @@ def fetch(geo: dict, out: Path, cache_dir: Path, counties=None, bbox=None) -> bo
     when a download fails."""
     features = []
     sources = []
-    for county in counties or COUNTIES:
-        log.info("Downloading house-number ranges for %s from the US Census...", COUNTIES.get(county, county))
+    counties = list(counties or COUNTIES)
+    for step, county in enumerate(counties, 1):
+        log.info("Downloading house-number ranges for %s from the US Census (%d of %d)...",
+                 COUNTIES.get(county, county), step, len(counties))
         try:
             path = download(county, cache_dir)
         except CensusError as e:

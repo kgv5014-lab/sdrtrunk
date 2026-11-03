@@ -164,6 +164,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
             fixer = AddressFixer(gazetteer, address_book, near_incidents)
         worker = TranscriptionWorker(config, db, backend_factory, codebook, placebook, corrections, hints, fixer)
+        # Catch-up jobs (calls that waited, map re-sort, summaries) for the window, /map and fetch-places.
+        progress = worker.progress
         alerter = Alerter(config, db) if config.alerts.enabled else None
         speakers = None
         if config.speakers.enabled:
@@ -176,6 +178,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             except Exception:
                 log.exception("Speakers: could not label older calls")
         summarizer = Summarizer(config, db) if config.summaries.enabled else None
+        if summarizer:
+            summarizer.progress = progress
         if config.tones.enabled:
             tone_finder = worker.on_audio = ToneFinder(config, db, alerter, audio.WHISPER_RATE, codebook)
         aviation = AviationLog(config, db, alerter=alerter) if config.aviation.enabled else None
@@ -193,6 +197,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             geocoder = Geocoder(db, config.map.area, contact=config.map.contact_email) \
                 if config.map.online_lookup else None
             map_worker = MapWorker(config, db, gazetteer, geocoder, address_book)
+            map_worker.progress = progress
 
             def placed(call_id, incident_id, call):
                 if alerter:
@@ -281,6 +286,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         worker.start()
         app.state.db = db
         app.state.worker = worker
+        app.state.progress = progress
         app.state.codebook = codebook
         app.state.corrections = corrections
         app.state.map_worker = map_worker
@@ -850,6 +856,22 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
         worker.gazetteer.reload_if_changed()
         worker.rebuild()
         return {"queued": worker.queue_size()}
+
+    @app.get("/api/progress")
+    def progress_now(request: Request):
+        """Catch-up jobs still running, e.g. {"jobs": [{"title": "Placing calls on the map", "done": 4210,
+        "total": 9800, "percent": 42, "eta": "about 6 min left", ...}]}. With job=map, that one job even
+        when finished (fetch-places.bat waits on it)."""
+        progress = getattr(request.app.state, "progress", None)
+        job = request.query_params.get("job")
+        if job:
+            return {"job": progress.get(job) if progress else None}
+        jobs = progress.jobs() if progress else []
+        summarizer = request.app.state.summarizer
+        for j in jobs:
+            if j["key"] == "summaries" and summarizer and summarizer.reachable is False:
+                j["waiting"] = summarizer.last_error
+        return {"jobs": jobs}
 
     @app.get("/api/map/status")
     def map_status(request: Request):

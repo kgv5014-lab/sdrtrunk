@@ -17,10 +17,14 @@ from .codes import AGENCY_WORDS
 from .config import Config
 from .db import Database
 from .geocode import Geocoder
+from .progress import Progress
 from .worker import load_vocabulary
 from .addresses import Found, Gazetteer, words
 
 log = logging.getLogger(__name__)
+
+# Name of the catch-up job in progress.py (/api/progress).
+BACKLOG_JOB = "map"
 
 # What the call is about, from words in the transcript. First match wins.
 NATURES = [
@@ -413,6 +417,8 @@ class MapWorker:
         self._queue: "queue.Queue[int | None]" = queue.Queue()
         self._thread = threading.Thread(target=self._run, name="incident-map", daemon=True)
         self._backlog_loaded = False
+        # Calls placed again after a restart or a rebuild (progress.py; the server shares one).
+        self.progress = Progress()
         # Called with (call id, incident id, call) after a call is placed (phone alerts listen here).
         self.on_placed = None
         # Called with (call, incident id or None) once each call has been looked at.
@@ -469,8 +475,7 @@ class MapWorker:
             return
         self._backlog_loaded = True
         backlog = self.db.calls_to_map()
-        if backlog:
-            log.info("Incident map: looking for places in %d earlier calls", len(backlog))
+        self.progress.start(BACKLOG_JOB, "Placing calls on the map", backlog)
         for call_id in backlog:
             self._queue.put(call_id)
 
@@ -487,6 +492,7 @@ class MapWorker:
             except Exception:
                 log.exception("Incident map: call %s failed", call_id)
             finally:
+                self.progress.step(BACKLOG_JOB, call_id)
                 self._queue.task_done()
 
     def process(self, call_id: int):

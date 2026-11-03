@@ -383,6 +383,11 @@ def test_calls_logged_before_the_street_list_are_mapped_later(tmp_path):
         client.app.state.map_worker.rebuild()
         assert client.app.state.map_worker.wait_idle()
         again = client.get("/api/incidents").json()
+        # fetch-places.bat watches the re-sort finish here.
+        job = client.get("/api/progress", params={"job": "map"}).json()["job"]
+        running = client.get("/api/progress").json()["jobs"]
+    assert job["finished"] and job["done"] == job["total"] == 1
+    assert running == []
     assert after[0]["nature"] == "MVA" and after[0]["type"] == "mva"
     assert len(after) == 1 and after[0]["label"] == "Route 22 & Freemansburg Avenue, Palmer Township"
     assert len(again) == 1

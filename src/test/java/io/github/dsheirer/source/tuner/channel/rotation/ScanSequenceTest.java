@@ -162,4 +162,40 @@ public class ScanSequenceTest
         //Control channel (non-scan) monitors ignore the hang time
         assertTrue(ChannelRotationMonitor.isRotationDue(1600, 1000, true, dwell, hang, false));
     }
+
+    @Test
+    void focusStaysOnOneTonedOutFrequency()
+    {
+        ScanSequence sequence = new ScanSequence(List.of(A, B, C, D), null);
+        sequence.setCurrent(A);
+        sequence.setFocus(java.util.Set.of(C));
+        //Moves to the toned-out frequency, then stays there
+        assertEquals(List.of(C, 0L, 0L), run(sequence, A, 3));
+    }
+
+    @Test
+    void focusRotatesAmongOnlyTonedOutFrequenciesThenResumes()
+    {
+        ScanSequence sequence = new ScanSequence(List.of(A, B, C, D), null);
+        sequence.setCurrent(A);
+        sequence.setFocus(java.util.Set.of(D, B));
+        assertEquals(List.of(B, D, B, D), run(sequence, A, 4));
+        assertFalse(sequence.isInFocus(A));
+
+        sequence.setFocus(java.util.Set.of());
+        assertTrue(sequence.isInFocus(A));
+        assertEquals(4, new java.util.HashSet<>(run(sequence, D, 4)).size());
+    }
+
+    @Test
+    void focusIgnoresLockedAndUnknownFrequencies()
+    {
+        ScanSequence sequence = new ScanSequence(List.of(A, B, C), null);
+        sequence.setCurrent(A);
+        sequence.lock(B);
+        sequence.setFocus(java.util.Set.of(B, D));
+        //Nothing usable in focus: normal scan without the locked frequency
+        assertFalse(sequence.hasFocus());
+        assertEquals(List.of(C, A, C), run(sequence, A, 3));
+    }
 }

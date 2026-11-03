@@ -63,6 +63,7 @@ public class ScanEntryStatus
     private volatile Channel mChildChannel;
     private volatile boolean mChildRunning;
     private volatile long mLastActivity;
+    private volatile long mTonedOutUntil;
 
     /**
      * Constructs an instance
@@ -177,6 +178,36 @@ public class ScanEntryStatus
     public long getLastActivity()
     {
         return mLastActivity;
+    }
+
+    /**
+     * Smart Fire Scan: until when (milliseconds) the scan list stays on this frequency because its department was
+     * toned out, or 0.
+     */
+    public long getTonedOutUntil()
+    {
+        return mTonedOutUntil;
+    }
+
+    public void setTonedOutUntil(long until)
+    {
+        mTonedOutUntil = until;
+    }
+
+    /**
+     * Indicates if this frequency's department was toned out and the scan list is staying on it.
+     */
+    public boolean isTonedOut(long now)
+    {
+        return mMode == Mode.SCAN && mTonedOutUntil > now;
+    }
+
+    /**
+     * Minutes left of the toned-out hold, rounded up.
+     */
+    public long getTonedOutMinutesLeft(long now)
+    {
+        return Math.max(0, (mTonedOutUntil - now + 59_999) / 60_000);
     }
 
     /**

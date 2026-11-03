@@ -36,6 +36,7 @@ import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
 import io.github.dsheirer.source.tuner.TunerController;
 import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
+import io.github.dsheirer.source.tuner.channel.rotation.ScanFocusRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ScanHoldRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ScanSkipRequest;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
@@ -45,8 +46,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
@@ -68,6 +71,7 @@ public class ScanGroupManager extends Module implements IDecoderStateEventListen
      * Delay after startup before planning parallel channels, so that the rover's source is settled.
      */
     private static final long PLANNING_DELAY_MS = 500;
+    private static final long FOCUS_CHECK_INTERVAL_MS = 5000;
 
     private final Channel mChannel;
     private final SourceConfigTunerMultipleFrequency mSourceConfig;
@@ -78,6 +82,9 @@ public class ScanGroupManager extends Module implements IDecoderStateEventListen
     private final SourceEventListener mSourceEventListener = new SourceEventListener();
     private Listener<ChannelEvent> mChannelEventListener;
     private ScheduledFuture<?> mPlanningFuture;
+    private ScheduledFuture<?> mFocusFuture;
+    private final String mFocusUrl;
+    private Set<Long> mFocus = new HashSet<>();
     private volatile boolean mRunning;
 
     /**
@@ -88,6 +95,18 @@ public class ScanGroupManager extends Module implements IDecoderStateEventListen
      */
     public ScanGroupManager(Channel channel, SourceConfigTunerMultipleFrequency sourceConfig, int channelBandwidth)
     {
+        this(channel, sourceConfig, channelBandwidth, null);
+    }
+
+    /**
+     * Constructs an instance
+     * @param focusUrl transcriber address that says which departments were just toned out (Smart Fire Scan), or
+     * null to always scan the whole list
+     */
+    public ScanGroupManager(Channel channel, SourceConfigTunerMultipleFrequency sourceConfig, int channelBandwidth,
+                            String focusUrl)
+    {
+        mFocusUrl = focusUrl;
         mChannel = channel;
         mSourceConfig = sourceConfig;
         mChannelBandwidth = channelBandwidth;
@@ -127,6 +146,102 @@ public class ScanGroupManager extends Module implements IDecoderStateEventListen
                 }
             }, PLANNING_DELAY_MS, TimeUnit.MILLISECONDS);
         }
+
+        if(mFocusUrl != null && mScanGroup.getEntries().size() > 1)
+        {
+            mFocusFuture = ThreadPool.SCHEDULED.scheduleAtFixedRate(() -> {
+                try
+                {
+                    checkTonedOut();
+                }
+                catch(Throwable t)
+                {
+                    mLog.warn("Error while checking toned-out departments for [" + mChannel.getName() + "]", t);
+                }
+            }, FOCUS_CHECK_INTERVAL_MS, FOCUS_CHECK_INTERVAL_MS, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /**
+     * Smart Fire Scan: asks the transcriber which departments were toned out, then stays on them.
+     */
+    private void checkTonedOut()
+    {
+        //Holds that ran out end even when the transcriber can't be reached
+        updateFocus();
+
+        TonedOutFocus.fetch(mFocusUrl).thenAccept(untilByFrequency -> {
+            if(untilByFrequency == null || !mRunning)
+            {
+                return;
+            }
+
+            List<Long> frequencies = new ArrayList<>();
+
+            for(ScanEntryStatus entry: mScanGroup.getEntries())
+            {
+                frequencies.add(entry.getFrequency());
+            }
+
+            for(Map.Entry<Long,Long> toned: TonedOutFocus.match(untilByFrequency, frequencies).entrySet())
+            {
+                ScanEntryStatus entry = mScanGroup.getEntry(toned.getKey());
+
+                if(entry != null && entry.getTonedOutUntil() != toned.getValue())
+                {
+                    if(entry.getTonedOutUntil() < System.currentTimeMillis())
+                    {
+                        mLog.info("Smart Fire Scan: [" + entry.getDisplayName() + "] was toned out - [" +
+                            mChannel.getName() + "] stays on it");
+                    }
+
+                    entry.setTonedOutUntil(toned.getValue());
+                }
+            }
+
+            updateFocus();
+        });
+    }
+
+    /**
+     * Limits the scan to the toned-out departments that are still within their hold time, or returns to the whole
+     * list, and moves to a toned-out department right away when the scan is somewhere else.
+     */
+    private synchronized void updateFocus()
+    {
+        if(!mRunning || !hasInterModuleEventBus())
+        {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+        Set<Long> focus = new HashSet<>();
+
+        for(ScanEntryStatus entry: mScanGroup.getEntries())
+        {
+            if(entry.isTonedOut(now))
+            {
+                focus.add(entry.getFrequency());
+            }
+        }
+
+        if(focus.equals(mFocus))
+        {
+            return;
+        }
+
+        mFocus = focus;
+        getInterModuleEventBus().post(new ScanFocusRequest(focus));
+
+        if(focus.isEmpty())
+        {
+            mLog.info("Smart Fire Scan: [" + mChannel.getName() + "] back to scanning every department");
+        }
+        else if(!focus.contains(mScanGroup.getRoverFrequency()))
+        {
+            //A toned-out department overrides a manual hold
+            mScanGroup.skip();
+        }
     }
 
     @Override
@@ -139,6 +254,14 @@ public class ScanGroupManager extends Module implements IDecoderStateEventListen
             mPlanningFuture.cancel(false);
             mPlanningFuture = null;
         }
+
+        if(mFocusFuture != null)
+        {
+            mFocusFuture.cancel(false);
+            mFocusFuture = null;
+        }
+
+        mFocus = new HashSet<>();
 
         synchronized(mParallelEntries)
         {

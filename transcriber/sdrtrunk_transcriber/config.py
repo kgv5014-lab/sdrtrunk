@@ -330,6 +330,12 @@ class ChannelsConfig:
     # departments apart.
     frequency_names: dict = field(default_factory=lambda: {
         "502.425": "Nancy FD", "453.300": "Forks Fire", "460.375": "Palmer FD", "458.725": "Tatamy FD"})
+    # Smart Fire Scan: the county station number of each scan frequency's department (MHz = number).
+    # When that station gets toned out (its fire tones, or dispatch saying "Station 25" right after
+    # tones), SDRTrunk's Fire Scan stays on it for toned_hold_minutes. Empty = always rotate normally.
+    toned_stations: dict = field(default_factory=lambda: {
+        "502.425": 14, "453.300": 25, "460.375": 27, "458.725": 22})
+    toned_hold_minutes: float = 15.0
 
     def name_for(self, frequency_hz: int | None) -> str | None:
         """The name for a call's frequency, within 1 kHz, or None."""

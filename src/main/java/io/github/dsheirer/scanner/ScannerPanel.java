@@ -219,7 +219,37 @@ public class ScannerPanel extends JPanel
             return sb.toString();
         }
 
-        sb.append(group.isHold() ? "holding on " : "scanning " + scanned + " frequencies, now on ").append(tunedName);
+        long now = System.currentTimeMillis();
+        List<ScanEntryStatus> toned = new ArrayList<>();
+
+        for(ScanEntryStatus entry: group.getEntries())
+        {
+            if(entry.isTonedOut(now))
+            {
+                toned.add(entry);
+            }
+        }
+
+        if(toned.size() == 1)
+        {
+            sb.append("staying on ").append(toned.get(0).getDisplayName()).append(" (toned out, ")
+                .append(toned.get(0).getTonedOutMinutesLeft(now)).append(" min left)");
+        }
+        else if(toned.size() > 1)
+        {
+            sb.append("rotating between toned-out ");
+
+            for(int x = 0; x < toned.size(); x++)
+            {
+                sb.append(x == 0 ? "" : x == toned.size() - 1 ? " and " : ", ").append(toned.get(x).getDisplayName());
+            }
+
+            sb.append(", now on ").append(tunedName);
+        }
+        else
+        {
+            sb.append(group.isHold() ? "holding on " : "scanning " + scanned + " frequencies, now on ").append(tunedName);
+        }
 
         if(parallel > 0)
         {
@@ -304,7 +334,7 @@ public class ScannerPanel extends JPanel
                 case 0 -> entry.getScanGroup().getName();
                 case 1 -> String.format("%.5f", entry.getFrequency() / 1E6);
                 case 2 -> entry.getLabel() != null ? entry.getLabel() : "";
-                case 3 -> getStatus(entry);
+                case 3 -> withTonedOut(entry, getStatus(entry));
                 case 4 -> getMode(entry) + (entry.isPriority() ? " (priority)" : "");
                 case 5 -> getTuner(entry);
                 case 6 -> entry.getLastActivity() > 0 ? mTimeFormat.format(new Date(entry.getLastActivity())) : "";
@@ -335,6 +365,19 @@ public class ScannerPanel extends JPanel
             }
 
             return "";
+        }
+
+        private static String withTonedOut(ScanEntryStatus entry, String status)
+        {
+            long now = System.currentTimeMillis();
+
+            if(!entry.isTonedOut(now))
+            {
+                return status;
+            }
+
+            String toned = "toned out, " + entry.getTonedOutMinutesLeft(now) + " min left";
+            return status.isEmpty() ? "T" + toned.substring(1) : status + " - " + toned;
         }
 
         private static String getStatus(ScanEntryStatus entry)

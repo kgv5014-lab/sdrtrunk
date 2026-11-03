@@ -873,6 +873,44 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             raise HTTPException(400, "send {\"into\": <incident id>}")
         return _edit(_map_worker(request).merge, incident_id, body["into"])
 
+    # "Needs an address": dispatches the map couldn't place, placed by hand. Not on the friends' link
+    # (share.py GUEST_API), so only Ken can see and change them.
+
+    @app.get("/api/map/needs-address")
+    def needs_address(request: Request, hours: float = 24):
+        worker = _map_worker(request)
+        since = int(time.time() - max(1.0, min(hours, 24 * 30)) * 3600)
+        keep = ("id", "call_time", "talkgroup", "talkgroup_label", "talkgroup_group", "transcript", "duration_s",
+                "audio_deleted_at", "map_status", "heard_place", "tones")
+        return [{k: c.get(k) for k in keep} for c in worker.needs_address(since)]
+
+    @app.get("/api/places/suggest")
+    def suggest_places(request: Request, q: str = ""):
+        return _map_worker(request).gazetteer.suggest(q[:120])
+
+    @app.post("/api/calls/{call_id}/address")
+    async def assign_address(request: Request, call_id: int):
+        body = await request.json()
+        if not isinstance(body, dict) or not isinstance(body.get("address"), str):
+            raise HTTPException(400, "send {\"address\": \"123 Main St, Easton\"}")
+        lat, lon = body.get("lat"), body.get("lon")
+        point = (float(lat), float(lon)) if isinstance(lat, (int, float)) and isinstance(lon, (int, float)) else (None, None)
+        try:
+            incident_id = _map_worker(request).assign_address(call_id, body["address"], *point)
+        except KeyError:
+            raise HTTPException(404, "no such call")
+        except ValueError as e:
+            raise HTTPException(422, str(e))
+        return {"incident": incident_id}
+
+    @app.post("/api/calls/{call_id}/not-incident")
+    def not_an_incident(request: Request, call_id: int):
+        try:
+            _map_worker(request).not_an_incident(call_id)
+        except KeyError:
+            raise HTTPException(404, "no such call")
+        return {"removed": call_id}
+
     @app.post("/api/map/rebuild")
     def rebuild_map(request: Request):
         """Places every call again, e.g. after places.csv or places-geo.json changed."""

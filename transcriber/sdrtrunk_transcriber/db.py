@@ -759,6 +759,29 @@ class Database:
                 [(c, anchor_call_id, lat, lon, label, int(time.time())) for c in call_ids])
             self._conn.commit()
 
+    def calls_without_place(self, since: int, until: int | None = None, limit: int = 500) -> list[dict]:
+        """Calls the map looked at but could not put on it ("none"/"unplaced"), not fixed by hand, newest
+        first, with the place heard in them, if any (for "Needs an address")."""
+        where = ["c.status = 'done'", "c.map_status IN ('none', 'unplaced')", "c.call_time >= ?",
+                 "c.id NOT IN (SELECT call_id FROM map_edits)"]
+        params: list = [since]
+        if until is not None:
+            where.append("c.call_time <= ?")
+            params.append(until)
+        params.append(max(1, min(limit, 2000)))
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT c.*, (SELECT p.label FROM call_places p WHERE p.call_id = c.id ORDER BY p.id LIMIT 1) "
+                f"AS heard_place FROM calls c WHERE {' AND '.join(where)} ORDER BY c.call_time DESC, c.id DESC LIMIT ?",
+                params).fetchall()
+        return [dict(row) for row in rows]
+
+    def forget_call_places(self, call_id: int):
+        """Drops what the map noted for a call, before it is placed again by hand."""
+        with self._lock:
+            self._conn.execute("DELETE FROM call_places WHERE call_id = ?", (call_id,))
+            self._conn.commit()
+
     def incident_precisions(self, incident_id: int) -> list[str]:
         with self._lock:
             rows = self._conn.execute("SELECT precision FROM call_places WHERE incident_id = ?",

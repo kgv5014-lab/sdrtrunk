@@ -126,7 +126,24 @@
   /* 12-hour summaries: a panel over the right side, the whole screen on a phone. */
   #recaps { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--bg); border-left: 1px solid var(--line);
             box-shadow: -4px 0 16px rgba(0,0,0,.18); z-index: 2000; display: flex; flex-direction: column; }
-  #recaps[hidden] { display: none; }
+  #recaps[hidden], #needs[hidden] { display: none; }
+  /* "Needs an address": dispatches the map couldn't place; same side panel as the summaries. */
+  #needs { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--bg); border-left: 1px solid var(--line);
+           box-shadow: -4px 0 16px rgba(0,0,0,.18); z-index: 2000; display: flex; flex-direction: column; }
+  #needs .head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+  #needs .head h2 { font-size: 15px; margin: 0; flex: 1; }
+  #needs .list { overflow-y: auto; padding: 10px 12px; flex: 1; }
+  .need { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 10px 12px; margin: 0 0 10px; }
+  .need .text { margin: 6px 0; }
+  .need audio { width: 100%; height: 28px; margin-top: 4px; }
+  .need .row { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+  .need input { flex: 1; min-width: 0; font: inherit; font-size: 16px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--fg); }
+  .need .box { position: relative; flex: 1 1 100%; display: flex; }
+  .need .sugg { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; background: var(--card); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.18); max-height: 240px; overflow-y: auto; }
+  .need .sugg button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; color: var(--fg); padding: 8px; font-size: 15px; }
+  .need .sugg button:hover, .need .sugg button:focus { background: var(--line); }
+  .need .problem { color: var(--warn); font-size: 13px; margin-top: 4px; }
+  .badge { display: inline-block; min-width: 18px; text-align: center; font-size: 11px; font-weight: 700; border-radius: 9px; padding: 0 5px; margin-left: 4px; color: #fff; background: var(--warn); }
   #recaps .head { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--line); }
   #recaps .head h2 { font-size: 15px; margin: 0; flex: 1; }
   #recaps .list { overflow-y: auto; padding: 10px 12px; flex: 1; }
@@ -168,6 +185,7 @@
   <label title="Only incidents that more than one of police, fire and EMS were sent to"><input type="checkbox" id="multi"> Several services</label>
   <label class="admin"><input type="checkbox" id="hidden"> Show removed</label>
   <button id="seen" class="admin" hidden>Mark all seen</button>
+  <button id="needs-open" class="admin" title="Dispatches the map could not place: listen and type the address">📍 Needs an address<span id="needs-count" class="badge" hidden></span></button>
   <button id="recaps-open" class="admin" title="A recap of each 12 hours (7 AM and 7 PM)">📋 12-hour summaries</button>
   <span id="status"></span>
 </header>
@@ -182,6 +200,12 @@
 <div id="recaps" hidden>
   <div class="head"><h2>12-hour summaries</h2><button id="recaps-now" title="A summary of the last 12 hours, made now">Make one now</button><button id="recaps-close" title="Close">✕</button></div>
   <div class="list" id="recaps-list"></div>
+</div>
+<div id="needs" hidden>
+  <div class="head"><h2>Needs an address</h2>
+    <select id="needs-range" title="How far back"><option value="24">Last 24 hours</option><option value="168">Last 7 days</option></select>
+    <button id="needs-close" title="Close">✕</button></div>
+  <div class="list" id="needs-list"></div>
 </div>
 <script>
 const $ = id => document.getElementById(id);
@@ -1137,7 +1161,7 @@ function showRecapIncident(h) {
   recapMarker.bindPopup(pop).openPopup();
   map.setView([h.lat, h.lon], Math.max(map.getZoom(), 15));
 }
-$('recaps-open').onclick = () => $('recaps').hidden ? openRecaps() : ($('recaps').hidden = true);
+$('recaps-open').onclick = () => { $('needs').hidden = true; $('recaps').hidden ? openRecaps() : ($('recaps').hidden = true); };
 $('recaps-close').onclick = () => { $('recaps').hidden = true; };
 $('recaps-now').onclick = async () => {
   const b = $('recaps-now');
@@ -1149,6 +1173,115 @@ $('recaps-now').onclick = async () => {
   b.disabled = false; b.textContent = 'Make one now';
   await loadRecaps();
 };
+// ---- "Needs an address": dispatches with no address heard (or one that couldn't be found). Ken listens,
+// types the address (suggestions come from the street list) and it goes on the map as an incident.
+let needsBusy = false;   // typing in a box: don't redraw the list under the cursor
+async function loadNeeds(redraw) {
+  if (GUEST) return;
+  let calls;
+  try {
+    const r = await fetch('api/map/needs-address?hours=' + $('needs-range').value);
+    if (!r.ok) return;
+    calls = await r.json();
+  } catch (e) { return; }
+  const count = $('needs-count');
+  count.hidden = !calls.length;
+  count.textContent = calls.length;
+  if ($('needs').hidden || (needsBusy && !redraw)) return;
+  const list = $('needs-list');
+  if (!calls.length) { list.replaceChildren(el('div', 'empty', 'Every dispatch in this time has an address. 👍')); return; }
+  list.replaceChildren(...calls.map(needCard));
+}
+function needCard(c) {
+  const card = el('div', 'need');
+  card.append(el('div', 'title', clock(c.call_time) + ' · ' + (c.talkgroup_label || c.talkgroup || 'Unknown talkgroup')));
+  const bits = [time(c.call_time)];
+  if (c.tones && c.tones.length) bits.push('Tones: ' + c.tones.join(', '));
+  card.append(el('div', 'muted', bits.join(' · ')));
+  card.append(el('div', 'text', c.transcript || 'no transcript'));
+  if (c.heard_place) card.append(el('div', 'muted', 'Heard "' + c.heard_place + '" but couldn\'t find it on the map'));
+  if (c.audio_deleted_at) card.append(el('div', 'muted', 'Audio deleted to save space'));
+  else { const audio = el('audio'); audio.controls = true; audio.preload = 'none'; audio.src = 'api/calls/' + c.id + '/audio'; card.append(audio); }
+
+  const row = el('div', 'row');
+  const box = el('div', 'box');
+  const input = el('input');
+  input.placeholder = 'Type the address, e.g. 123 Main St';
+  input.autocomplete = 'off';
+  if (c.heard_place) input.value = c.heard_place;
+  const sugg = el('div', 'sugg'); sugg.hidden = true;
+  box.append(input, sugg);
+  const save = el('button', '', 'Put on map');
+  const skip = el('button', '', 'Not an incident');
+  skip.title = 'Take it off this list';
+  const problem = el('div', 'problem');
+  row.append(box, save, skip);
+  card.append(row, problem);
+
+  let picked = null;   // the suggestion picked: its point is used if the typed address isn't found
+  let timer = null, asked = 0;
+  input.addEventListener('focus', () => { needsBusy = true; });
+  input.addEventListener('blur', () => { needsBusy = false; setTimeout(() => { sugg.hidden = true; }, 200); });
+  input.addEventListener('input', () => {
+    picked = null; problem.textContent = '';
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const n = ++asked;
+      let items = [];
+      try { items = await (await fetch('api/places/suggest?q=' + encodeURIComponent(input.value))).json(); } catch (e) { /* none */ }
+      if (n !== asked) return;
+      sugg.replaceChildren(...items.map(item => {
+        const b = el('button', '', item.text + (item.kind === 'landmark' ? ' (place)' : ''));
+        b.type = 'button';
+        b.onmousedown = e => e.preventDefault();   // keep the box focused
+        b.onclick = () => { input.value = item.text; picked = item; sugg.hidden = true; input.focus(); };
+        return b;
+      }));
+      sugg.hidden = !items.length;
+    }, 200);
+  });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); save.click(); } });
+  save.onclick = async () => {
+    if (!input.value.trim()) { problem.textContent = 'Type the address first'; return; }
+    save.disabled = skip.disabled = true; problem.textContent = '';
+    const body = { address: input.value };
+    if (picked && picked.text === input.value && picked.lat != null) { body.lat = picked.lat; body.lon = picked.lon; }
+    let reply = null, ok = false;
+    try {
+      const r = await fetch('api/calls/' + c.id + '/address', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      ok = r.ok; reply = await r.json().catch(() => null);
+    } catch (e) { /* below */ }
+    save.disabled = skip.disabled = false;
+    if (!ok) { problem.textContent = (reply && reply.detail) || 'Could not save. Is the transcriber running?'; return; }
+    needsBusy = false;
+    incidentsTag = null;
+    await load();
+    await loadNeeds(true);
+    if (reply.incident && markers[reply.incident]) {
+      if (window.matchMedia('(max-width: 1100px)').matches) $('needs').hidden = true;
+      showIncident(reply.incident);
+    }
+  };
+  skip.onclick = async () => {
+    save.disabled = skip.disabled = true;
+    try { await fetch('api/calls/' + c.id + '/not-incident', { method: 'POST' }); } catch (e) { /* list shows it again */ }
+    needsBusy = false;
+    await loadNeeds(true);
+  };
+  return card;
+}
+$('needs-open').onclick = () => {
+  if (!$('needs').hidden) { $('needs').hidden = true; return; }
+  $('recaps').hidden = true;
+  $('needs').hidden = false;
+  $('needs-list').replaceChildren(el('div', 'empty', 'Loading…'));
+  loadNeeds(true);
+};
+$('needs-close').onclick = () => { $('needs').hidden = true; needsBusy = false; };
+$('needs-range').value = String(stored('map.needsHours', 24));
+$('needs-range').onchange = () => { store('map.needsHours', Number($('needs-range').value)); loadNeeds(true); };
+if (!GUEST) { loadNeeds(); setInterval(() => { if (!playing()) loadNeeds(); }, 30000); }
+
 // Opened from the phone alert: map?recap=12
 {
   const linked = new URLSearchParams(location.search).get('recap');

@@ -319,6 +319,17 @@ After editing `places.csv` by hand, map earlier calls again with (from the same 
 Settings are under `[map]` in `config.toml`. The map page loads Leaflet and the map tiles from the
 internet; map data is © OpenStreetMap contributors.
 
+### Dispatches with no address
+
+When a dispatch goes out with no address heard, or one that can't be found on the street list, it can't
+go on the map by itself. **📍 Needs an address** on the map page lists those dispatches from the last 24 hours
+(or 7 days), with a count on the button. Each one shows the talkgroup, any tone-outs just before it, the
+words, and a player. Type the address and pick one of the suggestions from the street list (a house number
+typed first is kept), then press **Put on map**. It becomes an incident, shows in History and on the heat
+map, and stays put if the map is rebuilt. Calls the map couldn't place in the 45 minutes after it are looked
+at again, so a unit's "on scene" joins it. **Not an incident** takes a call off the list. Friends on the
+share link don't see the list.
+
 ### Incident history and heat map
 
 <http://localhost:3000/history> (the **History** link on the map) shows every incident placed so far as a

@@ -240,6 +240,14 @@ calls, then a tone-out just before.
 It needs the street list: run **fetch-places.bat** once (see above). Calls logged before that are mapped
 as soon as the list exists.
 
+Long catch-up jobs show how far along they are: placing every call on the map again (after
+fetch-places.bat, which waits with a bar until it's done), Ollama summaries after a restart, and calls
+that waited while the transcriber was closed. The transcriber window prints a line like
+`Placing calls on the map  [##########--------------] 4,210 / 9,800  42%  about 6 min left` every
+30 seconds, and the map page shows the same as a note with a bar at the top of the incident list
+(`/api/progress`). The updater numbers its steps and shows a clock and a bar during the build, based on
+how long the last build took.
+
 What happens to each transcribed call:
 
 1. **Find a place.** The transcript is checked against the street list for a house address

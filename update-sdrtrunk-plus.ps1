@@ -9,7 +9,8 @@
 #    data, ab-samples, blank-samples and .venv folders. Python packages are updated only when the
 #    requirements files changed.
 #
-# Gradle's output goes to update-log.txt next to this folder.
+# Gradle's output goes to update-log.txt next to this folder. While it builds, a line shows the time so far,
+# a bar based on how long the last build took (kept in update-build-time.txt) and what Gradle is doing.
 
 param(
     [string]$TranscriberDir = 'E:\SDR-Stuff\sdrtrunk-transcriber',
@@ -22,13 +23,60 @@ $parent = Split-Path $repo -Parent
 $imageDir = Join-Path $repo 'build\image'
 $previousImage = Join-Path $parent 'sdrtrunk-previous-image'
 $log = Join-Path $parent 'update-log.txt'
+$buildTimeFile = Join-Path $parent 'update-build-time.txt'
 
 # Files and folders in the transcriber folder that belong to you, not to the update.
 $keepFiles = @('config.toml', 'vocabulary.txt', 'codes.csv', 'corrections.csv', 'places.csv',
                'places-geo.json', 'paging_tones.csv', '*.bak-*')
 $keepDirs = @('data', 'ab-samples', 'blank-samples', '.venv', '511pa-probe', '__pycache__', '.pytest_cache')
 
-function Step($text) { Write-Host ''; Write-Host "== $text" -ForegroundColor Cyan }
+$script:stepNumber = 0
+$stepCount = 4
+function Step($text) {
+    $script:stepNumber++
+    Write-Host ''
+    Write-Host "== Step $($script:stepNumber) of ${stepCount}: $text" -ForegroundColor Cyan
+}
+function Format-Time([double]$seconds) {
+    $t = [TimeSpan]::FromSeconds([math]::Round($seconds))
+    if ($t.TotalHours -ge 1) { return '{0}:{1:mm}:{1:ss}' -f [int][math]::Floor($t.TotalHours), $t }
+    return '{0}:{1:ss}' -f [int][math]::Floor($t.TotalMinutes), $t
+}
+# Runs the Gradle build, showing a line that updates every second until it finishes. Returns its exit code.
+function Invoke-Build {
+    $last = $null
+    if (Test-Path $buildTimeFile) {
+        try { $last = [double](Get-Content $buildTimeFile -TotalCount 1) } catch { $last = $null }
+    }
+    if ($last) { Note "The last build took $(Format-Time $last)." } else { Note 'First timed build, so there is no estimate yet.' }
+    $proc = Start-Process -FilePath 'cmd.exe' -NoNewWindow -PassThru `
+        -ArgumentList "/c cd /d `"$repo`" && gradlew.bat runtimeZipCurrent > `"$log`" 2>&1"
+    $null = $proc.Handle    # keeps the exit code readable after it ends
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $width = 79
+    try { $width = [math]::Max(40, [Console]::WindowWidth - 1) } catch { }
+    while (-not $proc.HasExited) {
+        $elapsed = $watch.Elapsed.TotalSeconds
+        $line = "   Building: $(Format-Time $elapsed) so far"
+        if ($last) {
+            $fraction = [math]::Min(0.99, $elapsed / $last)
+            $filled = [int](20 * $fraction)
+            $line += "  [" + ('#' * $filled) + ('-' * (20 - $filled)) + "] $([int](100 * $fraction))%"
+            if ($elapsed -lt $last) { $line += "  about $(Format-Time ($last - $elapsed)) left" } else { $line += '  almost done' }
+        }
+        # What Gradle is on, e.g. "> Task :compileJava".
+        $task = Get-Content $log -Tail 40 -ErrorAction SilentlyContinue | Where-Object { $_ -like '> Task *' } | Select-Object -Last 1
+        if ($task) { $line += "  $($task.Substring(7))" }
+        if ($line.Length -gt $width) { $line = $line.Substring(0, $width) }
+        Write-Host -NoNewline ("`r" + $line.PadRight($width))
+        Start-Sleep -Seconds 1
+    }
+    $proc.WaitForExit()
+    $seconds = $watch.Elapsed.TotalSeconds
+    Write-Host ("`r" + "   Build finished in $(Format-Time $seconds)".PadRight($width))
+    if ($proc.ExitCode -eq 0) { Set-Content -Path $buildTimeFile -Value ([math]::Round($seconds)) }
+    return $proc.ExitCode
+}
 function Note($text) { Write-Host "   $text" }
 function Stop-Update($text) {
     Write-Host ''
@@ -102,8 +150,7 @@ if (Test-Path $imageDir) {
     catch { Stop-Update "Could not move the old SDRTrunk aside. Is it still open? ($($_.Exception.Message))" }
     Note "Old program kept in $previousImage"
 }
-cmd /c "cd /d `"$repo`" && gradlew.bat runtimeZipCurrent > `"$log`" 2>&1"
-$buildFailed = $LASTEXITCODE -ne 0
+$buildFailed = (Invoke-Build) -ne 0
 $newImage = $null
 if (-not $buildFailed) {
     $newImage = Get-ChildItem $imageDir -Directory -ErrorAction SilentlyContinue | Select-Object -First 1

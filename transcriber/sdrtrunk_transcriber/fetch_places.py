@@ -360,6 +360,8 @@ def main(argv=None):
     parser.add_argument("--cache", default="data/osm-cache", help="where downloads are kept for a day")
     parser.add_argument("--ranges", default="address-ranges.json",
                         help="house-number ranges to write from the US Census (\"\" to skip them)")
+    parser.add_argument("--no-wait", action="store_true",
+                        help="don't wait for the transcriber to finish placing the calls on the map again")
     parser.add_argument("--addresses-only", action="store_true",
                         help="only download the house-number ranges, using the places-geo.json already there")
     args = parser.parse_args(argv)
@@ -385,8 +387,9 @@ def main(argv=None):
         return 0 if fetch_ranges(args, geo, bbox) else 1
 
     results = {}
-    for name, query in queries(bbox).items():
-        log.info("Downloading %s from OpenStreetMap...", name)
+    steps = queries(bbox)
+    for step, (name, query) in enumerate(steps.items(), 1):
+        log.info("Downloading %s from OpenStreetMap (%d of %d)...", name, step, len(steps))
         try:
             results[name] = cached(Path(args.cache), name, query, lambda: overpass(query, args.url))
         except OverpassError as e:
@@ -409,7 +412,8 @@ def main(argv=None):
     if args.ranges:
         # The street list is done either way; a Census hiccup only leaves the house-number check as it was.
         fetch_ranges(args, geo, bbox)
-    ask_map_rebuild(config)
+    if ask_map_rebuild(config) and not args.no_wait:
+        wait_for_map(config)
     return 0
 
 
@@ -426,6 +430,41 @@ def ask_map_rebuild(config) -> bool:
         return False
     log.info("Asked the transcriber to place every call on the map again with the new list.")
     return True
+
+
+def map_progress(config) -> dict | None:
+    """The transcriber's map re-sort job (progress.py), or None if it can't be asked."""
+    port = config.server.port if config else 3000
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/progress?job=map", timeout=10) as response:
+            return json.loads(response.read()).get("job")
+    except (urllib.error.URLError, OSError, http.client.HTTPException, ValueError):
+        return None
+
+
+def wait_for_map(config, every_s: float = 2, out=None, sleep=time.sleep) -> bool:
+    """Shows a bar while the transcriber places every call again. Closing the window doesn't stop it."""
+    from .progress import bar
+    out = out or sys.stdout
+    log.info("Placing the calls on the map again (you can close this window, it keeps going):")
+    width = 0
+    while True:
+        job = map_progress(config)
+        if job is None:
+            out.write("\n")
+            log.info("Couldn't ask the transcriber how far it is (an older version?). It keeps going on its own.")
+            return False
+        line = f"  {bar(job['done'], job['total'])} {job['done']:,} / {job['total']:,}  {job['percent']}%"
+        if not job["finished"]:
+            line += f"  {job['eta']}"
+        out.write("\r" + line.ljust(width))
+        out.flush()
+        width = len(line)
+        if job["finished"]:
+            out.write("\n")
+            log.info("Done: every call is on the map with the new list.")
+            return True
+        sleep(every_s)
 
 
 def fetch_ranges(args, geo: dict, bbox) -> bool:

@@ -118,6 +118,9 @@
   .pulse { animation: pulse 1.4s ease-out infinite; }
   @keyframes pulse { 0% { stroke-width: 2; stroke-opacity: 1; } 100% { stroke-width: 18; stroke-opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { .pulse { animation: none; stroke-width: 5; } }
+  .notice.busy { border-left-color: var(--accent, #4a90d9); }
+  .notice .bar { height: 6px; background: var(--line); border-radius: 3px; margin-top: 6px; overflow: hidden; }
+  .notice .bar > div { height: 100%; background: var(--accent, #4a90d9); }
   .notice { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--warn); border-radius: 8px; padding: 8px 10px; margin: 0 0 8px; }
   /* 12-hour summaries: a panel over the right side, the whole screen on a phone. */
   #recaps { position: fixed; top: 0; right: 0; bottom: 0; width: min(440px, 100vw); background: var(--bg); border-left: 1px solid var(--line);
@@ -863,8 +866,26 @@ async function status() {
     else if (!s.has_shapes) list.prepend(el('div', 'notice', 'Street names are loaded but not road shapes, so intersections can\'t be placed. Run fetch-places.bat to get places-geo.json.'));
     $('status').textContent = `${s.streets} streets in ${s.towns} towns` + (s.online_lookup ? ' · address lookup on' : ' · offline') +
       (s.queue ? ` · ${s.queue} calls to check` : '');
+    if (!GUEST) await showProgress(list);
     return s;
   } catch (e) { $('status').textContent = 'service unreachable'; return null; }
+}
+
+// Catch-up jobs (re-sorting calls after fetch-places.bat, summaries after a restart): a bar on top of the list.
+async function showProgress(list) {
+  try {
+    const { jobs } = await (await fetch('api/progress')).json();
+    for (const j of (jobs || []).slice().reverse()) {
+      const note = el('div', 'notice busy',
+        `${j.title}: ${j.done.toLocaleString()} of ${j.total.toLocaleString()} (${j.percent}%), ` +
+        (j.waiting ? `paused: ${j.waiting}` : j.eta));
+      const bar = el('div', 'bar'), fill = el('div');
+      fill.style.width = `${j.percent}%`;
+      bar.append(fill);
+      note.append(bar);
+      list.prepend(note);
+    }
+  } catch (e) { /* an older transcriber without /api/progress */ }
 }
 
 function playing() { return [...document.querySelectorAll('audio')].some(a => !a.paused); }

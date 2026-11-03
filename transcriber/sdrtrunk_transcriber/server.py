@@ -34,7 +34,7 @@ from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, Res
 from starlette.datastructures import UploadFile
 from starlette.middleware.gzip import GZipMiddleware
 
-from . import audio, incident_audio, live, share, webapp
+from . import audio, incident_audio, live, settings_page, share, webapp
 from .alerts import Alerter
 from .backends import create_backend
 from .codes import CodeBook
@@ -208,7 +208,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             map_worker.on_placed = placed
             zones = read_zones(config.alerts.zones) if alerter else []
             if zones:
-                watch = ZoneWatch(zones, gazetteer, geocoder)
+                watch = app.state.zone_watch = ZoneWatch(zones, gazetteer, geocoder)
 
                 def looked_at(call, incident_id):
                     found = watch.check(call, db.get_incident(incident_id) if incident_id else None)
@@ -324,6 +324,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
     app.add_middleware(_CompressText)
     app.state.live = live.LiveHub() if config.listen.enabled else None
+    app.state.zone_watch = None
 
     async def call_upload(request: Request):
         form = await request.form()
@@ -612,6 +613,8 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             """Makes a new secret, so an old link that got out stops working."""
             live.new_key(data_path)
             return listen_link()
+
+    settings_page.add_routes(app, config)
 
     @app.get("/map", response_class=HTMLResponse)
     def map_page():

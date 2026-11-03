@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings</title>
+<style>
+  :root { --bg: #fafafa; --fg: #1d1d1f; --muted: #6b6b70; --line: #e2e2e6; --card: #fff; --accent: #2a6fdb; --warn: #b26a00; --bad: #c0392b; --good: #1f8a5b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161618; --fg: #ececf0; --muted: #9a9aa2; --line: #2c2c31; --card: #1e1e22; --accent: #6ea2ff; --warn: #f0a640; --bad: #ff6b5e; --good: #4cc38a; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 system-ui, sans-serif; }
+  header { position: sticky; top: 0; z-index: 2; background: var(--bg); border-bottom: 1px solid var(--line); padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+  h1 { font-size: 16px; margin: 0; }
+  a { color: var(--accent); }
+  nav.jump { display: flex; flex-wrap: wrap; gap: 4px; width: 100%; }
+  nav.jump a { border: 1px solid var(--line); border-radius: 14px; padding: 2px 10px; text-decoration: none; font-size: 13px; }
+  main { max-width: 960px; margin: 0 auto; padding: 8px 16px 48px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin: 14px 0; scroll-margin-top: 90px; }
+  section h2 { font-size: 15px; margin: 0 0 4px; }
+  .note { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+  input, select, textarea, button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; }
+  textarea { width: 100%; min-height: 260px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  button { cursor: pointer; background: var(--card); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:disabled { opacity: 0.4; cursor: default; }
+  button.small { padding: 2px 8px; font-size: 12px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 10px; }
+  .msg { font-size: 12px; color: var(--muted); }
+  .msg.ok { color: var(--good); } .msg.err { color: var(--bad); }
+  .tablewrap { overflow-x: auto; max-height: 60vh; overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; }
+  th { position: sticky; top: 0; background: var(--card); text-align: left; font-size: 12px; color: var(--muted); font-weight: 600; padding: 6px; border-bottom: 1px solid var(--line); z-index: 1; }
+  td { padding: 3px 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  td input, td select { width: 100%; min-width: 60px; padding: 3px 6px; }
+  td.del { width: 1%; }
+  tr.hide { display: none; }
+  .grid2 { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; }
+  .grid2 input { width: 7em; }
+  .newcode { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+  .newcode .top { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+  .newcode .code { font-size: 16px; font-weight: 700; }
+  .newcode .count { color: var(--muted); font-size: 12px; }
+  .newcode .ex { font-size: 12px; color: var(--muted); margin: 4px 0; display: flex; gap: 6px; align-items: baseline; }
+  .newcode .ex span { overflow-wrap: anywhere; }
+  .newcode .ex mark { background: color-mix(in srgb, var(--warn) 30%, transparent); color: inherit; border-radius: 3px; }
+  .newcode .add { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .newcode .add input { flex: 1 1 220px; }
+  .empty { color: var(--muted); font-size: 13px; }
+  @media (max-width: 640px) { th, td { font-size: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Settings</h1>
+  <a href="./">Call log</a>
+  <a href="map">Incident map</a>
+  <nav class="jump">
+    <a href="#newcodes">New codes heard</a>
+    <a href="#vocabulary">Vocabulary</a>
+    <a href="#codes">Unit codes</a>
+    <a href="#corrections">Corrections</a>
+    <a href="#departments">Departments</a>
+    <a href="#alerts">Alert distance</a>
+  </nav>
+</header>
+<main>
+  <section id="newcodes">
+    <h2>New codes heard</h2>
+    <p class="note">10-codes, signals and station numbers dispatch said in the last <select id="days"><option value="7">7</option><option value="30" selected>30</option><option value="90">90</option></select> days that aren't in your unit codes yet, most heard first. Play an example, type what it means and tap Add. Ignore hides ones that are just mishearings.</p>
+    <div id="newcode-list"><p class="empty">Looking…</p></div>
+  </section>
+
+  <section id="vocabulary">
+    <h2>Vocabulary</h2>
+    <p class="note">Words that help Whisper spell local names: one per line. Lines starting with # are notes. Takes effect on the next call.</p>
+    <textarea id="vocab" spellcheck="false"></textarea>
+    <div class="bar"><button class="primary" id="vocab-save" disabled>Save vocabulary</button><span class="msg" id="vocab-msg"></span></div>
+  </section>
+
+  <section id="codes">
+    <h2>Unit codes</h2>
+    <p class="note">Your 10-codes, signals, stations and unit types (codes.csv). "Hint" gives the code to Whisper as a spelling hint; keep those few. Takes effect at once.</p>
+    <div class="bar" style="margin:0 0 8px"><input id="codes-find" type="search" placeholder="Find a code or meaning"><button id="codes-add">+ Add a row</button></div>
+    <div class="tablewrap"><table><thead><tr><th>Type</th><th>Code</th><th>Meaning</th><th>For</th><th>Hint</th><th></th></tr></thead><tbody id="codes-body"></tbody></table></div>
+    <div class="bar"><button class="primary" id="codes-save" disabled>Save codes</button><span class="msg" id="codes-msg"></span></div>
+  </section>
+
+  <section id="corrections">
+    <h2>Learned corrections</h2>
+    <p class="note">"Whisper wrote" is replaced by "Should be" in later calls. Most come from the Edit button on the call log. "Only on" limits a fix to talkgroups whose name contains that text. Takes effect at once.</p>
+    <div class="bar" style="margin:0 0 8px"><input id="corr-find" type="search" placeholder="Find"><button id="corr-add">+ Add a row</button></div>
+    <div class="tablewrap"><table><thead><tr><th>Whisper wrote</th><th>Should be</th><th>Only on</th><th>Hint</th><th>Times</th><th></th></tr></thead><tbody id="corr-body"></tbody></table></div>
+    <div class="bar"><button class="primary" id="corr-save" disabled>Save corrections</button><span class="msg" id="corr-msg"></span></div>
+  </section>
+
+  <section id="departments">
+    <h2>Fire Scan department names</h2>
+    <p class="note">Calls on these frequencies show this name instead of the talkgroup's. Applies to new calls.</p>
+    <div class="tablewrap"><table><thead><tr><th>Frequency (MHz)</th><th>Name</th><th></th></tr></thead><tbody id="dept-body"></tbody></table></div>
+    <div class="bar"><button id="dept-add">+ Add</button><button class="primary" id="dept-save" disabled>Save departments</button><span class="msg" id="dept-msg"></span></div>
+  </section>
+
+  <section id="alerts">
+    <h2>Phone alert distance</h2>
+    <div class="grid2" id="alerts-grid"></div>
+    <div class="bar"><button class="primary" id="alerts-save" disabled>Save distances</button><span class="msg" id="alerts-msg"></span></div>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+let TYPES = [], APPLIES = [];
+const TYPE_NAMES = { 'ten-code': '10-code', 'signal': 'Signal', 'station': 'Station', 'unit-suffix': 'Unit type', 'police-esn': 'Police dept', 'call-type': 'Call type', 'acronym': 'Acronym' };
+
+async function api(method, url, body) {
+  const r = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {}, body: body ? JSON.stringify(body) : undefined });
+  let data = null; try { data = await r.json(); } catch (e) { /* not JSON */ }
+  if (!r.ok) throw new Error((data && data.detail) || ('Error ' + r.status));
+  return data;
+}
+function say(id, text, kind) { const m = $(id); m.textContent = text; m.className = 'msg' + (kind ? ' ' + kind : ''); }
+function dirty(button, msg) { $(button).disabled = false; say(msg, 'Not saved yet'); }
+async function save(button, msg, fn) {
+  $(button).disabled = true; say(msg, 'Saving…');
+  try { say(msg, await fn(), 'ok'); } catch (e) { $(button).disabled = false; say(msg, e.message, 'err'); }
+}
+function input(value, onchange, attrs) { const i = el('input'); i.value = value ?? ''; Object.assign(i, attrs || {}); i.addEventListener('input', onchange); return i; }
+function select(options, value, onchange) {
+  const s = el('select');
+  for (const [v, label] of options) { const o = el('option', null, label); o.value = v; s.append(o); }
+  s.value = value; s.addEventListener('change', onchange); return s;
+}
+function delButton(tr, onchange) { const b = el('button', 'small', '✕'); b.title = 'Delete this row'; b.onclick = () => { tr.remove(); onchange(); }; const td = el('td', 'del'); td.append(b); return td; }
+function filterRows(body, q) { q = q.trim().toLowerCase(); for (const tr of body.rows) tr.classList.toggle('hide', !!q && ![...tr.querySelectorAll('input,select')].some(i => i.value.toLowerCase().includes(q))); }
+
+// ---- vocabulary
+$('vocab').addEventListener('input', () => dirty('vocab-save', 'vocab-msg'));
+$('vocab-save').onclick = () => save('vocab-save', 'vocab-msg', async () => {
+  const r = await api('PUT', 'api/settings/vocabulary', { text: $('vocab').value }); return `Saved (${r.terms} words)`;
+});
+
+// ---- codes
+const codesChanged = () => dirty('codes-save', 'codes-msg');
+function codeRow(row) {
+  const tr = el('tr');
+  const cells = [
+    select(TYPES.map(t => [t, TYPE_NAMES[t] || t]), row.type || 'ten-code', codesChanged),
+    input(row.code, codesChanged, { size: 8 }), input(row.meaning, codesChanged, { size: 30 }),
+    select(APPLIES.map(a => [a, a]), row.applies_to || 'all', codesChanged),
+  ];
+  const hint = el('input'); hint.type = 'checkbox'; hint.checked = (row.prompt || '').toLowerCase() === 'yes'; hint.addEventListener('change', codesChanged);
+  cells.push(hint);
+  for (const c of cells) { const td = el('td'); td.append(c); tr.append(td); }
+  tr.append(delButton(tr, codesChanged));
+  tr.dataset.source = row.source || '';
+  return tr;
+}
+function codeRows() {
+  return [...$('codes-body').rows].map(tr => { const f = tr.querySelectorAll('input,select');
+    return { type: f[0].value, code: f[1].value, meaning: f[2].value, applies_to: f[3].value, prompt: f[4].checked ? 'yes' : '', source: tr.dataset.source }; });
+}
+$('codes-find').addEventListener('input', e => filterRows($('codes-body'), e.target.value));
+$('codes-add').onclick = () => { $('codes-find').value = ''; filterRows($('codes-body'), ''); const tr = codeRow({}); $('codes-body').prepend(tr); tr.querySelector('input').focus(); codesChanged(); };
+$('codes-save').onclick = () => save('codes-save', 'codes-msg', async () => { const r = await api('PUT', 'api/settings/codes', { rows: codeRows() }); return `Saved (${r.rows} codes)`; });
+
+// ---- corrections
+const corrChanged = () => dirty('corr-save', 'corr-msg');
+function corrRow(row) {
+  const tr = el('tr');
+  const hint = el('input'); hint.type = 'checkbox'; hint.checked = (row.hint || 'yes') !== 'no'; hint.addEventListener('change', corrChanged);
+  for (const c of [input(row.heard, corrChanged, { size: 16 }), input(row.correct, corrChanged, { size: 16 }), input(row.talkgroup, corrChanged, { size: 10 }), hint]) {
+    const td = el('td'); td.append(c); tr.append(td);
+  }
+  tr.append(el('td', null, row.count || ''));
+  tr.append(delButton(tr, corrChanged));
+  tr.dataset.count = row.count || '1'; tr.dataset.source = row.source || 'hand-made';
+  return tr;
+}
+function corrRows() {
+  return [...$('corr-body').rows].map(tr => { const f = tr.querySelectorAll('input');
+    return { heard: f[0].value, correct: f[1].value, talkgroup: f[2].value, hint: f[3].checked ? 'yes' : 'no', count: tr.dataset.count, source: tr.dataset.source }; });
+}
+$('corr-find').addEventListener('input', e => filterRows($('corr-body'), e.target.value));
+$('corr-add').onclick = () => { $('corr-find').value = ''; filterRows($('corr-body'), ''); const tr = corrRow({}); $('corr-body').prepend(tr); tr.querySelector('input').focus(); corrChanged(); };
+$('corr-save').onclick = () => save('corr-save', 'corr-msg', async () => { const r = await api('PUT', 'api/settings/corrections', { rows: corrRows() }); return `Saved (${r.rows} corrections)`; });
+
+// ---- departments
+const deptChanged = () => dirty('dept-save', 'dept-msg');
+function deptRow(d) {
+  const tr = el('tr');
+  for (const c of [input(d.mhz, deptChanged, { size: 10, inputMode: 'decimal' }), input(d.name, deptChanged, { size: 20 })]) { const td = el('td'); td.append(c); tr.append(td); }
+  tr.append(delButton(tr, deptChanged));
+  return tr;
+}
+$('dept-add').onclick = () => { const tr = deptRow({}); $('dept-body').append(tr); tr.querySelector('input').focus(); deptChanged(); };
+$('dept-save').onclick = () => save('dept-save', 'dept-msg', async () => {
+  const departments = [...$('dept-body').rows].map(tr => { const f = tr.querySelectorAll('input'); return { mhz: f[0].value, name: f[1].value }; });
+  const r = await api('PUT', 'api/settings/departments', { departments });
+  $('dept-body').replaceChildren(...r.departments.map(deptRow)); return 'Saved';
+});
+
+// ---- alert distances
+function showAlerts(a) {
+  const g = $('alerts-grid'); g.replaceChildren();
+  const changed = () => dirty('alerts-save', 'alerts-msg');
+  if (a.zone_name) {
+    g.append(el('label', null, `Alert for any call within`));
+    const w = el('span'); w.append(input(a.zone_radius_miles, changed, { id: 'zone-miles', type: 'number', step: '0.1', min: '0.05' }), ` miles of ${a.zone_name}`); g.append(w);
+  } else {
+    g.append(el('span', 'note', 'No watch zone is set up in config.toml, so there is no alert distance to change.'), el('span'));
+  }
+  if (a.recaps_on) {
+    g.append(el('label', null, '12-hour summary counts as "close to home" within'));
+    const w = el('span'); w.append(input(a.close_miles, changed, { id: 'close-miles', type: 'number', step: '0.1', min: '0.05' }), ' miles'); g.append(w);
+  }
+  if (!a.alerts_on) g.append(el('span', 'note', 'Phone alerts are off in config.toml.'), el('span'));
+}
+$('alerts-save').onclick = () => save('alerts-save', 'alerts-msg', async () => {
+  const body = {}; if ($('zone-miles')) body.zone_radius_miles = $('zone-miles').value; if ($('close-miles')) body.close_miles = $('close-miles').value;
+  const r = await api('PUT', 'api/settings/alerts', body); showAlerts(r.alerts); return 'Saved';
+});
+
+// ---- new codes heard
+function highlight(text, code) {
+  const span = el('span'); const word = code.replace(/^Station /, '');
+  const i = text.toLowerCase().indexOf(code.startsWith('Station ') ? word : code.toLowerCase());
+  if (i < 0) { span.textContent = text; return span; }
+  const len = code.startsWith('Station ') ? word.length : code.length;
+  span.append(text.slice(0, i), el('mark', null, text.slice(i, i + len)), text.slice(i + len)); return span;
+}
+let player = null;
+function play(id, button) {
+  if (player) { player.pause(); }
+  player = new Audio(`api/calls/${id}/audio`); button.textContent = '■';
+  player.onended = player.onpause = () => { button.textContent = '▶'; };
+  player.play().catch(() => { button.textContent = '▶'; });
+}
+function newCodeCard(item) {
+  const card = el('div', 'newcode');
+  const top = el('div', 'top'); top.append(el('span', 'code', item.code), el('span', 'count', `heard ${item.count} times · ${TYPE_NAMES[item.type] || item.type}`)); card.append(top);
+  for (const ex of item.examples) {
+    const row = el('div', 'ex'); const b = el('button', 'small', '▶'); b.title = 'Play this call'; b.onclick = () => play(ex.id, b);
+    row.append(b, el('span', null, new Date(ex.time * 1000).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' · ' + ex.talkgroup + ':'), highlight(ex.text, item.code));
+    card.append(row);
+  }
+  const add = el('div', 'add');
+  const meaning = el('input'); meaning.placeholder = item.type === 'station' ? 'Station name, e.g. Forks Twp Fire' : 'What it means';
+  const forWho = select(APPLIES.map(a => [a, a]), item.type === 'station' ? 'fire-ems' : 'all', () => {});
+  const msg = el('span', 'msg');
+  const addB = el('button', 'primary', 'Add'); const ignoreB = el('button', null, 'Ignore');
+  addB.onclick = async () => {
+    if (!meaning.value.trim()) { meaning.focus(); return; }
+    addB.disabled = true;
+    try { await api('POST', 'api/settings/codes/add', { type: item.type, code: item.code, meaning: meaning.value, applies_to: forWho.value });
+      card.replaceChildren(el('span', 'msg ok', `Added ${item.code}: ${meaning.value}`)); loadAll(false);
+    } catch (e) { addB.disabled = false; msg.textContent = e.message; msg.className = 'msg err'; }
+  };
+  ignoreB.onclick = async () => { await api('POST', 'api/settings/new-codes/ignore', { code: item.code }); card.remove(); };
+  add.append(meaning, forWho, addB, ignoreB, msg); card.append(add);
+  return card;
+}
+async function loadNewCodes() {
+  const list = $('newcode-list');
+  try {
+    const r = await api('GET', 'api/settings/new-codes?days=' + $('days').value);
+    list.replaceChildren(...(r.codes.length ? r.codes.map(newCodeCard) : [el('p', 'empty', 'Nothing new: every code heard more than once is already in your list.')]));
+  } catch (e) { list.replaceChildren(el('p', 'msg err', e.message)); }
+}
+$('days').onchange = loadNewCodes;
+
+// ---- load
+async function loadAll(withNew = true) {
+  const s = await api('GET', 'api/settings');
+  TYPES = s.types; APPLIES = s.applies_to;
+  if ($('vocab-save').disabled) $('vocab').value = s.vocabulary;
+  if ($('codes-save').disabled) {
+    if (s.codes === null) $('codes').querySelector('.note').textContent = 'Codes are turned off in config.toml.';
+    $('codes-body').replaceChildren(...(s.codes || []).map(codeRow)); filterRows($('codes-body'), $('codes-find').value);
+  }
+  if ($('corr-save').disabled) $('corr-body').replaceChildren(...(s.corrections || []).map(corrRow));
+  if ($('dept-save').disabled) $('dept-body').replaceChildren(...s.departments.map(deptRow));
+  if ($('alerts-save').disabled) showAlerts(s.alerts);
+  if (withNew) loadNewCodes();
+}
+window.addEventListener('beforeunload', e => { if ([...document.querySelectorAll('button.primary')].some(b => b.id.endsWith('-save') && !b.disabled)) e.preventDefault(); });
+loadAll().catch(e => { document.querySelector('main').prepend(el('p', 'msg err', 'Could not load settings: ' + e.message)); });
+</script>
+</body>
+</html>

@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>SDRTrunk Plus</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg, #0d1117); color: var(--fg, #e6edf3); font: 14px/1.4 system-ui, -apple-system, sans-serif;
+         display: flex; flex-direction: column; overflow: hidden; }
+  nav { display: flex; align-items: stretch; gap: 2px; background: #10151c; border-bottom: 1px solid var(--line, #262d37);
+        padding: 0 10px; padding-top: env(safe-area-inset-top); flex: none; }
+  .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; margin-right: 14px; white-space: nowrap; }
+  .brand img { width: 24px; height: 24px; border-radius: 6px; }
+  nav button { display: flex; align-items: center; gap: 6px; background: none; border: 0; border-radius: 0; color: var(--muted, #8b949e);
+               padding: 12px 12px 10px; font: inherit; font-weight: 600; cursor: pointer; box-shadow: 0 -2px 0 transparent inset; }
+  nav button:hover { color: var(--fg, #e6edf3); }
+  nav button.on { color: var(--accent, #58a6ff); box-shadow: 0 -2px 0 var(--accent, #58a6ff) inset; }
+  nav button[hidden] { display: none; }
+  nav .ico { font-size: 16px; line-height: 1; }
+  main { flex: 1; position: relative; min-height: 0; }
+  main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg, #0d1117); visibility: hidden; }
+  main iframe.on { visibility: visible; }
+  /* Phones: the tabs go along the bottom, like a normal app. */
+  @media (max-width: 760px) {
+    nav { order: 2; border-bottom: 0; border-top: 1px solid var(--line, #262d37); padding: 0 0 env(safe-area-inset-bottom); justify-content: space-around; }
+    body::before { content: ''; height: env(safe-area-inset-top); background: #10151c; flex: none; }
+    .brand { display: none; }
+    nav button { flex: 1; flex-direction: column; gap: 3px; padding: 7px 2px 6px; font-size: 10.5px; min-width: 0;
+                 box-shadow: none !important; }
+    nav .ico { font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+<nav id="tabs">
+  <div class="brand"><img src="app-icon-180.png" alt="">SDRTrunk Plus</div>
+  <button data-tab="map" data-src="map"><span class="ico">🗺️</span><span>Map</span></button>
+  <button data-tab="calls" data-src="./"><span class="ico">📻</span><span>Calls</span></button>
+  <button data-tab="listen" data-src="listen"><span class="ico">🔊</span><span>Listen</span></button>
+  <button data-tab="aviation" data-src="aviation" class="admin"><span class="ico">✈️</span><span>Aviation</span></button>
+  <button data-tab="history" data-src="history" class="admin"><span class="ico">🔥</span><span>History</span></button>
+  <button data-tab="summaries" class="admin"><span class="ico">📋</span><span>Summaries</span></button>
+  <button data-tab="settings" data-src="settings" class="admin" hidden><span class="ico">⚙️</span><span>Settings</span></button>
+</nav>
+<main id="frames"></main>
+<script>
+// One app: each tab is one of the existing pages, kept open in the background so live audio keeps
+// playing and the map keeps its place. Links between pages switch tabs (app-frame.js).
+const GUEST = !!document.documentElement.dataset.guest;
+const buttons = [...document.querySelectorAll('#tabs button')];
+const frames = {};
+let current = null;
+function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
+function stored(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+if (GUEST) buttons.filter(b => b.classList.contains('admin')).forEach(b => b.remove());
+function button(tab) { return buttons.find(b => b.dataset.tab === tab && b.isConnected && !b.hidden); }
+
+function frame(page, url) {
+  let f = frames[page];
+  if (!f) {
+    f = frames[page] = document.createElement('iframe');
+    f.title = page;
+    f.allow = 'autoplay';
+    f.src = url || button(page).dataset.src;
+    document.getElementById('frames').append(f);
+  } else {
+    let here = null;
+    try { here = f.contentWindow.location.href; } catch (e) { /* loading */ }
+    const want = new URL(url || button(page).dataset.src, location.href);
+    if (url && here && here.split('#')[0] === want.href.split('#')[0]) {
+      if (here !== want.href) f.contentWindow.location.hash = want.hash;
+    } else if (url && here !== want.href) {
+      delete f.dataset.ready; f.src = want.href;
+    } else if (!url && f.dataset.page !== undefined && f.dataset.page !== page) {
+      delete f.dataset.ready; f.src = want.href;  // A page opened from this tab (like Units): the tab button goes back to its own page.
+    }
+  }
+  return f;
+}
+function show(tab, url) {
+  if (!button(tab)) tab = 'map';
+  const page = tab === 'summaries' ? 'map' : tab;
+  const f = frame(page, url);
+  for (const other of Object.values(frames)) other.classList.toggle('on', other === f);
+  buttons.forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  if (current === 'summaries' && tab === 'map') post(f, { recaps: false });
+  if (tab === 'summaries') post(f, { recaps: true });
+  current = tab;
+  store('app.tab', tab);
+  history.replaceState(null, '', '#' + tab);
+  document.title = button(tab).textContent.trim() + ' · SDRTrunk Plus';
+}
+function post(f, msg) {
+  msg.app = true;
+  const send = () => { try { f.contentWindow.postMessage(msg, location.origin); } catch (e) { /* still loading */ } };
+  if (f.dataset.ready) send(); else f.addEventListener('load', send, { once: true });
+}
+buttons.forEach(b => { b.onclick = () => show(b.dataset.tab); });
+
+window.addEventListener('message', e => {
+  if (e.origin !== location.origin || !e.data || !e.data.app) return;
+  const from = Object.entries(frames).find(([, f]) => f.contentWindow === e.source);
+  if (!from) return;
+  if (e.data.ready) { from[1].dataset.ready = '1'; from[1].dataset.page = e.data.page; }
+  if (e.data.go) show(e.data.go, e.data.url);
+  // The summaries panel was opened or closed from inside the map.
+  if (from[0] === 'map' && e.data.recaps === false && current === 'summaries') show('map');
+  if (from[0] === 'map' && e.data.recaps === true && current === 'map') {
+    current = 'summaries'; buttons.forEach(b => b.classList.toggle('on', b.dataset.tab === 'summaries'));
+  }
+});
+
+// The Settings tab shows up once the settings page exists.
+if (!GUEST) fetch('settings').then(r => { if (r.ok) { button_show('settings'); } }).catch(() => {});
+function button_show(tab) { const b = buttons.find(x => x.dataset.tab === tab); if (b) b.hidden = false; }
+
+show((location.hash || '').slice(1) || stored('app.tab') || 'map');
+</script>
+</body>
+</html>

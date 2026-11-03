@@ -172,8 +172,9 @@ geo_file = "places-geo.json"
 online_lookup = true
 # Optional: your email, sent with lookups as OpenStreetMap asks.
 contact_email = ""
-# South, west, north, east: Easton to Allentown. Lookups outside this box are ignored.
-area = [40.50, -75.62, 40.78, -75.17]
+# South, west, north, east: Allentown to Easton and north to Blue Mountain (Bangor, Pen Argyl, Wind Gap,
+# Portland). Lookups outside this box are ignored. fetch-places.bat uses the same box.
+area = [40.50, -75.62, 40.93, -75.05]
 # Calls naming places within this distance, within this many minutes, are one incident.
 incident_window_minutes = 45
 incident_radius_m = 500

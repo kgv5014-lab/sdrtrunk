@@ -212,6 +212,12 @@ class SpeakersConfig:
     police_talkgroups: list = field(default_factory=lambda: ["PD", "Police", "Sheriff"])
 
 
+# The map's area (south, west, north, east) and the smaller one it had before 2026-11, which config.toml
+# files written then still name; those are moved up to the new area when loaded.
+MAP_AREA = (40.50, -75.62, 40.93, -75.05)
+OLD_MAP_AREA = (40.50, -75.62, 40.78, -75.17)
+
+
 @dataclass
 class MapConfig:
     # Possible incidents on a map at /map, from addresses heard in transcripts.
@@ -222,8 +228,9 @@ class MapConfig:
     online_lookup: bool = True
     # Optional: an email address sent with lookups, as OpenStreetMap asks heavy users to.
     contact_email: str = ""
-    # South, west, north, east. Lookups outside this box are ignored. Easton to Allentown, PA.
-    area: list = field(default_factory=lambda: [40.50, -75.62, 40.78, -75.17])
+    # South, west, north, east. Lookups outside this box are ignored. Allentown to Easton, and north
+    # through the Slate Belt to Blue Mountain (all of Northampton County).
+    area: list = field(default_factory=lambda: list(MAP_AREA))
     # Calls naming places this close together, this close in time, are one incident.
     incident_window_minutes: int = 45
     incident_radius_m: int = 500
@@ -571,3 +578,5 @@ def _load_file(config: Config, path: Path):
         if section is None or name == "base_dir":
             raise ValueError(f"Unknown section [{name}] in {path}")
         _apply(section, values, name)
+    if tuple(float(v) for v in config.map.area or ()) == OLD_MAP_AREA:
+        config.map.area = list(MAP_AREA)

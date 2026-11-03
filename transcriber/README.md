@@ -140,8 +140,9 @@ What happens to each call:
 
 `places.csv` helps Whisper with street names. It starts with a short hand-made list (`places.example.csv`).
 Run **fetch-places.bat** once to replace it with every named road (including private drives in
-complexes and plazas), numbered route, highway exit, named bridge and landmark between Easton and
-Allentown from OpenStreetMap. Landmarks include hospitals, schools, colleges, fire and police stations,
+complexes and plazas), numbered route, highway exit, named bridge and landmark in the map's area
+(`[map] area` in `config.toml`: Allentown to Easton and north through the Slate Belt to Blue Mountain)
+from OpenStreetMap. If the transcriber is running, it then places every call on the map again. Landmarks include hospitals, schools, colleges, fire and police stations,
 malls, shopping centers, supermarkets and big stores, gas stations and convenience stores, restaurants,
 banks, pharmacies, apartment and townhouse complexes, neighborhoods, industrial and business parks,
 churches, cemeteries, parks, golf courses, stadiums, hotels and train stations. It takes a minute or two, and running it again later refreshes the list. If a download
@@ -352,7 +353,7 @@ Calls given by mile marker are pinned at that marker, on the side of the highway
 "337.5 Route 22 East", "78 westbound, mile marker 72.4", "33 southbound, 5.8". Whisper's slips are
 read too: "3-3-4-1, Route 22" is 334.1 and "Route 27.4, 22" is 327.4. "Starting mileage" on transports
 is ignored. This covers US 22, PA 33, I-78 and the Turnpike's Northeast Extension (I-476) inside the
-map's area (see `--bbox` in fetch-places), with nothing to download: the markers are measured along the
+map's area (PA 33 up to the Monroe County line), with nothing to download: the markers are measured along the
 highways in places-geo.json from each interchange's mile number (I-78 from PennDOT's own marker points).
 
 Zoomed in, the map labels every mile ("22 · 334"). Turn the labels off with **🛣️ Mile markers** in the

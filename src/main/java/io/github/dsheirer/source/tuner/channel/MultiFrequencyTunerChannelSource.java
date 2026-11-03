@@ -27,6 +27,7 @@ import io.github.dsheirer.source.SourceEvent;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.heartbeat.Heartbeat;
 import io.github.dsheirer.source.tuner.channel.rotation.FrequencyLockChangeRequest;
+import io.github.dsheirer.source.tuner.channel.rotation.ScanFocusRequest;
 import io.github.dsheirer.source.tuner.channel.rotation.ScanSequence;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.util.ThreadPool;
@@ -231,6 +232,21 @@ public class MultiFrequencyTunerChannelSource extends TunerChannelSource
             {
                 mScanSequence.unlock(request.getFrequency());
             }
+        }
+    }
+
+    /**
+     * Processes requests to limit the scan to a few frequencies (departments that were just toned out), or to
+     * return to the full list.  The sender asks for a skip when the current frequency is not one of them.
+     *
+     * @param request with the frequencies to scan, or empty for all
+     */
+    @Subscribe
+    public void process(ScanFocusRequest request)
+    {
+        synchronized(mScanSequence)
+        {
+            mScanSequence.setFocus(request.getFrequencies());
         }
     }
 

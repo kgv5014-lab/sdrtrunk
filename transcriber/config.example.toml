@@ -374,6 +374,12 @@ check_minutes = 60
 # Calls on these frequencies (MHz) get this name instead of their talkgroup's label. SDRTrunk's Fire
 # Scan sends all four fire channels as one talkgroup, so this shows which department is talking.
 frequency_names = { "502.425" = "Nancy FD", "453.300" = "Forks Fire", "460.375" = "Palmer FD", "458.725" = "Tatamy FD" }
+# Smart Fire Scan: each scan frequency's county station number. When that station is toned out on
+# Countywide (its fire tones, or dispatch saying "Station 25" right after tones), SDRTrunk's Fire Scan
+# stays on that department for toned_hold_minutes. Several toned out: it rotates among only those.
+# EMS tones don't count (EMS 27 is Suburban EMS, not Palmer Fire). Empty {} = always rotate normally.
+toned_stations = { "502.425" = 14, "453.300" = 25, "460.375" = 27, "458.725" = 22 }
+toned_hold_minutes = 15
 
 [listen]
 # Live audio: the map's Listen button plays new calls on your phone, and keeps playing with it locked.

@@ -119,6 +119,7 @@ import io.github.dsheirer.preference.UserPreferences;
 import io.github.dsheirer.scanner.ScanActivityMonitor;
 import io.github.dsheirer.scanner.ScanEntryStatus;
 import io.github.dsheirer.scanner.ScanGroupManager;
+import io.github.dsheirer.scanner.TonedOutFocus;
 import io.github.dsheirer.scanner.ScannerRegistry;
 import io.github.dsheirer.source.SourceType;
 import io.github.dsheirer.source.config.SourceConfigTunerMultipleFrequency;
@@ -532,7 +533,9 @@ public class DecoderFactory
             modules.add(new ChannelRotationMonitor(activeStates, sctmf.getFrequencyRotationDelay(),
                 sctmf.getScanHangTime(), userPreferences));
             modules.add(new ScanGroupManager(channel, sctmf,
-                channel.getDecodeConfiguration().getChannelSpecification().getBandwidth()));
+                channel.getDecodeConfiguration().getChannelSpecification().getBandwidth(),
+                userPreferences != null ? TonedOutFocus.focusUrl(
+                    userPreferences.getPagingPreference().getTranscriberUrl()) : null));
         }
     }
 

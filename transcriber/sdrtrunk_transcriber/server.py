@@ -57,6 +57,7 @@ from .recaps import RecapMaker, to_api as recap_to_api
 from .summaries import OUTCOMES, Summarizer, attach as attach_summary, attach_updates, incident_basis
 from .signal_quality import SignalWatch
 from .recordings import RecordingCleanup
+from .scan_focus import toned_out
 from .tones import ToneFinder
 from .units import UnitBoard
 from .worker import TranscriptionWorker
@@ -457,6 +458,11 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
     def list_pages(request: Request, since: float | None = None, until: float | None = None, q: str = "",
                    limit: int = 200):
         return request.app.state.db.pages(since, until, q, limit)
+
+    @app.get("/api/scan-focus")
+    def scan_focus(request: Request):
+        """Smart Fire Scan: the departments SDRTrunk's Fire Scan stays on, because they were toned out."""
+        return toned_out(request.app.state.db, config.channels)
 
     # ---- the one app with tabs, its dark look and home-screen icon (webapp.py)
 

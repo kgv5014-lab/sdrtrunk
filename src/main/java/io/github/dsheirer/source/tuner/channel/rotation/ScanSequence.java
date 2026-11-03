@@ -37,6 +37,8 @@ public class ScanSequence
     private final List<Long> mFrequencies;
     private final List<Long> mPriorityFrequencies = new ArrayList<>();
     private final Set<Long> mLockedFrequencies = new HashSet<>();
+    private final List<Long> mFocusFrequencies = new ArrayList<>();
+    private int mFocusPointer = -1;
     private int mPointer = 0;
     private int mPriorityPointer = -1;
     private boolean mLastWasPriority = false;
@@ -104,6 +106,52 @@ public class ScanSequence
     }
 
     /**
+     * Limits the sequence to the specified frequencies (for example departments that were just toned out), or
+     * returns to the full list when the collection is empty.  Frequencies that are not in the list are ignored, and
+     * locked frequencies stay locked.
+     */
+    public void setFocus(Collection<Long> frequencies)
+    {
+        mFocusFrequencies.clear();
+        mFocusPointer = -1;
+
+        if(frequencies != null)
+        {
+            for(Long frequency: mFrequencies)
+            {
+                if(frequencies.contains(frequency))
+                {
+                    mFocusFrequencies.add(frequency);
+                }
+            }
+        }
+    }
+
+    /**
+     * Indicates if the sequence is limited to a focus set that has at least one unlocked frequency.
+     */
+    public boolean hasFocus()
+    {
+        for(Long frequency: mFocusFrequencies)
+        {
+            if(!isLocked(frequency))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Indicates if the frequency is in the active focus set, or if there is no active focus set.
+     */
+    public boolean isInFocus(long frequency)
+    {
+        return !hasFocus() || mFocusFrequencies.contains(frequency);
+    }
+
+    /**
      * Identifies the next frequency in the sequence.
      *
      * @param current frequency in use
@@ -113,6 +161,23 @@ public class ScanSequence
     {
         if(mFrequencies.size() <= 1)
         {
+            return 0;
+        }
+
+        //Focus (toned-out departments): rotate among only those, or stay when there is only one
+        if(hasFocus())
+        {
+            for(int attempts = 0; attempts < mFocusFrequencies.size(); attempts++)
+            {
+                mFocusPointer = (mFocusPointer + 1) % mFocusFrequencies.size();
+                long frequency = mFocusFrequencies.get(mFocusPointer);
+
+                if(frequency != current && !isLocked(frequency))
+                {
+                    return frequency;
+                }
+            }
+
             return 0;
         }
 

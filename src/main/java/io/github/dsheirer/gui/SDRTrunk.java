@@ -58,7 +58,6 @@ import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.sdrplay.api.SDRPlayLibraryHelper;
 import io.github.dsheirer.source.tuner.ui.TunerSpectralDisplayManager;
-import io.github.dsheirer.spectrum.DisableSpectrumWaterfallMenuItem;
 import io.github.dsheirer.spectrum.ShowTunerMenuItem;
 import io.github.dsheirer.spectrum.SpectralDisplayPanel;
 import io.github.dsheirer.util.ThreadPool;
@@ -130,6 +129,9 @@ public class SDRTrunk implements Listener<TunerEvent>
     private PlaylistManager mPlaylistManager;
     private SettingsManager mSettingsManager;
     private SpectralDisplayPanel mSpectralPanel;
+    private TunerSpectralDisplayManager mTunerSpectralDisplayManager;
+    private javax.swing.JCheckBoxMenuItem mShowSpectralMenuItem;
+    private boolean mSpectralPanelShown;
     private JFrame mMainGui;
     private JideSplitPane mSplitPane;
     private JavaFxWindowManager mJavaFxWindowManager;
@@ -232,6 +234,7 @@ public class SDRTrunk implements Listener<TunerEvent>
 
         TunerSpectralDisplayManager tunerSpectralDisplayManager = new TunerSpectralDisplayManager(mSpectralPanel,
             mPlaylistManager, mSettingsManager, mTunerManager.getDiscoveredTunerModel());
+        mTunerSpectralDisplayManager = tunerSpectralDisplayManager;
         mTunerManager.getDiscoveredTunerModel().addListener(tunerSpectralDisplayManager);
         mTunerManager.getDiscoveredTunerModel().addListener(this);
 
@@ -388,8 +391,15 @@ public class SDRTrunk implements Listener<TunerEvent>
         }
         mSplitPane = new JideSplitPane(JideSplitPane.VERTICAL_SPLIT);
         mSplitPane.setDividerSize(5);
-        mSplitPane.add(mSpectralPanel);
+        //The spectrum & waterfall can be turned off (View menu).  When off, it is left out of the window entirely so
+        //the channel list gets the space and no FFT/drawing work is done.
+        mSpectralPanelShown = SystemProperties.getInstance().get(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
+        if(mSpectralPanelShown)
+        {
+            mSplitPane.add(mSpectralPanel);
+        }
         mSplitPane.add(mControllerPanel);
+        mSpectralPanel.setDisplayShownListener(shown -> EventQueue.invokeLater(() -> setSpectralPanelShown(shown)));
 
         mBroadcastStatusVisible = mPreferences.getBoolean(PREFERENCE_BROADCAST_STATUS_VISIBLE, false);
 
@@ -575,7 +585,24 @@ public class SDRTrunk implements Listener<TunerEvent>
         viewMenu.add(new JSeparator());
         viewMenu.add(new TunersMenu());
         viewMenu.add(new JSeparator());
-        viewMenu.add(new DisableSpectrumWaterfallMenuItem(mSpectralPanel));
+        mShowSpectralMenuItem = new javax.swing.JCheckBoxMenuItem("Show Spectrum & Waterfall", mSpectralPanelShown);
+        mShowSpectralMenuItem.addActionListener(e -> {
+            if(mShowSpectralMenuItem.isSelected())
+            {
+                SystemProperties.getInstance().set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
+                setSpectralPanelShown(true);
+                Tuner tuner = mTunerSpectralDisplayManager.showFirstTuner();
+                if(tuner != null)
+                {
+                    updateTitle(tuner.getPreferredName());
+                }
+            }
+            else
+            {
+                mSpectralPanel.hideDisplay();
+            }
+        });
+        viewMenu.add(mShowSpectralMenuItem);
         viewMenu.add(new NowPlayingChannelDetailsVisibleMenuItem());
         viewMenu.add(new BroadcastStatusVisibleMenuItem());
         viewMenu.add(new ResourceStatusVisibleMenuItem());
@@ -629,7 +656,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         mUserPreferences.getSwingPreference().setDimension(WINDOW_FRAME_IDENTIFIER, mMainGui.getSize());
         mUserPreferences.getSwingPreference().setMaximized(WINDOW_FRAME_IDENTIFIER,
             (mMainGui.getExtendedState() & JFrame.MAXIMIZED_BOTH) == JFrame.MAXIMIZED_BOTH);
-        mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
+        if(mSpectralPanelShown)
+        {
+            mUserPreferences.getSwingPreference().setDimension(SPECTRAL_PANEL_IDENTIFIER, mSpectralPanel.getSize());
+        }
         mUserPreferences.getSwingPreference().setDimension(CONTROLLER_PANEL_IDENTIFIER, mControllerPanel.getSize());
         mJavaFxWindowManager.shutdown();
         mLog.info("Stopping channels ...");
@@ -815,6 +845,37 @@ public class SDRTrunk implements Listener<TunerEvent>
                 }
                 break;
         }
+    }
+
+    /**
+     * Shows or hides the spectrum & waterfall panel in the main window.  Must be called on the Swing event thread.
+     * @param shown true to show it above the channel list, false to remove it and give the space to the channel list
+     */
+    private void setSpectralPanelShown(boolean shown)
+    {
+        if(mSplitPane == null || shown == mSpectralPanelShown)
+        {
+            return;
+        }
+
+        mSpectralPanelShown = shown;
+
+        if(shown)
+        {
+            mSplitPane.insertPane(mSpectralPanel, 0);
+        }
+        else
+        {
+            mSplitPane.removePane(mSpectralPanel);
+        }
+
+        if(mShowSpectralMenuItem != null)
+        {
+            mShowSpectralMenuItem.setSelected(shown);
+        }
+
+        mSplitPane.revalidate();
+        mSplitPane.repaint();
     }
 
     /**

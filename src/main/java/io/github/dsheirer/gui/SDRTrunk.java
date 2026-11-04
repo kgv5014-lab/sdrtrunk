@@ -177,6 +177,10 @@ public class SDRTrunk implements Listener<TunerEvent>
         //Register FontAwesome so we can use the fonts in Swing windows
         IconFontSwing.register(FontAwesome.getIconFont());
 
+        //Spectrum & waterfall is off at every start: it costs memory and processing and is rarely needed.  Set before
+        //the tuners start so no tuner is attached to it.  The View menu (or a tuner's View Spectrum) turns it on.
+        SystemProperties.getInstance().set(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, false);
+
         mTunerManager = new TunerManager(mUserPreferences);
         mTunerManager.start();
 
@@ -441,11 +445,8 @@ public class SDRTrunk implements Listener<TunerEvent>
         mSplitPane.setDividerSize(5);
         //The spectrum & waterfall can be turned off (View menu).  When off, it is left out of the window entirely so
         //the channel list gets the space and no FFT/drawing work is done.
-        mSpectralPanelShown = SystemProperties.getInstance().get(SpectralDisplayPanel.SPECTRAL_DISPLAY_ENABLED, true);
-        if(mSpectralPanelShown)
-        {
-            mSplitPane.add(mSpectralPanel);
-        }
+        //Off at every start (see constructor).  The View menu turns it on for the current run.
+        mSpectralPanelShown = false;
         mSplitPane.add(mControllerPanel);
         mSpectralPanel.setDisplayShownListener(shown -> EventQueue.invokeLater(() -> setSpectralPanelShown(shown)));
 

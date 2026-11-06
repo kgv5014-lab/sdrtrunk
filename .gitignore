@@ -33,3 +33,5 @@ gradle-app.setting
 
 # Cache of project
 .gradletasknamecache
+transcriber/*.flag
+transcriber/watchdog-status.json

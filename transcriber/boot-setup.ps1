@@ -7,7 +7,8 @@ $taskName = 'SDRTrunk Plus (boot)'
 $startup = [Environment]::GetFolderPath('Startup')
 $backup = Join-Path $home_ 'startup-backup'
 $signInLink = Join-Path $startup 'SDRTrunk Plus.lnk'
-$speakersLink = Join-Path $startup 'SDRTrunk Plus speakers.lnk'
+$speakersLink = Join-Path $startup 'SDRTrunk Plus speakers.lnk'  # before the tray icon
+$trayLink = Join-Path $startup 'SDRTrunk Plus tray.lnk'
 $ollamaLink = Join-Path $startup 'Ollama.lnk'
 
 function Finish($text, $color = 'Green') {
@@ -20,7 +21,7 @@ function Finish($text, $color = 'Green') {
 
 if ($Mode -eq 'off') {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item $speakersLink -ErrorAction SilentlyContinue
+    Remove-Item $speakersLink, $trayLink -ErrorAction SilentlyContinue
     if (Test-Path (Join-Path $backup 'Ollama.lnk')) { Move-Item (Join-Path $backup 'Ollama.lnk') $ollamaLink -Force }
     Finish ("Done. Nothing starts at boot any more; the next restart leaves everything off.`n" +
             "To start everything when you sign in instead, run autostart-on.bat. To start it now, run start-everything.bat.")
@@ -61,16 +62,18 @@ Remove-Item $signInLink -ErrorAction SilentlyContinue
 # Ollama's own tray app starts a second copy at sign-in, on the wrong GPU. Put it aside (boot-off.bat puts it back).
 if (Test-Path $ollamaLink) { Move-Item $ollamaLink (Join-Path $backup 'Ollama.lnk') -Force; Write-Host 'Turned off Ollama''s own start at sign-in.' }
 
-# Sound: Windows only gives speakers to someone signed in, so a small player starts at sign-in.
+# The tray icon starts at sign-in: it shows how things are running, and plays the calls on the speakers
+# (Windows only gives speakers to someone signed in).
+Remove-Item $speakersLink -ErrorAction SilentlyContinue
 $shell = New-Object -ComObject WScript.Shell
-$link = $shell.CreateShortcut($speakersLink)
-$link.TargetPath = Join-Path $home_ 'start-speakers.bat'
+$link = $shell.CreateShortcut($trayLink)
+$link.TargetPath = Join-Path $home_ 'start-tray.bat'
 $link.WorkingDirectory = $home_
 $link.WindowStyle = 7
-$link.Description = 'Plays the live calls on the PC speakers'
+$link.Description = 'SDRTrunk Plus tray icon and PC speakers'
 $link.Save()
-Write-Host 'Added the PC speakers player, which starts when you sign in.'
+Write-Host 'Added the tray icon (with the PC speakers), which starts when you sign in.'
 
 Finish ("Done. Restart the PC: everything starts by itself about a minute after boot, signed in or not.`n" +
-        "Sound plays on the speakers once you sign in. To change channels or settings, run edit-mode.bat.`n" +
+        "A dot by the clock shows how it's running (right-click it for more), and the speakers play once you sign in. To change channels or settings, run edit-mode.bat.`n" +
         "To go back to the normal way, run boot-off.bat.")

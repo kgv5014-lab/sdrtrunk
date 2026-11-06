@@ -16,6 +16,7 @@ moment or a manual restart doesn't set it off.
 """
 
 import argparse
+import json
 import logging
 import logging.handlers
 import ntpath
@@ -40,6 +41,12 @@ SETTLE_S = 5
 PAUSE_S = 3600
 # Made by edit-mode.bat while the normal SDRTrunk window is open for changes.
 EDIT_FLAG = HOME / "edit-mode.flag"
+# Made by the updater while it updates: nothing is checked or restarted until it's gone.
+UPDATING_FLAG = HOME / "updating.flag"
+# Made by the tray icon's "Restart everything".
+RESTART_FLAG = HOME / "restart.flag"
+# What the tray icon shows: each program's state, written after every check.
+STATUS_FILE = HOME / "watchdog-status.json"
 # Makes SDRTrunk start with no window (its own built-in mode: playlist loaded, channels auto-started).
 HEADLESS_OPTS = "-Djava.awt.headless=true"
 
@@ -98,6 +105,27 @@ class System:
         """Is edit-mode.bat showing the normal SDRTrunk window right now?"""
         return EDIT_FLAG.exists()
 
+    def updating(self) -> bool:
+        return UPDATING_FLAG.exists()
+
+    def take_restart_request(self) -> bool:
+        """True once after the tray icon asked to restart everything."""
+        try:
+            RESTART_FLAG.unlink()
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return False
+
+    def write_status(self, status: dict):
+        try:
+            tmp = STATUS_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(status), encoding="utf-8")
+            os.replace(tmp, STATUS_FILE)
+        except OSError:
+            pass
+
 
 def listening_pids(netstat: str, port: int) -> set[int]:
     """Process ids listening on a TCP port, from `netstat -ano` output."""
@@ -133,6 +161,8 @@ class Program:
         self.last_state = "ok"
         self.restarts = deque()
         self.paused_until = 0.0
+        # For the tray icon: ok, starting, down, frozen, unknown, editing, paused or updating.
+        self.state = "starting"
 
     def check(self) -> str:
         raise NotImplementedError
@@ -252,6 +282,9 @@ class Watchdog:
         self.settings = config.watchdog
         self.system = system or System()
         self.notify = notify or (lambda title, message: None)
+        self.background = background
+        self.port = config.server.port
+        self.told_updating = False
         self.programs = []
         if config.summaries.enabled:
             self.programs.append(Ollama(self.system, config.summaries.url))
@@ -271,18 +304,68 @@ class Watchdog:
             log.info("Starting %s", program.name)
             if program.start():
                 program.started_at = self.system.now()
+                program.state = "starting"
                 self.system.sleep(15)
+        self.write_status()
+
+    def write_status(self):
+        sdrtrunk = next((p for p in self.programs if isinstance(p, SDRTrunk)), None)
+        self.system.write_status({
+            "time": self.system.now(), "background": self.background, "port": self.port,
+            "updating": self.told_updating, "sdrtrunk_bat": sdrtrunk.bat if sdrtrunk else "",
+            "programs": [{"name": p.name, "state": p.state} for p in self.programs]})
+
+    def restart_all(self):
+        """The tray icon's "Restart everything": stops all, then starts them in order, without alerts."""
+        log.info("Restarting everything (asked from the tray icon)")
+        for program in reversed(self.programs):
+            program.check()  # so SDRTrunk knows its java pids
+            program.stop()
+        self.system.sleep(SETTLE_S)
+        for program in self.programs:
+            program.fails = 0
+            program.paused_until = 0.0
+            if program.start():
+                program.started_at = self.system.now()
+                program.state = "starting"
+                self.system.sleep(15)
+        self.write_status()
 
     def tick(self):
+        if self.system.updating():
+            if not self.told_updating:
+                log.info("The updater is running: nothing is checked or restarted until it's done")
+                self.told_updating = True
+                for program in self.programs:
+                    program.state = "updating"
+                self.write_status()
+            return
+        if self.told_updating:
+            log.info("The update is over")
+            self.told_updating = False
+        if self.system.take_restart_request():
+            self.restart_all()
+            return
+        try:
+            self._check_all()
+        finally:
+            self.write_status()
+
+    def _check_all(self):
         now = self.system.now()
         for program in self.programs:
             if program.started_at is not None and now - program.started_at < self.settings.startup_s:
+                if program.state not in ("ok", "starting"):
+                    program.state = "starting"
                 continue
             if now < program.paused_until:
+                program.state = "paused"
                 continue
             if isinstance(program, SDRTrunk) and self._editing(program):
+                program.state = "editing" if program.editing else "starting"
                 continue
             state = program.check()
+            program.state = state
             if state in ("ok", "unknown"):
                 if program.fails:
                     log.info("%s is fine again", program.name)
@@ -335,6 +418,7 @@ class Watchdog:
         if not program.start():
             return
         program.started_at = self.system.now()
+        program.state = "starting"
         program.restarts.append(now)
         self.notify(f"{program.name} restarted",
                     f"It {reason}, so it was restarted at {datetime.fromtimestamp(now):%I:%M %p}.".replace("at 0", "at "))
@@ -376,6 +460,8 @@ def main():
     if args.background:
         # Left over from an edit-mode window that was open when the PC went down.
         EDIT_FLAG.unlink(missing_ok=True)
+        UPDATING_FLAG.unlink(missing_ok=True)
+        RESTART_FLAG.unlink(missing_ok=True)
         log.info("Background mode: SDRTrunk runs with no window (edit-mode.bat opens the normal one)")
 
     try:

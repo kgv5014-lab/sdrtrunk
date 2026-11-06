@@ -771,17 +771,24 @@ channels by itself, and tries a channel again every 30 seconds for 5 minutes if 
 Recording, streaming, the map, the phone pages and alerts all work as usual. It replaces autostart-on.bat
 (its shortcut is removed) and Ollama's own start at sign-in, which would use the wrong GPU.
 
+* **Tray icon:** when you sign in, a dot appears by the clock (start-tray.bat; drag it out of the "^"
+  overflow to keep it in view). Green: SDRTrunk, the Whisper transcriber and summaries (Ollama) are all
+  running. Orange: starting, edit mode or updating. Red: one stopped (a pop-up says which; the watchdog
+  restarts it). Grey: the watchdog isn't running. Hover for a summary; double-click opens the map.
+  Right-click for: each program's state, Open the map, PC speakers (on/off), Open SDRTrunk window (edit
+  mode), Restart everything, Update everything (runs the updater), Show the log, and Close this icon.
 * **Sound:** Windows only gives the speakers to someone signed in, so SDRTrunk can't play them at boot.
-  When you sign in, **start-speakers.bat** starts by itself (a minimized "PC speakers" window) and plays
-  the live calls, the same stream as the phone's Listen page, about 3 seconds after each call ends.
-  Close that window to stop the sound. `[pc_speakers]` in config.toml can limit it to some talkgroups or
-  pick a sound output.
+  The tray icon plays the live calls, the same stream as the phone's Listen page, about 3 seconds after
+  each call ends. Untick PC speakers in its menu to stop the sound (it stays off until ticked again).
+  `[pc_speakers]` in config.toml can limit it to some talkgroups or pick a sound output.
 * **Changing channels or settings:** run **edit-mode.bat**. It stops the no-window SDRTrunk and opens the
-  normal window. Make your changes, close the window, and the no-window copy starts again within a
-  minute. The PC speakers player goes quiet meanwhile, because the window plays the calls itself.
+  normal window (also in the tray menu). Make your changes, close the window, and the no-window copy
+  starts again within a minute. The PC speakers go quiet meanwhile, because the window plays the calls itself.
 * **What's happening:** watchdog.log in this folder, and SDRTrunk's own log (View > Application Log Files
   in edit mode). Task Manager shows the programs under Details.
-* **Updates:** the updater closes everything, then starts the boot task again when it's done.
+* **Updates:** run update-sdrtrunk-plus.bat (or Update everything in the tray menu). It pauses the
+  watchdog, asks to close the programs (type **C**: they have no windows), updates, then starts the boot
+  task again. Nothing restarts in the middle of the build.
 * **boot-off.bat** goes back to the normal way (run autostart-on.bat for start at sign-in).
 
 ### Auto sign-in instead

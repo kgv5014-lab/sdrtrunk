@@ -17,7 +17,7 @@
                padding: 12px 12px 10px; font: inherit; font-weight: 600; cursor: pointer; box-shadow: 0 -2px 0 transparent inset; }
   nav button:hover { color: var(--fg, #e6edf3); }
   nav button.on { color: var(--accent, #58a6ff); box-shadow: 0 -2px 0 var(--accent, #58a6ff) inset; }
-  nav button[hidden] { display: none; }
+  nav button[hidden], nav button.phone { display: none; }
   nav .ico { font-size: 16px; line-height: 1; }
   main { flex: 1; position: relative; min-height: 0; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg, #0d1117); visibility: hidden; }
@@ -30,12 +30,16 @@
     nav button { flex: 1; flex-direction: column; gap: 3px; padding: 7px 2px 6px; font-size: 10.5px; min-width: 0;
                  box-shadow: none !important; }
     nav .ico { font-size: 20px; }
+    nav { overflow-x: auto; scrollbar-width: none; }
+    nav button.phone:not([hidden]) { display: flex; }
+    nav button { font-size: 10px; min-width: 46px; }
   }
 </style>
 </head>
 <body>
 <nav id="tabs">
   <div class="brand"><img src="app-icon-180.png" alt="">SDRTrunk Plus</div>
+  <button data-tab="incidents" data-src="map" class="phone"><span class="ico">🚨</span><span>Incidents</span></button>
   <button data-tab="map" data-src="map"><span class="ico">🗺️</span><span>Map</span></button>
   <button data-tab="calls" data-src="./"><span class="ico">📻</span><span>Calls</span></button>
   <button data-tab="listen" data-src="listen"><span class="ico">🔊</span><span>Listen</span></button>
@@ -79,14 +83,19 @@ function frame(page, url) {
   }
   return f;
 }
+// On a phone the map's own Incidents / Map / Live calls switcher is replaced by these bottom tabs.
+const phone = window.matchMedia('(max-width: 760px)');
+const PANES = { incidents: 'list', map: 'map', calls: 'feed' };
+function onMap(tab) { return tab === 'summaries' || tab === 'map' || (phone.matches && tab in PANES); }
 function show(tab, url) {
-  if (!button(tab)) tab = 'map';
-  const page = tab === 'summaries' ? 'map' : tab;
+  if (!button(tab) || (tab === 'incidents' && !phone.matches)) tab = 'map';
+  const page = onMap(tab) ? 'map' : tab;
   const f = frame(page, url);
   for (const other of Object.values(frames)) other.classList.toggle('on', other === f);
   buttons.forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
-  if (current === 'summaries' && tab === 'map') post(f, { recaps: false });
+  if (current === 'summaries' && tab !== 'summaries' && page === 'map') post(f, { recaps: false });
   if (tab === 'summaries') post(f, { recaps: true });
+  else if (page === 'map' && phone.matches) post(f, { pane: PANES[tab] });
   current = tab;
   store('app.tab', tab);
   history.replaceState(null, '', '#' + tab);
@@ -107,7 +116,13 @@ window.addEventListener('message', e => {
   if (e.data.go) show(e.data.go, e.data.url);
   // The summaries panel was opened or closed from inside the map.
   if (from[0] === 'map' && e.data.recaps === false && current === 'summaries') show('map');
-  if (from[0] === 'map' && e.data.recaps === true && current === 'map') {
+  // A tap inside the map switched its part (say, an incident opened on the map): follow it below.
+  if (from[0] === 'map' && e.data.pane && phone.matches && current in PANES && current !== 'summaries') {
+    const tab = Object.keys(PANES).find(t => PANES[t] === e.data.pane);
+    if (tab && button(tab)) { current = tab; store('app.tab', tab); history.replaceState(null, '', '#' + tab);
+      buttons.forEach(b => b.classList.toggle('on', b.dataset.tab === tab)); }
+  }
+  if (from[0] === 'map' && e.data.recaps === true && onMap(current)) {
     current = 'summaries'; buttons.forEach(b => b.classList.toggle('on', b.dataset.tab === 'summaries'));
   }
 });

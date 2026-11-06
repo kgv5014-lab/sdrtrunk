@@ -1079,8 +1079,8 @@ map.on('popupclose', () => { if (needsReload) { needsReload = false; load(); } }
   if (watchingTraffic) setInterval(loadTraffic, 60000);
   setInterval(async () => { await status(); if (!popupOpen && !playing() && !editing) await load(); }, 10000);
 })();
-$('range').value = stored('map.range', '86400');
-if (!$('range').value) $('range').value = '86400';
+$('range').value = stored('map.range', '21600');
+if (!$('range').value) $('range').value = '21600';
 $('range').addEventListener('change', () => { store('map.range', $('range').value); fitted = false; incidentsTag = null; load(); });
 $('hidden').addEventListener('change', () => { incidentsTag = null; load(); });
 $('multi').checked = stored('map.multi', false);

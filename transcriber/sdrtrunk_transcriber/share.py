@@ -62,7 +62,9 @@ MAX_LIMIT = 300
 HEADERS = {
     # The secret path must not leak to map tile servers or links through the Referer header.
     "Referrer-Policy": "no-referrer",
-    "X-Frame-Options": "DENY",
+    # The app (/app) shows its pages in frames from the same address; other sites still can't frame them.
+    "X-Frame-Options": "SAMEORIGIN",
+    "Content-Security-Policy": "frame-ancestors 'self'",
     "X-Content-Type-Options": "nosniff",
     "Strict-Transport-Security": "max-age=31536000",
     "X-Robots-Tag": "noindex, nofollow",

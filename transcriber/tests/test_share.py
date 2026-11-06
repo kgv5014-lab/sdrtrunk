@@ -82,6 +82,9 @@ def test_guest_signs_in_and_sees_the_map_read_only(make_client, tmp_path):
         app = guest.get(prefix + "/app")
         assert app.status_code == 200 and 'data-guest="1"' in app.text and "app-theme.css" in app.text
         assert guest.get(prefix + "/manifest.webmanifest").status_code == 200
+        # The app shows the pages in frames, so they must allow the same address (and only that).
+        assert page.headers["x-frame-options"] == "SAMEORIGIN"
+        assert page.headers["content-security-policy"] == "frame-ancestors 'self'"
         assert guest.get(prefix + "/").status_code == 200
         assert guest.get(prefix + "/listen").status_code == 200
         calls = guest.get(prefix + "/api/calls?limit=5000")

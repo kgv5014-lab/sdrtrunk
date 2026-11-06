@@ -19,6 +19,13 @@
   nav button.on { color: var(--accent, #58a6ff); box-shadow: 0 -2px 0 var(--accent, #58a6ff) inset; }
   nav button[hidden], nav button.phone { display: none; }
   nav .ico { font-size: 16px; line-height: 1; }
+  #more-menu { position: fixed; right: 8px; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 10; background: var(--card, #161b22);
+               border: 1px solid var(--line, #262d37); border-radius: 12px; padding: 6px; box-shadow: 0 8px 28px rgba(0,0,0,.55); min-width: 180px; }
+  #more-menu[hidden] { display: none; }
+  #more-menu button { display: flex; align-items: center; gap: 10px; width: 100%; background: none; border: 0; color: var(--fg, #e6edf3);
+                      font: inherit; font-size: 16px; padding: 11px 12px; border-radius: 8px; text-align: left; }
+  #more-menu button.on { color: var(--accent, #58a6ff); }
+  #more-menu .ico { font-size: 20px; }
   main { flex: 1; position: relative; min-height: 0; }
   main iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: var(--bg, #0d1117); visibility: hidden; }
   main iframe.on { visibility: visible; }
@@ -32,6 +39,7 @@
     nav .ico { font-size: 20px; }
     nav { overflow-x: auto; scrollbar-width: none; }
     nav button.phone:not([hidden]) { display: flex; }
+    nav button[data-more] { display: none !important; }
     nav button { font-size: 10px; min-width: 46px; }
   }
 </style>
@@ -43,17 +51,19 @@
   <button data-tab="map" data-src="map"><span class="ico">🗺️</span><span>Map</span></button>
   <button data-tab="calls" data-src="./"><span class="ico">📻</span><span>Calls</span></button>
   <button data-tab="listen" data-src="listen"><span class="ico">🔊</span><span>Listen</span></button>
-  <button data-tab="aviation" data-src="aviation" class="admin"><span class="ico">✈️</span><span>Aviation</span></button>
+  <button data-tab="aviation" data-more="1" data-src="aviation" class="admin"><span class="ico">✈️</span><span>Aviation</span></button>
   <button data-tab="history" data-src="history" class="admin"><span class="ico">🔥</span><span>History</span></button>
-  <button data-tab="summaries" class="admin"><span class="ico">📋</span><span>Summaries</span></button>
-  <button data-tab="settings" data-src="settings" class="admin" hidden><span class="ico">⚙️</span><span>Settings</span></button>
+  <button data-tab="summaries" data-more="1" class="admin"><span class="ico">📋</span><span>Summaries</span></button>
+  <button id="more-btn" class="phone admin"><span class="ico">⋯</span><span>More</span></button>
+  <button data-tab="settings" data-more="1" data-src="settings" class="admin" hidden><span class="ico">⚙️</span><span>Settings</span></button>
 </nav>
+<div id="more-menu" hidden></div>
 <main id="frames"></main>
 <script>
 // One app: each tab is one of the existing pages, kept open in the background so live audio keeps
 // playing and the map keeps its place. Links between pages switch tabs (app-frame.js).
 const GUEST = !!document.documentElement.dataset.guest;
-const buttons = [...document.querySelectorAll('#tabs button')];
+const buttons = [...document.querySelectorAll('#tabs button[data-tab]')];
 const frames = {};
 let current = null;
 function store(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } }
@@ -93,6 +103,9 @@ function show(tab, url) {
   const f = frame(page, url);
   for (const other of Object.values(frames)) other.classList.toggle('on', other === f);
   buttons.forEach(b => b.classList.toggle('on', b.dataset.tab === tab));
+  const more = document.getElementById('more-btn');
+  if (more) more.classList.toggle('on', phone.matches && !!button(tab).dataset.more);
+  closeMore();
   if (current === 'summaries' && tab !== 'summaries' && page === 'map') post(f, { recaps: false });
   if (tab === 'summaries') post(f, { recaps: true });
   else if (page === 'map' && phone.matches) post(f, { pane: PANES[tab] });
@@ -107,6 +120,24 @@ function post(f, msg) {
   if (f.dataset.ready) send(); else f.addEventListener('load', send, { once: true });
 }
 buttons.forEach(b => { b.onclick = () => show(b.dataset.tab); });
+
+// Phones: Aviation, Summaries and Settings sit behind a More button so the bar isn't crowded.
+const menu = document.getElementById('more-menu');
+function closeMore() { menu.hidden = true; }
+const moreBtn = document.getElementById('more-btn');
+if (moreBtn) moreBtn.onclick = e => {
+  e.stopPropagation();
+  if (!menu.hidden) { closeMore(); return; }
+  menu.replaceChildren(...buttons.filter(b => b.dataset.more && b.isConnected && !b.hidden).map(b => {
+    const item = document.createElement('button');
+    item.innerHTML = b.innerHTML;
+    item.classList.toggle('on', b.dataset.tab === current);
+    item.onclick = () => show(b.dataset.tab);
+    return item;
+  }));
+  menu.hidden = false;
+};
+document.addEventListener('click', e => { if (!menu.contains(e.target)) closeMore(); });
 
 window.addEventListener('message', e => {
   if (e.origin !== location.origin || !e.data || !e.data.app) return;

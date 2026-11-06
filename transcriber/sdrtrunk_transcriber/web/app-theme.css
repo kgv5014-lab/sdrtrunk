@@ -21,3 +21,5 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .leaflet-control-attribution a { color: var(--muted); }
 /* Inside the app's tabs: the links to other tabs are in the tab bar instead. */
 .in-app .app-tab-link { display: none !important; }
+/* Phones: the app's bottom tabs replace the map's Incidents / Map / Live calls switcher. */
+@media (max-width: 760px) { .in-app #tabs { display: none !important; } }

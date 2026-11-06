@@ -36,6 +36,11 @@
         .observe(panel, { attributes: true, attributeFilter: ['hidden'] });
     }
     var own = location.pathname.slice(dir.length);
+    // The map's Incidents / Map / Live calls switcher: the app's bottom tabs drive it on a phone.
+    if (typeof window.pick === 'function') {
+      var pick = window.pick;
+      window.pick = function (pane) { pick(pane); tell({ pane: pane }); };
+    }
     tell({ ready: true, page: Object.prototype.hasOwnProperty.call(TABS, own) ? TABS[own] : '' });
   });
   window.addEventListener('message', function (e) {
@@ -43,5 +48,6 @@
     var panel = document.getElementById('recaps');
     if (e.data.recaps === true && panel && panel.hidden && typeof window.openRecaps === 'function') window.openRecaps();
     if (e.data.recaps === false && panel) panel.hidden = true;
+    if (e.data.pane && typeof window.pick === 'function') window.pick(e.data.pane);
   });
 })();

@@ -1,15 +1,17 @@
 """Plays the live calls on this PC's speakers when SDRTrunk runs with no window.
 
-    python -m sdrtrunk_transcriber.pc_speakers --config config.toml        (start-speakers.bat)
+    python -m sdrtrunk_transcriber.pc_speakers --config config.toml        (run by the tray icon)
 
 Started before Windows sign-in (boot-on.bat), SDRTrunk can't reach the speakers: Windows only gives
-sound to someone signed in. So this small player starts when you sign in and plays the same live
-stream as the phone's Listen page, from this PC's transcriber. While edit-mode.bat has the normal
+sound to someone signed in. So the tray icon (tray.ps1) runs this player when you sign in; it plays
+the same live stream as the phone's Listen page, from this PC's transcriber. While edit-mode.bat has the normal
 SDRTrunk window open, that window plays the calls itself, so this one goes quiet.
 """
 
 import argparse
 import logging
+import logging.handlers
+import sys
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -76,7 +78,12 @@ def main():
     parser = argparse.ArgumentParser(prog="sdrtrunk_transcriber.pc_speakers")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
     args = parser.parse_args()
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    # The tray icon runs this with no window, so it also logs to a file.
+    handlers = [logging.handlers.RotatingFileHandler(HOME / "pc-speakers.log", maxBytes=500_000, backupCount=1,
+                                                     encoding="utf-8")]
+    if sys.stderr is not None:
+        handlers.append(logging.StreamHandler())
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", handlers=handlers)
 
     from .config import load_config
 

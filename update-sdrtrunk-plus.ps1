@@ -24,6 +24,11 @@ $imageDir = Join-Path $repo 'build\image'
 $previousImage = Join-Path $parent 'sdrtrunk-previous-image'
 $log = Join-Path $parent 'update-log.txt'
 $buildTimeFile = Join-Path $parent 'update-build-time.txt'
+# Background mode (boot-on.bat): while this file is there the watchdog restarts nothing, and the boot
+# task doesn't count the programs being closed as a failure.
+$bootTaskName = 'SDRTrunk Plus (boot)'
+$updatingFlag = Join-Path $TranscriberDir 'updating.flag'
+$bootTask = Get-ScheduledTask -TaskName $bootTaskName -ErrorAction SilentlyContinue
 
 # Files and folders in the transcriber folder that belong to you, not to the update.
 $keepFiles = @('config.toml', 'vocabulary.txt', 'codes.csv', 'corrections.csv', 'places.csv',
@@ -78,9 +83,20 @@ function Invoke-Build {
     return $proc.ExitCode
 }
 function Note($text) { Write-Host "   $text" }
+function Start-BootTask {
+    Remove-Item $updatingFlag -ErrorAction SilentlyContinue
+    try {
+        Start-ScheduledTask -TaskName $bootTaskName -ErrorAction Stop
+        return $true
+    } catch { return $false }
+}
 function Stop-Update($text) {
     Write-Host ''
     Write-Host $text -ForegroundColor Red
+    if ($bootTask) {
+        if (Start-BootTask) { Write-Host 'Everything is starting again in the background.' -ForegroundColor Yellow }
+        else { Write-Host 'Restart the PC to start everything again.' -ForegroundColor Yellow }
+    }
     exit 1
 }
 
@@ -101,6 +117,13 @@ if (-not (Test-Path (Join-Path $repo 'gradlew.bat'))) { Stop-Update "No gradlew.
 if (-not (Test-Path $TranscriberDir)) { Stop-Update "Transcriber folder $TranscriberDir not found. Run: update-sdrtrunk-plus.bat -TranscriberDir `"<folder>`"" }
 
 Step 'Checking that SDRTrunk and the transcriber are closed'
+if ($bootTask) {
+    Set-Content -Path $updatingFlag -Value 'update-sdrtrunk-plus.bat is updating'
+    Note 'Background mode: the watchdog now leaves everything alone until the update is done.'
+    Note 'The programs have no windows, so type C below to close them.'
+    try { Stop-ScheduledTask -TaskName $bootTaskName -ErrorAction Stop } catch { }
+    Start-Sleep -Seconds 2
+}
 while ($running = @(Get-RunningPrograms)) {
     Note 'Still running:'
     foreach ($p in $running) { Note "  $($p.Name) (process $($p.ProcessId))" }
@@ -135,7 +158,15 @@ $new = (git rev-parse HEAD).Trim()
 if ($old -eq $new) {
     Note 'Already up to date.'
     $answer = Read-Host '   Rebuild and reinstall anyway? Type Y for yes, Enter to stop'
-    if ($answer -notmatch '^[yY]') { Write-Host ''; Write-Host 'Nothing to do.' -ForegroundColor Green; exit 0 }
+    if ($answer -notmatch '^[yY]') {
+        Write-Host ''
+        Write-Host 'Nothing to do.' -ForegroundColor Green
+        if ($bootTask) {
+            if (Start-BootTask) { Write-Host 'Everything is starting again in the background.' -ForegroundColor Green }
+            else { Write-Host 'Restart the PC to start everything again.' -ForegroundColor Yellow }
+        }
+        exit 0
+    }
 } else {
     Note 'New changes:'
     git log --oneline --no-merges "$old..$new" | ForEach-Object { Note "  $_" }
@@ -192,14 +223,12 @@ Pop-Location
 
 Write-Host ''
 Write-Host "Done. Updated $($old.Substring(0, 7)) to $($new.Substring(0, 7))." -ForegroundColor Green
-$bootTask = Get-ScheduledTask -TaskName 'SDRTrunk Plus (boot)' -ErrorAction SilentlyContinue
 if ($bootTask) {
     # boot-on.bat is in use: start everything again the same way, with no windows.
-    try {
-        Start-ScheduledTask -TaskName 'SDRTrunk Plus (boot)' -ErrorAction Stop
+    if (Start-BootTask) {
         Write-Host 'Everything is starting again in the background (no windows), as at boot.' -ForegroundColor Green
-        Write-Host 'Run start-speakers.bat in the transcriber folder for sound on the PC speakers.' -ForegroundColor Green
-    } catch {
+        Write-Host 'The tray icon by the clock turns green when it is all running (a minute or two).' -ForegroundColor Green
+    } else {
         Write-Host 'Restart the PC to start everything again in the background.' -ForegroundColor Green
     }
 } else {

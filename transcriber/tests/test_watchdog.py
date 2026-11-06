@@ -18,6 +18,9 @@ class FakeSystem:
         self.next_pid = 100
         self.envs = []
         self.edit = False
+        self.update = False
+        self.restart = False
+        self.status = None
 
     def now(self):
         return self.time
@@ -55,6 +58,16 @@ class FakeSystem:
 
     def editing(self):
         return self.edit
+
+    def updating(self):
+        return self.update
+
+    def take_restart_request(self):
+        asked, self.restart = self.restart, False
+        return asked
+
+    def write_status(self, status):
+        self.status = status
 
 
 def make(sdrtrunk_bat="", summaries=True, background=False):
@@ -230,3 +243,44 @@ def test_edit_mode_leaves_sdrtrunk_alone_then_starts_it_right_away():
     run_checks(dog, system, 1)
     assert system.launched == ["sdr-trunk.bat"] and alerts == []
     assert "-Djava.awt.headless=true" in system.envs[-1]["JAVA_OPTS"]
+
+
+def states(system):
+    return {p["name"]: p["state"] for p in system.status["programs"]}
+
+
+def test_status_for_the_tray_icon():
+    dog, system, _ = make(sdrtrunk_bat=BAT, background=True)
+    dog.start_all()
+    assert set(states(system).values()) == {"starting"}
+    assert system.status["background"] and system.status["port"] == 3000 and system.status["sdrtrunk_bat"] == BAT
+    run_checks(dog, system, 7)
+    assert states(system) == {"Ollama": "ok", "Transcriber": "ok", "SDRTrunk": "ok"}
+    system.up["transcriber"] = False
+    run_checks(dog, system, 1)
+    assert states(system)["Transcriber"] == "down"
+
+
+def test_nothing_is_restarted_while_updating():
+    dog, system, alerts = make(sdrtrunk_bat=BAT, background=True)
+    dog.start_all()
+    run_checks(dog, system, 7)
+    system.update = True
+    system.up["transcriber"] = False
+    system.sdrtrunk = []
+    run_checks(dog, system, 20)
+    assert system.launched == [] and alerts == []
+    assert set(states(system).values()) == {"updating"}
+    system.update = False
+    run_checks(dog, system, 4)
+    assert "start-transcriber.bat" in system.launched and "sdr-trunk.bat" in system.launched
+
+
+def test_restart_everything_from_the_tray_sends_no_alerts():
+    dog, system, alerts = make(sdrtrunk_bat=BAT, background=True)
+    dog.start_all()
+    run_checks(dog, system, 7)
+    system.restart = True
+    run_checks(dog, system, 1)
+    assert system.launched == ["start-ollama.bat", "start-transcriber.bat", "sdr-trunk.bat"]
+    assert 500 in system.killed and alerts == []

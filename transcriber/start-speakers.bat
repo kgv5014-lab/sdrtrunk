@@ -1,8 +1,3 @@
 @echo off
-rem Plays the live calls on this PC's speakers while SDRTrunk runs with no window (boot-on.bat starts
-rem this when you sign in). Close this window to stop the sound; run it again to start it.
-cd /d "%~dp0"
-title PC speakers
-if not exist config.toml copy config.example.toml config.toml >nul
-.venv\Scripts\python.exe -m sdrtrunk_transcriber.pc_speakers --config config.toml
-pause
+rem The PC speakers now play from the tray icon (right-click it > PC speakers). This starts the icon.
+call "%~dp0start-tray.bat"

@@ -22,6 +22,7 @@ package io.github.dsheirer.gui.playlist.channel;
 import com.google.common.base.Joiner;
 import io.github.dsheirer.controller.channel.Channel;
 import io.github.dsheirer.controller.channel.ChannelException;
+import io.github.dsheirer.gui.control.AccessibilityUtil;
 import io.github.dsheirer.gui.playlist.IAliasListRefreshListener;
 import io.github.dsheirer.module.decode.DecoderFactory;
 import io.github.dsheirer.module.decode.DecoderType;
@@ -334,6 +335,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             searchBox.setSpacing(5);
             searchBox.setAlignment(Pos.CENTER);
             Label searchLabel = new Label("Search:");
+            searchLabel.setLabelFor(getSearchField());
             searchLabel.setAlignment(Pos.CENTER_RIGHT);
             searchLabel.setMinWidth(Region.USE_PREF_SIZE);
             searchBox.getChildren().addAll(searchLabel, getSearchField());
@@ -343,6 +345,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
             viewBox.setAlignment(Pos.CENTER);
             Label viewLabel = new Label("View Channels:");
             viewLabel.setMinWidth(Region.USE_PREF_SIZE);
+            AccessibilityUtil.labelGroup(viewLabel, getViewSegmentedButton());
             viewBox.getChildren().addAll(viewLabel, getViewSegmentedButton());
 
             mSearchAndViewBox.getChildren().addAll(searchBox, viewBox);
@@ -412,6 +415,7 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
         {
             mChannelTableView = new TableView<>();
             mChannelTableView.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_ALL_COLUMNS);
+            mChannelTableView.setAccessibleText("Channels");
 
             TableColumn<Channel,Boolean> playingColumn = new TableColumn("Play");
             playingColumn.setPrefWidth(55);
@@ -435,12 +439,14 @@ public class ChannelEditor extends SplitPane implements IFilterProcessor, IAlias
                         if(empty || item == null || !item)
                         {
                             setGraphic(null);
+                            setAccessibleText(empty ? null : "No");
                         }
                         else
                         {
                             IconNode iconNode = new IconNode(FontAwesome.CHECK);
                             iconNode.setFill(Color.GREEN);
                             setGraphic(iconNode);
+                            setAccessibleText("Yes");
                         }
                     }
                 };

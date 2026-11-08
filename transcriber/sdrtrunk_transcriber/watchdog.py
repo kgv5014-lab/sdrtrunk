@@ -101,6 +101,12 @@ class System:
     def exists(self, path: str) -> bool:
         return os.path.exists(path)
 
+    def listdir(self, path: str) -> list[str]:
+        try:
+            return os.listdir(path)
+        except OSError:
+            return []
+
     def editing(self) -> bool:
         """Is edit-mode.bat showing the normal SDRTrunk window right now?"""
         return EDIT_FLAG.exists()
@@ -227,6 +233,22 @@ class Transcriber(Program):
             self.system.sleep(SETTLE_S)
 
 
+def moved_image_bat(system, bat: str) -> str:
+    """When a new SDRTrunk version is built, its folder name changes, e.g.
+    build\\image\\sdr-trunk-windows-x86_64-v0.6.2-beta-1 becomes ...-v1.0.0-beta-1, so a saved path to
+    sdr-trunk.bat stops working. Returns the sdr-trunk.bat in the folder that replaced it, or ""."""
+    bin_dir = ntpath.dirname(ntpath.normpath(bat))
+    version_dir = ntpath.dirname(bin_dir)
+    image_dir = ntpath.dirname(version_dir)
+    if ntpath.basename(image_dir).lower() != "image":
+        return ""
+    for name in sorted(system.listdir(image_dir), reverse=True):
+        candidate = ntpath.join(image_dir, name, ntpath.basename(bin_dir), ntpath.basename(bat))
+        if system.exists(candidate):
+            return candidate
+    return ""
+
+
 class SDRTrunk(Program):
     name = "SDRTrunk"
 
@@ -262,6 +284,12 @@ class SDRTrunk(Program):
     def start(self):
         if not self.bat:
             return False
+        if not self.system.exists(self.bat):
+            moved = moved_image_bat(self.system, self.bat)
+            if moved:
+                log.info("%s is gone (a new SDRTrunk version renames its folder); starting %s instead",
+                         self.bat, moved)
+                self.bat = moved
         if self.headless:
             # The launcher adds JAVA_OPTS to java's settings.
             opts = (os.environ.get("JAVA_OPTS", "") + " " + HEADLESS_OPTS).strip()

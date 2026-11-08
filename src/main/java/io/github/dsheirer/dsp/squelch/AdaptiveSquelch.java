@@ -19,90 +19,106 @@
 
 package io.github.dsheirer.dsp.squelch;
 
-import io.github.dsheirer.dsp.filter.iir.SinglePoleIirFilter;
 import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceEvent;
-import java.time.Duration;
 import java.util.Arrays;
-import java.util.function.LongSupplier;
 import org.apache.commons.math3.util.FastMath;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * Adaptive squelch control that optionally tracks the noise floor and auto-adjusts squelch threshold.
+ * Adaptive power squelch control that optionally tracks the noise floor and auto-adjusts squelch threshold.
+ *
+ * Signal power is measured in 5 millisecond blocks so that all timing is independent of the sample rate.  The squelch
+ * opens after consecutive blocks at or above the threshold.  It closes on a 20 millisecond power average that spans at
+ * least one cycle of the lowest voice frequencies, so that modulation doesn't look like a loss of signal, and which
+ * responds in a fixed time regardless of how strong the signal was.
+ *
+ * Closing occurs in two steps.  Audio is disabled as soon as the power average falls below the close threshold, which
+ * limits the noise tail, while the squelch stays open for a hang period to bridge a brief signal fade without ending
+ * the call.
+ *
+ * When auto-track is enabled, the noise floor is the lowest power from the recent intervals that look like noise, using
+ * the ratio mean(power^2) / mean(power)^2, which is 2.0 for gaussian noise and approaches 1.0 for a steady carrier.  The
+ * threshold is held at a margin over the noise floor, so a threshold below the noise floor can't latch the squelch open.
+ * The squelch stays closed until the first noise floor measurement is complete.  A signal that doesn't look like noise
+ * is excluded from the noise floor unless it persists for the carrier timeout, after which it's treated as the noise
+ * floor so that a dead carrier doesn't hold the squelch open.  The noise floor recovers when the carrier ends.  A carrier
+ * with voice modulation, such as a continuous broadcast, doesn't time out, and a timed out carrier that develops voice
+ * modulation is removed from the noise floor.
  *
  * Initially modeled on: https://github.com/gnuradio/gnuradio/blob/master/gr-analog/lib/simple_squelch_cc_impl.cc
  */
 public class AdaptiveSquelch implements Listener<SourceEvent>
 {
     private static final Logger mLog = LoggerFactory.getLogger(AdaptiveSquelch.class);
-    private static final long AUTO_ADJUST_PERIOD_MS = Duration.ofSeconds(5).toMillis();
-    //With auto-track on, a squelch that stays open this long is taken to be open on noise (the threshold was set
-    //below the noise floor, so auto-track never gets a squelched reading to learn from) and is raised above it.
-    private static final long STUCK_OPEN_MS = Duration.ofSeconds(30).toMillis();
-    //Power readings (two per second) kept while open: the quiet ones among them are the noise floor.
-    private static final int STUCK_OPEN_READINGS = 60;
-    private static final float STUCK_OPEN_NOISE_PERCENTILE = 0.2f;
-    //Threshold set this far above the noise floor: 6 dB
-    private static final float STUCK_OPEN_BUFFER = 3.98f;
-    private SinglePoleIirFilter mFilter;
+    private static final double DEFAULT_SAMPLE_RATE = 50000.0;
+    private static final double BLOCK_SECONDS = 0.005;
+    private static final int OPEN_BLOCKS = 2; //10 milliseconds
+    private static final int CLOSE_AVERAGE_BLOCKS = 4; //20 milliseconds
+    private static final int HANG_BLOCKS = 20; //100 milliseconds
+    private static final int POWER_INTERVAL_BLOCKS = 100; //500 milliseconds
+    private static final int NOISE_WINDOW_INTERVALS = 20; //10 seconds
+    private static final int CARRIER_TIMEOUT_INTERVALS = 120; //60 seconds
+    private static final int MINIMUM_VOICE_INTERVALS = 3;
+    private static final double NOISE_POWER_RATIO = 1.85;
+    private static final float MINIMUM_SQUELCH_MARGIN = 4.0f; //6 dB
+    private static final float CLOSE_THRESHOLD_RATIO = 0.5f; //3 dB below the open threshold
+    private final float[] mCloseBlocks = new float[CLOSE_AVERAGE_BLOCKS];
+    private int mCloseBlockPointer = 0;
+    private float mCloseAccumulator = 0.0f;
+    private int mBlockSize = (int)Math.round(DEFAULT_SAMPLE_RATE * BLOCK_SECONDS);
+    private int mBlockSampleCount = 0;
+    private float mBlockAccumulator = 0.0f;
+    private int mOpenCount = 0;
+    private int mHangCount = 0;
     private float mPower = 0.0f;
-    private boolean mSquelch;
-    private float mSquelchThreshold;
+    private double mIntervalPower = 0.0;
+    private double mIntervalPowerSquared = 0.0;
+    private int mIntervalSampleCount = 0;
+    private int mIntervalBlockCount = 0;
+    private boolean mFirstIntervalComplete = false;
+    private final float[] mNoiseHistory = new float[NOISE_WINDOW_INTERVALS];
+    private int mNoiseHistoryPointer = 0;
+    private int mNoiseHistoryCount = 0;
+    private int mCarrierIntervalCount = 0;
+    private int mVoiceIntervalCount = 0;
+    private boolean mCarrierTimedOut = false;
+    private boolean mCarrierDetected = false;
+    private Float mNoiseFloorBeforeCarrier;
+    private final VoiceModulationDetector mVoiceModulationDetector;
     private Float mNoiseFloor;
-    private float mSquelchBuffer;
+    private Float mLowestNoiseFloor;
+    private float mUserThreshold;
+    private boolean mSquelch = true;
+    private float mSquelchThreshold;
     private boolean mSquelchChanged = false;
-    private int mPowerLevelBroadcastCount = 0;
-    private int mPowerLevelBroadcastThreshold;
     private boolean mAutoTrackNoiseFloor;
-    private long mLastAutoAdjustTimestamp;
     private Listener<SourceEvent> mSourceEventListener;
-    private final LongSupplier mClock;
-    private long mUnmutedSince;
-    private final float[] mOpenReadings = new float[STUCK_OPEN_READINGS];
-    private int mOpenReadingCount = 0;
 
     /**
      * Constructs an instance
      *
-     * Testing against a 12.5 kHz analog FM modulated signal, the following parameters provided a
-     * good responsiveness.  A threshold of -80.0 dB seemed to trigger significant flapping during un-squelching.
-     *   - alpha: 0.0001
-     *   - threshold: 78.0 dB
-     *
-     * @param alpha decay value of the single pole IIR filter in range: 0.0 - 1.0.  The smaller the alpha value,
-     * the slower the squelch response.
      * @param squelchThreshold in decibels.  Signal power must exceed this threshold value for unsquelch.
      * @param autoTrack the noise floor when squelched and periodically readjust the squelch threshold.
+     * @param bandwidth of the channel in hertz
      */
-    public AdaptiveSquelch(float alpha, float squelchThreshold, boolean autoTrack)
+    public AdaptiveSquelch(float squelchThreshold, boolean autoTrack, double bandwidth)
     {
-        this(alpha, squelchThreshold, autoTrack, System::currentTimeMillis);
-    }
-
-    /**
-     * Constructs an instance with a clock, for testing.
-     */
-    AdaptiveSquelch(float alpha, float squelchThreshold, boolean autoTrack, LongSupplier clock)
-    {
-        mClock = clock;
-        mUnmutedSince = clock.getAsLong();
-        mFilter = new SinglePoleIirFilter(alpha);
+        mVoiceModulationDetector = new VoiceModulationDetector(DEFAULT_SAMPLE_RATE, bandwidth,
+                (int)Math.round(DEFAULT_SAMPLE_RATE * BLOCK_SECONDS) * POWER_INTERVAL_BLOCKS);
         setSquelchThreshold(squelchThreshold);
         mAutoTrackNoiseFloor = autoTrack;
-        mLastAutoAdjustTimestamp = clock.getAsLong();
-        mPowerLevelBroadcastThreshold = 25000; //Based on a default sample rate of 50 kHz, so 2x/second
     }
 
     /**
-     * Sets the sample rate to effect the frequency of power level notifications where the notifications are
-     * sent twice a second.
+     * Sets the sample rate to size the power measurement blocks.
      * @param sampleRate in hertz
      */
     public void setSampleRate(int sampleRate)
     {
-        mPowerLevelBroadcastThreshold = sampleRate / 2;
+        mBlockSize = Math.max(1, (int)Math.round(sampleRate * BLOCK_SECONDS));
+        mVoiceModulationDetector.configure(sampleRate, mBlockSize * POWER_INTERVAL_BLOCKS);
     }
 
     /**
@@ -156,32 +172,36 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
     }
 
     /**
-     * Sets the squelch threshold
+     * Sets the squelch threshold.  With auto-track enabled, the threshold is treated as a margin over the current noise
+     * floor, subject to the minimum squelch margin.  The margin is stored relative to the lowest observed noise floor so
+     * that a change made while a timed out carrier has raised the noise floor applies once that carrier ends.
      * @param squelchThreshold in decibels
      */
     public void setSquelchThreshold(float squelchThreshold)
     {
-        float squelchThresholdDb = fromDb(squelchThreshold);
-        setSquelchThreshold(squelchThresholdDb, true);
+        float threshold = fromDb(squelchThreshold);
+
+        if(mAutoTrackNoiseFloor && mNoiseFloor != null)
+        {
+            mUserThreshold = mLowestNoiseFloor * Math.max(MINIMUM_SQUELCH_MARGIN, threshold / mNoiseFloor);
+            updateTrackedThreshold();
+        }
+        else
+        {
+            mUserThreshold = threshold;
+            applySquelchThreshold(mUserThreshold);
+        }
     }
 
     /**
-     * Sets the squelch threshold.  This method is synchronized to coordinate changes requested by the user/UI thread
+     * Applies the squelch threshold.  This method is synchronized to coordinate changes requested by the user/UI thread
      * and auto-track changes made by the stream processing thread.
      *
      * @param squelchThreshold value
-     * @param resetNoiseFloor to reset the noise floor and squelch threshold
      */
-    private synchronized void setSquelchThreshold(float squelchThreshold, boolean resetNoiseFloor)
+    private synchronized void applySquelchThreshold(float squelchThreshold)
     {
         mSquelchThreshold = squelchThreshold;
-
-        if(resetNoiseFloor)
-        {
-            //Set noise floor to null so that both the noise floor and the squelch buffer get updated after first power reading
-            mNoiseFloor = null;
-        }
-
         broadcast(SourceEvent.squelchThreshold(null, getSquelchThreshold()));
     }
 
@@ -193,12 +213,6 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
     {
         mSquelch = squelch;
         mSquelchChanged = true;
-
-        if(!squelch)
-        {
-            mUnmutedSince = mClock.getAsLong();
-            mOpenReadingCount = 0;
-        }
     }
 
     /**
@@ -213,92 +227,231 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
     }
 
     /**
-     * Processes a complex IQ sample and changes squelch state when the signal power is above or below the
-     * threshold value.
+     * Processes a complex IQ sample and updates the squelch state at the end of each power measurement block.
      * @param magnitude of a complex sample (inphase * inphase + quadrature * quadrature)
      */
     public void process(float magnitude)
     {
-        mPower = mFilter.filter(magnitude);
+        mBlockAccumulator += magnitude;
+        mBlockSampleCount++;
+        mIntervalPower += magnitude;
+        mIntervalPowerSquared += (double)magnitude * magnitude;
+        mIntervalSampleCount++;
 
-        if(mSquelch && mPower >= mSquelchThreshold)
+        //Voice detection is only needed for a carrier, so that channels with only noise don't incur this cost.
+        if(mCarrierDetected)
         {
-            setSquelch(false);
-        }
-        else if(!mSquelch && mPower < mSquelchThreshold)
-        {
-            setSquelch(true);
+            mVoiceModulationDetector.receive((float)Math.sqrt(magnitude));
         }
 
-        mPowerLevelBroadcastCount++;
-        if(mPowerLevelBroadcastCount % mPowerLevelBroadcastThreshold == 0)
+        if(mBlockSampleCount >= mBlockSize)
         {
-            mPowerLevelBroadcastCount = 0;
+            float power = mBlockAccumulator / mBlockSampleCount;
+            mBlockAccumulator = 0.0f;
+            mBlockSampleCount = 0;
+            processBlock(power);
+        }
+    }
+
+    /**
+     * Updates the squelch state from a block power measurement.
+     * @param power of the block
+     */
+    private void processBlock(float power)
+    {
+        mCloseAccumulator += power - mCloseBlocks[mCloseBlockPointer];
+        mCloseBlocks[mCloseBlockPointer] = power;
+        mCloseBlockPointer = (mCloseBlockPointer + 1) % CLOSE_AVERAGE_BLOCKS;
+
+        if(mSquelch)
+        {
+            //With auto-track, the threshold isn't reliable until there's a noise floor measurement.
+            boolean ready = mFirstIntervalComplete || !mAutoTrackNoiseFloor;
+            mOpenCount = (ready && power >= mSquelchThreshold) ? mOpenCount + 1 : 0;
+
+            if(mOpenCount >= OPEN_BLOCKS)
+            {
+                mOpenCount = 0;
+                mHangCount = 0;
+                //Seed the close average so that it doesn't start with the blocks from before the signal arrived.
+                Arrays.fill(mCloseBlocks, power);
+                mCloseAccumulator = power * CLOSE_AVERAGE_BLOCKS;
+                setSquelch(false);
+            }
+        }
+        else if(mCloseAccumulator / CLOSE_AVERAGE_BLOCKS >= mSquelchThreshold * CLOSE_THRESHOLD_RATIO)
+        {
+            mHangCount = 0;
+        }
+        else
+        {
+            mHangCount++;
+
+            if(mHangCount >= HANG_BLOCKS)
+            {
+                setSquelch(true);
+            }
+        }
+
+        updatePowerInterval();
+    }
+
+    /**
+     * Counts power blocks to provide periodic power level notifications and noise floor updates.
+     */
+    private void updatePowerInterval()
+    {
+        mIntervalBlockCount++;
+
+        if(mIntervalBlockCount >= POWER_INTERVAL_BLOCKS)
+        {
+            double mean = mIntervalPower / mIntervalSampleCount;
+            mPower = (float)mean;
             broadcast(SourceEvent.channelPowerLevel(null, 10.0 * Math.log10(mPower)));
 
-            if(mSquelch)
+            if(mAutoTrackNoiseFloor && mean > 0.0)
             {
-                adjustSquelchThreshold();
+                updateNoiseFloor(mIntervalPowerSquared / mIntervalSampleCount / (mean * mean));
             }
-            else
-            {
-                checkStuckOpen();
-            }
+
+            mFirstIntervalComplete = true;
+            mIntervalPower = 0.0;
+            mIntervalPowerSquared = 0.0;
+            mIntervalSampleCount = 0;
+            mIntervalBlockCount = 0;
         }
     }
 
     /**
-     * With the user specified squelch threshold, establishes a squelch buffer (delta) from the actual noise floor and
-     * then automatically updates the squelch threshold to be the current noise floor plus this threshold value.
-     *
-     * Note: this method should only be invoked from a squelch (true) state.
+     * Updates the noise floor history from the current interval power and updates the squelch threshold.
+     * @param powerRatio mean(power^2) / mean(power)^2 for the interval
      */
-    private void adjustSquelchThreshold()
+    private void updateNoiseFloor(double powerRatio)
     {
-        if(mAutoTrackNoiseFloor)
+        boolean voice = mVoiceModulationDetector.analyze();
+        mCarrierDetected = powerRatio < NOISE_POWER_RATIO;
+
+        if(mCarrierDetected)
         {
-            if(mNoiseFloor == null)
-            {
-                //We set the squelch buffer just once, after the squelch threshold is set and noise floor is set to null
-                mSquelchBuffer = mSquelchThreshold - mPower;
-            }
+            updateCarrier(voice);
+        }
+        else
+        {
+            resetCarrierTracking();
+            mCarrierTimedOut = false;
+            mNoiseFloorBeforeCarrier = null;
+            addNoisePower(mPower);
+        }
 
-            mNoiseFloor = mPower;
-
-            if((mClock.getAsLong() - mLastAutoAdjustTimestamp) > AUTO_ADJUST_PERIOD_MS)
-            {
-                setSquelchThreshold(mNoiseFloor + mSquelchBuffer, false);
-                mLastAutoAdjustTimestamp = mClock.getAsLong();
-            }
+        if(mNoiseHistoryCount > 0)
+        {
+            updateTrackedThreshold();
         }
     }
 
     /**
-     * With auto-track on, raises the threshold above the noise floor when the squelch has been open for longer
-     * than any transmission, meaning the threshold sits below the noise.
+     * Updates the carrier timeout from an interval that doesn't look like noise.  A carrier that lasts for the timeout
+     * period is treated as the noise floor, unless it has voice modulation.
+     * @param voice true if voice modulation was detected in this interval
      */
-    private void checkStuckOpen()
+    private void updateCarrier(boolean voice)
     {
-        if(!mAutoTrackNoiseFloor)
+        mCarrierIntervalCount++;
+
+        if(voice)
         {
-            return;
+            mVoiceIntervalCount++;
         }
 
-        mOpenReadings[mOpenReadingCount % STUCK_OPEN_READINGS] = mPower;
-        mOpenReadingCount++;
+        boolean hasVoice = mVoiceIntervalCount >= MINIMUM_VOICE_INTERVALS;
 
-        if((mClock.getAsLong() - mUnmutedSince) > STUCK_OPEN_MS && mOpenReadingCount >= STUCK_OPEN_READINGS / 2)
+        if(mCarrierTimedOut && hasVoice)
         {
-            float[] readings = Arrays.copyOf(mOpenReadings, Math.min(mOpenReadingCount, STUCK_OPEN_READINGS));
-            Arrays.sort(readings);
-            float noise = readings[(int)(readings.length * STUCK_OPEN_NOISE_PERCENTILE)];
-            float threshold = noise * STUCK_OPEN_BUFFER;
-            mLog.info("Squelch open on noise for " + (STUCK_OPEN_MS / 1000) + " seconds - raising threshold from " +
-                String.format("%.1f", getSquelchThreshold()) + " to " + String.format("%.1f", toDb(threshold)) + " dB");
-            //Resetting the noise floor lets auto-track learn its buffer again once the squelch closes
-            setSquelchThreshold(threshold, true);
-            mUnmutedSince = mClock.getAsLong();
-            mOpenReadingCount = 0;
+            restoreNoiseFloor();
+            resetCarrierTracking();
+        }
+        else if(mCarrierTimedOut)
+        {
+            addNoisePower(mPower);
+        }
+        else if(mCarrierIntervalCount >= CARRIER_TIMEOUT_INTERVALS && !hasVoice)
+        {
+            //Replace the history so that the carrier takes effect immediately.
+            mCarrierTimedOut = true;
+            mNoiseFloorBeforeCarrier = mNoiseFloor;
+            mNoiseHistoryCount = 0;
+            addNoisePower(mPower);
+        }
+
+        if(mCarrierIntervalCount >= CARRIER_TIMEOUT_INTERVALS)
+        {
+            resetCarrierTracking();
+        }
+    }
+
+    /**
+     * Resets the counts for the current carrier evaluation period.
+     */
+    private void resetCarrierTracking()
+    {
+        mCarrierIntervalCount = 0;
+        mVoiceIntervalCount = 0;
+    }
+
+    /**
+     * Removes a timed out carrier from the noise floor, restoring the noise floor from before the carrier.  If there's
+     * no noise floor from before the carrier, the user threshold is restored until the noise floor can be measured.
+     */
+    private void restoreNoiseFloor()
+    {
+        mCarrierTimedOut = false;
+        mNoiseHistoryCount = 0;
+
+        if(mNoiseFloorBeforeCarrier != null)
+        {
+            addNoisePower(mNoiseFloorBeforeCarrier);
+            mNoiseFloorBeforeCarrier = null;
+        }
+        else
+        {
+            mNoiseFloor = null;
+            mLowestNoiseFloor = null;
+            applySquelchThreshold(mUserThreshold);
+        }
+    }
+
+    /**
+     * Adds the power to the noise history.
+     * @param power of the interval
+     */
+    private void addNoisePower(float power)
+    {
+        mNoiseHistory[mNoiseHistoryPointer] = power;
+        mNoiseHistoryPointer = (mNoiseHistoryPointer + 1) % NOISE_WINDOW_INTERVALS;
+        mNoiseHistoryCount = Math.min(mNoiseHistoryCount + 1, NOISE_WINDOW_INTERVALS);
+    }
+
+    /**
+     * Sets the squelch threshold to the margin over the current noise floor, where the margin is the larger of the
+     * minimum margin and the amount that the user threshold exceeds the lowest observed noise floor.
+     */
+    private void updateTrackedThreshold()
+    {
+        float noiseFloor = Float.MAX_VALUE;
+
+        for(int x = 0; x < mNoiseHistoryCount; x++)
+        {
+            int index = (mNoiseHistoryPointer - 1 - x + NOISE_WINDOW_INTERVALS) % NOISE_WINDOW_INTERVALS;
+            noiseFloor = Math.min(noiseFloor, mNoiseHistory[index]);
+        }
+
+        mNoiseFloor = noiseFloor;
+        mLowestNoiseFloor = (mLowestNoiseFloor == null) ? noiseFloor : Math.min(mLowestNoiseFloor, noiseFloor);
+        float threshold = noiseFloor * Math.max(MINIMUM_SQUELCH_MARGIN, mUserThreshold / mLowestNoiseFloor);
+
+        if(threshold != mSquelchThreshold)
+        {
+            applySquelchThreshold(threshold);
         }
     }
 
@@ -316,6 +469,15 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
     public boolean isUnmuted()
     {
         return !mSquelch;
+    }
+
+    /**
+     * Indicates if audio should be passed.  This is false during the hang period, while the signal is below the close
+     * threshold but the squelch is still open.
+     */
+    public boolean isAudioEnabled()
+    {
+        return !mSquelch && mHangCount == 0;
     }
 
     /**
@@ -372,6 +534,7 @@ public class AdaptiveSquelch implements Listener<SourceEvent>
         {
             case REQUEST_CHANGE_SQUELCH_THRESHOLD:
                 setSquelchThreshold(sourceEvent.getValue().floatValue());
+                broadcast(SourceEvent.squelchUserThreshold(toDb(mUserThreshold)));
                 break;
             case REQUEST_CURRENT_SQUELCH_THRESHOLD:
                 broadcast(SourceEvent.squelchThreshold(null, getSquelchThreshold()));

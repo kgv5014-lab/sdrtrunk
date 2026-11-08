@@ -54,7 +54,10 @@ class FakeSystem:
         return list(self.sdrtrunk)
 
     def exists(self, path):
-        return path == BAT
+        return path == BAT or path in getattr(self, "files", ())
+
+    def listdir(self, path):
+        return getattr(self, "dirs", {}).get(path, [])
 
     def editing(self):
         return self.edit
@@ -284,3 +287,16 @@ def test_restart_everything_from_the_tray_sends_no_alerts():
     run_checks(dog, system, 1)
     assert system.launched == ["start-ollama.bat", "start-transcriber.bat", "sdr-trunk.bat"]
     assert 500 in system.killed and alerts == []
+
+
+def test_new_version_folder_is_found_when_the_saved_path_is_gone():
+    old = r"E:\B\sdrtrunk\build\image\sdr-trunk-windows-x86_64-v0.6.2-beta-1\bin\sdr-trunk.bat"
+    new = r"E:\B\sdrtrunk\build\image\sdr-trunk-windows-x86_64-v1.0.0-beta-1\bin\sdr-trunk.bat"
+    dog, system, _ = make(sdrtrunk_bat=old)
+    system.dirs = {r"E:\B\sdrtrunk\build\image": ["sdr-trunk-windows-x86_64-v1.0.0-beta-1"]}
+    system.files = {new}
+    system.sdrtrunk = []
+    dog.start_all()
+    sdrtrunk = dog.programs[-1]
+    assert sdrtrunk.bat == new
+    assert system.launched[-1] == "sdr-trunk.bat"

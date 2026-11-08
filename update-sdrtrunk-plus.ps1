@@ -200,7 +200,7 @@ if ($buildFailed) {
 Note "Built $($newImage.Name)"
 if ($oldImageName -and $oldImageName -ne $newImage.Name) {
     Write-Host "   The program folder name changed from $oldImageName to $($newImage.Name)." -ForegroundColor Yellow
-    Write-Host '   Update the path in the batch file you use to start SDRTrunk.' -ForegroundColor Yellow
+    Write-Host '   start-everything.bat and boot-on.bat find the new folder by themselves. Any other shortcut to SDRTrunk needs the new path.' -ForegroundColor Yellow
 }
 
 Step 'Installing the new transcriber files'

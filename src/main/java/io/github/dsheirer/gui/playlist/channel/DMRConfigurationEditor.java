@@ -19,6 +19,7 @@
 
 package io.github.dsheirer.gui.playlist.channel;
 
+import io.github.dsheirer.gui.control.AccessibleToggleSwitch;
 import io.github.dsheirer.gui.control.IntegerTextField;
 import io.github.dsheirer.gui.playlist.eventlog.EventLogConfigurationEditor;
 import io.github.dsheirer.gui.playlist.record.RecordConfigurationEditor;
@@ -40,8 +41,6 @@ import io.github.dsheirer.source.config.SourceConfiguration;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import java.util.ArrayList;
 import java.util.List;
-import javafx.beans.property.SimpleStringProperty;
-import javafx.beans.property.StringProperty;
 import javafx.beans.value.ChangeListener;
 import javafx.beans.value.ObservableValue;
 import javafx.collections.FXCollections;
@@ -62,9 +61,7 @@ import javafx.scene.control.Tooltip;
 import javafx.scene.control.cell.PropertyValueFactory;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import javafx.util.Callback;
 import org.controlsfx.control.ToggleSwitch;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -95,6 +92,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     private Spinner<Integer> mChannelRotationDelaySpinner;
     private ToggleSwitch mJmbeAGCButton;
     private Slider mJmbeToneGainSlider;
+    private ToggleSwitch mLegacyToneLevelsButton;
     private Slider mJmbeNoiseGainSlider;
 
     /**
@@ -146,6 +144,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             int row = 0;
 
             Label poolSizeLabel = new Label("Max Traffic Channels");
+            poolSizeLabel.setLabelFor(getTrafficChannelPoolSizeSpinner());
             GridPane.setHalignment(poolSizeLabel, HPos.RIGHT);
             GridPane.setConstraints(poolSizeLabel, 0, row);
             gridPane.getChildren().add(poolSizeLabel);
@@ -157,6 +156,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             gridPane.getChildren().add(getIgnoreDataCallsButton());
 
             Label ignoreDataLabel = new Label("Ignore Data Calls");
+            ignoreDataLabel.setLabelFor(getIgnoreDataCallsButton());
             GridPane.setHalignment(ignoreDataLabel, HPos.LEFT);
             GridPane.setConstraints(ignoreDataLabel, 3, row);
             gridPane.getChildren().add(ignoreDataLabel);
@@ -165,6 +165,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             gridPane.getChildren().add(getIgnoreCRCChecksumsButton());
 
             Label ignoreCRCLabel = new Label("Ignore CRC Checksums (RAS)");
+            ignoreCRCLabel.setLabelFor(getIgnoreCRCChecksumsButton());
             GridPane.setHalignment(ignoreCRCLabel, HPos.LEFT);
             GridPane.setConstraints(ignoreCRCLabel, 5, row);
             gridPane.getChildren().add(ignoreCRCLabel);
@@ -173,6 +174,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             gridPane.getChildren().add(getUseCompressedTalkgroupsToggle());
 
             Label useCompressedTalkgroupsLabel = new Label("Use Compressed Talkgroups");
+            useCompressedTalkgroupsLabel.setLabelFor(getUseCompressedTalkgroupsToggle());
             GridPane.setHalignment(useCompressedTalkgroupsLabel, HPos.LEFT);
             GridPane.setConstraints(useCompressedTalkgroupsLabel, 7, row);
             gridPane.getChildren().add(useCompressedTalkgroupsLabel);
@@ -208,9 +210,11 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             editorBox.setSpacing(5);
 
             Label lcnLabel = new Label("LCN");
+            lcnLabel.setLabelFor(getLogicalChannelNumberField());
             editorBox.getChildren().addAll(lcnLabel, getLogicalChannelNumberField());
 
             Label downlinkLabel = new Label("Frequency (MHz)");
+            downlinkLabel.setLabelFor(getDownlinkFrequencyField());
             downlinkLabel.setPadding(new Insets(0,0,0,5));
             editorBox.getChildren().addAll(downlinkLabel,getDownlinkFrequencyField());
 
@@ -218,22 +222,8 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             gridPane.getChildren().add(editorBox);
 
             row++;
-            Label jmbeLabel = new Label("AMBE Audio");
-            GridPane.setHalignment(jmbeLabel, HPos.LEFT);
-            gridPane.add(jmbeLabel, 0, row);
-
-            GridPane.setHalignment(getJmbeAGCButton(), HPos.LEFT);
-            gridPane.add(getJmbeAGCButton(), 1, row);
-
-            gridPane.add(new Label("Tone Volume:"), 2, row);
-
-            GridPane.setHgrow(getJmbeToneGainSlider(), Priority.ALWAYS);
-            gridPane.add(getJmbeToneGainSlider(), 3, row);
-
-            gridPane.add(new Label("Comfort Noise Volume:"), 4, row);
-
-            GridPane.setHgrow(getJmbeNoiseGainSlider(), Priority.ALWAYS);
-            gridPane.add(getJmbeNoiseGainSlider(), 5, row);
+            addAudioControls(gridPane, row, "AMBE Audio", getJmbeNoiseGainSlider(), getJmbeAGCButton(),
+                getJmbeToneGainSlider(), getLegacyToneLevelsButton());
 
             mDecoderPane.setContent(gridPane);
         }
@@ -312,6 +302,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         if(mTimeslotFrequencyTable == null)
         {
             mTimeslotFrequencyTable = new TableView<>(FXCollections.observableArrayList(TimeslotFrequency.extractor()));
+            mTimeslotFrequencyTable.setAccessibleText("Logical channel number (LCN) to frequency map");
             mTimeslotFrequencyTable.setPrefHeight(100.0);
 
             TableColumn<TimeslotFrequency,Number> numberColumn = new TableColumn("LCN");
@@ -372,6 +363,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         if(mAddTimeslotFrequencyButton == null)
         {
             mAddTimeslotFrequencyButton = new Button("Add");
+            mAddTimeslotFrequencyButton.setAccessibleText("Add LCN frequency");
             mAddTimeslotFrequencyButton.setMaxWidth(Double.MAX_VALUE);
             mAddTimeslotFrequencyButton.setOnAction(event -> addTimeslot());
         }
@@ -420,6 +412,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         if(mDeleteTimeslotFrequencyButton == null)
         {
             mDeleteTimeslotFrequencyButton = new Button("Delete");
+            mDeleteTimeslotFrequencyButton.setAccessibleText("Delete LCN frequency");
             mDeleteTimeslotFrequencyButton.setDisable(true);
             mDeleteTimeslotFrequencyButton.setMaxWidth(Double.MAX_VALUE);
             mDeleteTimeslotFrequencyButton.setOnAction(new EventHandler<ActionEvent>()
@@ -527,7 +520,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mIgnoreDataCallsButton == null)
         {
-            mIgnoreDataCallsButton = new ToggleSwitch();
+            mIgnoreDataCallsButton = new AccessibleToggleSwitch();
             mIgnoreDataCallsButton.setDisable(true);
             mIgnoreDataCallsButton.selectedProperty()
                 .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
@@ -555,7 +548,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mIgnoreCRCChecksumsButton == null)
         {
-            mIgnoreCRCChecksumsButton = new ToggleSwitch();
+            mIgnoreCRCChecksumsButton = new AccessibleToggleSwitch();
             mIgnoreCRCChecksumsButton.setDisable(true);
             mIgnoreCRCChecksumsButton.selectedProperty()
                 .addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
@@ -573,7 +566,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mUseCompressedTalkgroupsToggle == null)
         {
-            mUseCompressedTalkgroupsToggle = new ToggleSwitch();
+            mUseCompressedTalkgroupsToggle = new AccessibleToggleSwitch();
             mUseCompressedTalkgroupsToggle.setTooltip(new Tooltip("Use Compressed Talkgroups.  This is only for Hytera Tier-III Trunked Systems"));
             mUseCompressedTalkgroupsToggle.setDisable(true);
             mUseCompressedTalkgroupsToggle.selectedProperty().addListener((observable, oldValue, newValue) -> modifiedProperty().set(true));
@@ -604,13 +597,28 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
     {
         if(mJmbeAGCButton == null)
         {
-            mJmbeAGCButton = new ToggleSwitch("AGC:");
+            mJmbeAGCButton = new AccessibleToggleSwitch();
             mJmbeAGCButton.setTooltip(new Tooltip("Automatic Gain Control to automatically adjust call audio volume"));
             mJmbeAGCButton.setDisable(true);
             mJmbeAGCButton.selectedProperty().addListener((o, old, n) -> modifiedProperty().set(true));
         }
 
         return mJmbeAGCButton;
+    }
+
+    private ToggleSwitch getLegacyToneLevelsButton()
+    {
+        if(mLegacyToneLevelsButton == null)
+        {
+            mLegacyToneLevelsButton = new AccessibleToggleSwitch();
+            mLegacyToneLevelsButton.setTooltip(new Tooltip(
+                "Restore JMBE 1.x AMBE tone levels. Requires a supporting JMBE library; " +
+                "stock libraries ignore this option. Tone Volume still adjusts the selected level."));
+            mLegacyToneLevelsButton.setDisable(true);
+            mLegacyToneLevelsButton.selectedProperty().addListener(
+                (o, oldValue, newValue) -> modifiedProperty().set(true));
+        }
+        return mLegacyToneLevelsButton;
     }
 
     public Slider getJmbeToneGainSlider()
@@ -703,6 +711,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         getJmbeAGCButton().setDisable(disable);
         getJmbeNoiseGainSlider().setDisable(disable);
         getJmbeToneGainSlider().setDisable(disable);
+        getLegacyToneLevelsButton().setDisable(disable);
 
         if(config instanceof DecodeConfigDMR)
         {
@@ -720,8 +729,9 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             }
 
             getJmbeAGCButton().setSelected(decodeConfig.isAGC());
-            getJmbeNoiseGainSlider().setValue(decodeConfig.getNoiseGain());
+            getJmbeNoiseGainSlider().setValue(decodeConfig.getComfortNoiseGain());
             getJmbeToneGainSlider().setValue(decodeConfig.getToneGain());
+            getLegacyToneLevelsButton().setSelected(decodeConfig.isLegacyToneLevels());
         }
         else
         {
@@ -734,6 +744,7 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
             getJmbeAGCButton().setSelected(false);
             getJmbeNoiseGainSlider().setValue(0);
             getJmbeToneGainSlider().setValue(0);
+            getLegacyToneLevelsButton().setSelected(false);
         }
     }
 
@@ -758,8 +769,9 @@ public class DMRConfigurationEditor extends ChannelConfigurationEditor
         config.setUseCompressedTalkgroups(getUseCompressedTalkgroupsToggle().isSelected());
         config.setTimeslotMap(new ArrayList<>(getTimeslotTable().getItems()));
         config.setAGC(getJmbeAGCButton().selectedProperty().getValue());
-        config.setNoiseGain((float)getJmbeNoiseGainSlider().getValue());
+        config.setComfortNoiseGain((float)getJmbeNoiseGainSlider().getValue());
         config.setToneGain((float)getJmbeToneGainSlider().getValue());
+        config.setLegacyToneLevels(getLegacyToneLevelsButton().isSelected());
         getItem().setDecodeConfiguration(config);
     }
 

@@ -42,10 +42,13 @@ import io.github.dsheirer.source.tuner.rtl.fc0012.FC0012TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.fc0013.FC0013TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.fc2580.FC2580TunerConfiguration;
 import io.github.dsheirer.source.tuner.rtl.r8x.R8xTunerConfiguration;
+import io.github.dsheirer.util.ThreadPool;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -67,6 +70,13 @@ public class RTL2832TunerController extends TunerController
     private static final int EEPROM_SIZE = 256;
     private static final int LIBUSB_ERROR_PIPE = -9;
     private static final int CONTROL_ATTEMPTS = 3;
+    /**
+     * Delay before the sample stream stops after the last listener is removed.  A rotating (multi-frequency) channel
+     * removes its listener and adds a new one a moment later on another frequency.  Stopping the stream and then
+     * retuning the idle device crashes the JVM inside libusb on Windows (access violation in ntdll from
+     * rtlsdr_set_center_freq), so the stream keeps running across the hand-off and the retune happens while streaming.
+     */
+    private static final long STOP_STREAMING_DELAY_MS = 5_000;
     //Total IF gain values supported by the E4000 IF gain stages 1-6, in dB
     private static final int[][] E4K_IF_STAGE_GAINS = {{-3, 6}, {0, 3, 6, 9}, {0, 3, 6, 9}, {0, 1, 2},
             {3, 6, 9, 12, 15}, {3, 6, 9, 12, 15}};
@@ -89,6 +99,7 @@ public class RTL2832TunerController extends TunerController
     private int[] mTunerGains = new int[0];
     private boolean mBiasTEnabled = false;
     private boolean mStreaming = false;
+    private ScheduledFuture<?> mStopStreamingFuture;
 
     /**
      * Constructs an instance
@@ -184,6 +195,7 @@ public class RTL2832TunerController extends TunerController
 
         try
         {
+            cancelStopStreaming();
             device = mDevice;
             mDevice = null;
             mStreaming = false;
@@ -507,6 +519,7 @@ public class RTL2832TunerController extends TunerController
         {
             if(mDevice != null)
             {
+                cancelStopStreaming();
                 super.addBufferListener(listener);
                 startStreaming();
             }
@@ -533,6 +546,29 @@ public class RTL2832TunerController extends TunerController
         {
             super.removeBufferListener(listener);
 
+            if(!hasBufferListeners() && mStreaming && mStopStreamingFuture == null)
+            {
+                mStopStreamingFuture = ThreadPool.SCHEDULED.schedule(this::delayedStopStreaming,
+                        STOP_STREAMING_DELAY_MS, TimeUnit.MILLISECONDS);
+            }
+        }
+        finally
+        {
+            getLock().unlock();
+        }
+    }
+
+    /**
+     * Stops the sample stream if no listener was added during the stop delay.
+     */
+    private void delayedStopStreaming()
+    {
+        getLock().lock();
+
+        try
+        {
+            mStopStreamingFuture = null;
+
             if(!hasBufferListeners())
             {
                 stopStreaming();
@@ -545,6 +581,18 @@ public class RTL2832TunerController extends TunerController
         finally
         {
             getLock().unlock();
+        }
+    }
+
+    /**
+     * Cancels a pending delayed stream stop.  Call while holding the controller lock.
+     */
+    private void cancelStopStreaming()
+    {
+        if(mStopStreamingFuture != null)
+        {
+            mStopStreamingFuture.cancel(false);
+            mStopStreamingFuture = null;
         }
     }
 

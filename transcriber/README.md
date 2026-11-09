@@ -777,7 +777,17 @@ Recording, streaming, the map, the phone pages and alerts all work as usual. It 
   running. Orange: starting, edit mode or updating. Red: one stopped (a pop-up says which; the watchdog
   restarts it). Grey: the watchdog isn't running. Hover for a summary; double-click opens the map.
   Right-click for: each program's state, Open the map, PC speakers (on/off), Open SDRTrunk window (edit
-  mode), Restart everything, Update everything (runs the updater), Show the log, and Close this icon.
+  mode), Restart everything, Stop all, Start (no windows), Start with windows, Update everything (runs
+  the updater), Show the log, and Close this icon.
+* **Stop all** (tray menu) stops SDRTrunk, the transcriber, Ollama and the watchdog, and nothing starts
+  again until you start it (no admin rights needed: it asks the watchdog to do it). A pop-up says when
+  it's done and the dot turns grey. Restarting the PC starts everything as usual.
+* **Start** (tray menu) has two submenus: **Start (no windows)** runs things in the background the way
+  boot does, and **Start with windows** opens their normal windows (SDRTrunk's full window, the
+  transcriber's and the watchdog's black console windows). Each has **Everything** (the watchdog, which
+  starts all three and restarts any that crash) and **SDRTrunk only**, **Whisper transcriber only** and
+  **Summaries (Ollama) only**. A program started on its own isn't watched, so if it crashes it stays
+  stopped; anything already running is left as it is.
 * **Sound:** Windows only gives the speakers to someone signed in, so SDRTrunk can't play them at boot.
   The tray icon plays the live calls, the same stream as the phone's Listen page, about 3 seconds after
   each call ends. Untick PC speakers in its menu to stop the sound (it stays off until ticked again).

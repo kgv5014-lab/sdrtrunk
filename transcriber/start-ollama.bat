@@ -12,7 +12,7 @@ if exist .venv\Scripts\python.exe (
 where ollama >nul 2>&1
 if errorlevel 1 (
   echo Ollama is not installed. Get it from https://ollama.com/download and run this again.
-  pause
+  if not defined SDRTRUNK_HIDDEN pause
   exit /b 1
 )
 
@@ -37,7 +37,12 @@ taskkill /im "ollama app.exe" /f >nul 2>&1
 taskkill /im ollama.exe /f >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-start "Ollama (%GPU_NAME%)" /min ollama serve
+rem Started with no windows (boot or the tray icon): keep Ollama in this hidden window instead of a new one.
+if defined SDRTRUNK_HIDDEN (
+  start "" /b ollama serve
+) else (
+  start "Ollama (%GPU_NAME%)" /min ollama serve
+)
 timeout /t 5 /nobreak >nul
 
 ollama list | findstr /c:"%MODEL%" >nul

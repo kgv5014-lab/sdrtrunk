@@ -85,12 +85,15 @@ def test_start_sdrtrunk_with_no_window_and_with_its_window(setup):
     assert system.envs[-1] is None and system.hidden_launches[-1] is False
 
 
-def test_start_what_is_already_running_does_nothing(setup):
+def test_start_stops_the_running_copy_first(setup):
     ctl, system, _ = setup
-    assert ctl.start("sdrtrunk", window=False)[0] == "already"
-    assert ctl.start("transcriber", window=True)[0] == "already"
-    assert ctl.start("ollama", window=True)[0] == "already"
-    assert system.launched == []
+    system.port = {777}
+    result = ctl.start("sdrtrunk", window=True)
+    assert result[0] == "ok" and "Stopped the running" in result[1]
+    assert 500 in system.killed and system.launched == ["sdr-trunk.bat"]
+    assert ctl.start("transcriber", window=False)[0] == "ok" and 777 in system.killed
+    assert ctl.start("ollama", window=True)[0] == "ok" and system.killed_names == ["ollama.exe"]
+    assert system.launched == ["sdr-trunk.bat", "start-transcriber.bat", "start-ollama.bat"]
 
 
 def test_start_transcriber_and_ollama(setup):
@@ -102,16 +105,31 @@ def test_start_transcriber_and_ollama(setup):
     assert system.hidden_launches == [True, False]
 
 
-def test_start_everything(setup, monkeypatch):
+def test_start_everything_stops_what_is_running_first(setup, monkeypatch):
     ctl, system, tmp_path = setup
     write_status(tmp_path)
-    assert ctl.start("everything", window=False)[0] == "already"
-    write_status(tmp_path, age=1000)  # a watchdog that stopped long ago
+    kill = system.kill_tree
+
+    def kill_tree(pid):
+        kill(pid)
+        system.sdrtrunk = []
+
+    def watchdog_answers(s):
+        # The watchdog takes the stop request and removes its status, as Watchdog.stop_all does.
+        (tmp_path / "watchdog-status.json").unlink(missing_ok=True)
+    system.kill_tree = kill_tree
+    monkeypatch.setattr(control.time, "sleep", watchdog_answers)
     assert ctl.start("everything", window=True)[0] == "ok"
-    assert system.launched == ["start-everything.bat"]
+    assert 500 in system.killed and system.launched == ["start-everything.bat"]
     monkeypatch.setattr(ctl, "run_boot_task", lambda: True)
     assert ctl.start("everything", window=False)[0] == "ok"
     assert system.launched == ["start-everything.bat"]  # the boot task did it
+
+
+def test_start_everything_gives_up_when_the_old_copy_wont_stop(setup):
+    ctl, system, _ = setup  # kill_tree does nothing here, as when Windows says no
+    assert ctl.start("everything", window=True)[0] == "failed"
+    assert system.launched == []
 
 
 def test_sdrtrunk_path_comes_from_the_watchdog_when_not_set(setup):

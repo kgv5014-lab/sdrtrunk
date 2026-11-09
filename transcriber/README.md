@@ -786,8 +786,9 @@ Recording, streaming, the map, the phone pages and alerts all work as usual. It 
   boot does, and **Start with windows** opens their normal windows (SDRTrunk's full window, the
   transcriber's and the watchdog's black console windows). Each has **Everything** (the watchdog, which
   starts all three and restarts any that crash) and **SDRTrunk only**, **Whisper transcriber only** and
-  **Summaries (Ollama) only**. A program started on its own isn't watched, so if it crashes it stays
-  stopped; anything already running is left as it is.
+  **Summaries (Ollama) only**. Whatever copy is already running is stopped first, so switching between
+  no windows and windows never leaves two copies fighting over the dongles. A program started on its own
+  isn't watched unless the watchdog is running, so it may stay stopped if it crashes.
 * **Sound:** Windows only gives the speakers to someone signed in, so SDRTrunk can't play them at boot.
   The tray icon plays the live calls, the same stream as the phone's Listen page, about 3 seconds after
   each call ends. Untick PC speakers in its menu to stop the sound (it stays off until ticked again).

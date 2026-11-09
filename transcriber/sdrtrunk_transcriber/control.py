@@ -10,8 +10,10 @@ still running after that (or when no watchdog was running) is stopped directly.
 start starts one program, or everything with the watchdog, either with no windows (the way boot-on.bat
 does at boot) or with its normal windows (--window). A program started on its own isn't watched: if it
 crashes, it stays stopped until it is started again. "Everything" starts the watchdog, which watches all.
+Whatever copy is already running is stopped first (for Everything: the watchdog and all programs), so
+switching between no windows and windows never leaves two copies fighting over the dongles or the port.
 
-The tray icon shows what happened from control-result.txt (first line: ok, already, or failed; then a
+The tray icon shows what happened from control-result.txt (first line: ok or failed; then a
 sentence). Each run is also written to watchdog.log.
 """
 
@@ -138,9 +140,11 @@ class Control:
         how = "with its window" if window else "with no window"
         if what == "everything":
             return self.start_everything(window)
+        if what not in NAMES:
+            return "failed", f"Don't know how to start {what}."
+        # Whatever copy is running now goes first, so the two don't clash (dongles, port 3000, the GPU).
+        swapped = self.stop_one(what)
         if what == "sdrtrunk":
-            if self.system.sdrtrunk_processes():
-                return "already", "SDRTrunk is already running."
             bat = self.sdrtrunk_bat()
             if not bat or not self.system.exists(bat):
                 return "failed", ("Can't tell where SDRTrunk is. Set [watchdog] sdrtrunk in config.toml "
@@ -154,24 +158,43 @@ class Control:
                 env = {"JAVA_OPTS": opts}
             self.system.launch(bat, ntpath.dirname(bat), env, hidden=not window)
         elif what == "transcriber":
-            if self.system.answers(self.transcriber_url(), timeout=5):
-                return "already", "The Whisper transcriber is already running."
-            for pid in self.system.port_pids(self.config.server.port):
-                self.system.kill_tree(pid)  # a frozen copy keeps the port
             self.system.launch(str(self.home / "start-transcriber.bat"), str(self.home), hidden=not window)
         elif what == "ollama":
-            if self.system.answers(self.ollama_url(), timeout=5):
-                return "already", "Summaries (Ollama) is already running."
             self.system.launch(str(self.home / "start-ollama.bat"), str(self.home), hidden=not window)
-        else:
-            return "failed", f"Don't know how to start {what}."
-        message = f"Starting {NAMES[what]} {how}. Nothing restarts it if it stops (Start > Everything does)."
+        message = f"Starting {NAMES[what]} {how}."
+        if swapped:
+            message = f"Stopped the running {NAMES[what]} and started it again {how}."
+        if not self.watchdog_status():
+            message += " Nothing restarts it if it stops (Start > Everything does)."
         note(message)
         return "ok", message
 
+    def stop_one(self, what: str) -> bool:
+        """Stops the running copy of one program before Start opens a new one. True if one was running."""
+        if what == "sdrtrunk":
+            found = self.system.sdrtrunk_processes() or []
+            for pid, _, _ in found:
+                self.system.kill_tree(pid)
+        elif what == "transcriber":
+            found = self.system.port_pids(self.config.server.port)  # a frozen copy keeps the port too
+            for pid in found:
+                self.system.kill_tree(pid)
+        elif what == "ollama":
+            found = self.system.answers(self.ollama_url(), timeout=5)
+            if found:
+                self.system.kill_name("ollama.exe")
+        else:
+            return False
+        if found:
+            note(f"Start: stopping the running {NAMES[what]} first")
+            time.sleep(watchdog.SETTLE_S)  # let the dongles, the port and the GPU go
+        return bool(found)
+
     def start_everything(self, window: bool) -> tuple[str, str]:
-        if self.watchdog_status():
-            return "already", "The watchdog is already running (it keeps everything running)."
+        # Stop what's running first (the watchdog and every program), so nothing is left in the old mode.
+        stopped = self.stop_all()
+        if stopped[0] == "failed":
+            return "failed", "Couldn't stop the running copies first, so nothing was started. " + stopped[1]
         STOP_FLAG.unlink(missing_ok=True)
         if window:
             self.system.launch(str(self.home / "start-everything.bat"), str(self.home), hidden=False)

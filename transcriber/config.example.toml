@@ -293,6 +293,8 @@ call_min_words = 25
 delay_s = 20
 # Incident summaries are kept to about this many words.
 incident_words = 40
+# Ollama lets go of the model after this long with no summaries, freeing several GB of memory ("-1" = never).
+keep_alive = "10m"
 
 [recaps]
 # 12-hour summaries: at 7 AM and 7 PM, a recap of the 12 hours before (counts by type and town, tone-outs,

@@ -1,6 +1,8 @@
 """End-to-end tests: SDRTrunk-shaped uploads in, call log out, with a fake Whisper backend."""
 
 import io
+import tempfile
+from pathlib import Path
 import math
 
 import av
@@ -221,7 +223,7 @@ def test_backend_failure_marks_call_failed_and_keeps_going(make_client):
     assert "GPU fell over" in calls[1]["error"]
 
 
-def test_unfinished_calls_resume_after_restart(make_client):
+def test_unfinished_calls_resume_after_restart(make_client, tmp_path):
     # First run: stop the worker so the upload stays queued, as if the service crashed.
     client, _ = make_client()
     with client:
@@ -234,8 +236,38 @@ def test_unfinished_calls_resume_after_restart(make_client):
     with client2:
         assert client2.app.state.worker.wait_idle()
         call = client2.get("/api/calls").json()[0]
+        assert client2.get("/api/alive").json() == {"ok": True}
     assert call["status"] == "done"
     assert len(fake2.prompts) == 1
+    # The watchdog reads this to tell a busy transcriber from a stuck one.
+    assert (tmp_path / "data" / "transcriber-heartbeat").exists()
+
+
+def test_calls_left_waiting_are_mixed_in_with_new_ones():
+    from collections import deque
+    from sdrtrunk_transcriber import worker as worker_module
+
+    done = []
+    worker = worker_module.TranscriptionWorker.__new__(worker_module.TranscriptionWorker)
+    import itertools, queue
+    worker._queue = queue.PriorityQueue()
+    worker._order = itertools.count()
+    worker._backlog = deque([1, 2, 3])
+    worker._new_in_a_row = 0
+    worker._doing_backlog = False
+    worker._backend_factory = lambda config: None
+    worker.ready = __import__("threading").Event()
+    worker.progress = worker_module.Progress()
+    worker.config = Config()
+    worker.config.base_dir = Path(tempfile.mkdtemp())
+    worker.config.data_path.mkdir(parents=True)
+    worker._process = done.append
+    for call_id in (10, 11, 12, 13, 14):
+        worker._queue.put((0, next(worker._order), call_id))
+    worker._queue.put((worker_module.LAST_RANK, next(worker._order), None))
+    worker._run()
+    # Two new calls, then one that waited, and so on.
+    assert done == [10, 11, 1, 12, 13, 2, 14, 3]
 
 
 def test_clean_segments_drops_silence_and_youtube_phrases():

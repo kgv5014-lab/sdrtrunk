@@ -43,6 +43,12 @@ HIDDEN_ENV = "SDRTRUNK_HIDDEN"
 SETTLE_S = 5
 # A program restarted too often is left alone this long.
 PAUSE_S = 3600
+# A transcriber that finished a call this recently is busy, not stuck, even when it is slow to answer: low
+# memory or a pile of calls that waited can hold up its answers, and a restart would only make both worse.
+TRANSCRIBER_BUSY_S = 180
+# The file the transcriber touches after every call, in its data folder (worker.HEARTBEAT_FILE; not imported,
+# so the watchdog doesn't load the audio and Whisper code).
+HEARTBEAT_FILE = "transcriber-heartbeat"
 # Made by edit-mode.bat while the normal SDRTrunk window is open for changes.
 EDIT_FLAG = HOME / "edit-mode.flag"
 # Made by the updater while it updates: nothing is checked or restarted until it's gone.
@@ -83,6 +89,13 @@ class System:
 
     def sleep(self, seconds: float):
         time.sleep(seconds)
+
+    def modified_ago(self, path: Path) -> float | None:
+        """Seconds since a file last changed, or None when it isn't there."""
+        try:
+            return time.time() - path.stat().st_mtime
+        except OSError:
+            return None
 
     def answers(self, url: str, timeout: float = 20) -> bool:
         try:
@@ -258,13 +271,26 @@ class Transcriber(Program):
     name = "Transcriber"
     down_reason = "stopped answering"
 
-    def __init__(self, system, port: int):
+    def __init__(self, system, port: int, heartbeat: Path | None = None):
         super().__init__(system)
         self.port = port
-        self.url = f"http://127.0.0.1:{port}/api/calls?limit=1"
+        # Answered by the web server alone (no database), so it only fails when the program is really stuck.
+        self.url = f"http://127.0.0.1:{port}/api/alive"
+        # Touched by the transcriber after every call (worker.HEARTBEAT_FILE).
+        self.heartbeat = heartbeat
+        self.told_busy = False
 
     def check(self):
-        return "ok" if self.system.answers(self.url, timeout=20) else "down"
+        if self.system.answers(self.url, timeout=30):
+            self.told_busy = False
+            return "ok"
+        ago = self.system.modified_ago(self.heartbeat) if self.heartbeat else None
+        if ago is not None and ago < TRANSCRIBER_BUSY_S:
+            if not self.told_busy:
+                log.info("Transcriber is slow to answer but still transcribing calls; leaving it be")
+                self.told_busy = True
+            return "unknown"
+        return "down"
 
     def start(self):
         self._free_port()
@@ -369,7 +395,7 @@ class Watchdog:
         self.programs = []
         if config.summaries.enabled:
             self.programs.append(Ollama(self.system, config.summaries.url))
-        self.programs.append(Transcriber(self.system, config.server.port))
+        self.programs.append(Transcriber(self.system, config.server.port, config.data_path / HEARTBEAT_FILE))
         self.programs.append(SDRTrunk(self.system, self.settings.sdrtrunk.strip(), headless=background))
 
     def start_all(self):

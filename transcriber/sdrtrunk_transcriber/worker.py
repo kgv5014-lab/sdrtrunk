@@ -1,5 +1,6 @@
 """Background thread that transcribes queued calls one at a time."""
 
+import collections
 import itertools
 import logging
 import queue
@@ -34,6 +35,12 @@ TONES_ONLY = "tones only"
 # Calls that are only a Morse-code station ID are skipped with this label and left out of the call log.
 STATION_ID = "station ID"
 LAST_RANK = 1_000_000
+# Calls left waiting by the last run are done one after every this many new calls (or whenever nothing new
+# is waiting), so after a restart new calls still come first but the old ones can't be stuck behind them.
+BACKLOG_EVERY = 2
+# Touched after every call, so the watchdog can tell a transcriber that is slow to answer but still
+# working through calls from one that is stuck (watchdog.py).
+HEARTBEAT_FILE = "transcriber-heartbeat"
 # The sample terms that vocabulary.example.txt used to ship with. Left in place, Whisper echoes them
 # back on unclear audio ("10-4, Main Street, Battalion 1"), so they are ignored.
 SAMPLE_VOCABULARY = ["Dispatch", "Engine 12", "Medic 4", "Battalion 1", "10-4", "Main Street"]
@@ -83,6 +90,10 @@ class TranscriptionWorker:
         # (rank, arrival order, call id): lower ranks first, oldest first within a rank.
         self._queue: "queue.PriorityQueue[tuple[int, int, int | None]]" = queue.PriorityQueue()
         self._order = itertools.count()
+        # Calls left unfinished by the last run, oldest first (BACKLOG_EVERY).
+        self._backlog: collections.deque[int] = collections.deque()
+        self._new_in_a_row = 0
+        self._doing_backlog = False
         self._thread = threading.Thread(target=self._run, name="transcriber", daemon=True)
         self.ready = threading.Event()
         # Calls that waited while the transcriber was closed (progress.py; the server shares one).
@@ -127,8 +138,7 @@ class TranscriptionWorker:
     def start(self):
         pending = list(self.db.pending_ids())
         self.progress.start(BACKLOG_JOB, "Transcribing calls that waited", pending)
-        for call_id in pending:
-            self.submit(call_id)
+        self._backlog.extend(pending)
         self._thread.start()
 
     def stop(self, timeout: float = 30):
@@ -153,13 +163,13 @@ class TranscriptionWorker:
         self._queue.put((self.rank(self.db.get_call(call_id)), next(self._order), call_id))
 
     def queue_size(self) -> int:
-        return self._queue.qsize()
+        return self._queue.qsize() + len(self._backlog)
 
     def wait_idle(self, timeout: float = 30) -> bool:
         """Test helper: waits until the queue is drained."""
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            if self._queue.unfinished_tasks == 0:
+            if self._queue.unfinished_tasks == 0 and not self._backlog and not self._doing_backlog:
                 return True
             time.sleep(0.05)
         return False
@@ -172,8 +182,23 @@ class TranscriptionWorker:
             self._backend = None
         self.ready.set()
 
+        heartbeat = self.config.data_path / HEARTBEAT_FILE
         while True:
-            _rank, _order, call_id = self._queue.get()
+            from_backlog = bool(self._backlog) and (self._queue.empty() or self._new_in_a_row >= BACKLOG_EVERY)
+            if from_backlog:
+                self._doing_backlog = True
+                call_id = self._backlog.popleft()
+                self._new_in_a_row = 0
+            else:
+                rank, order, call_id = self._queue.get()
+                if call_id is None and self._backlog:
+                    # Stopping: finish the calls that waited first, as with the queue.
+                    self._queue.task_done()
+                    self._queue.put((rank, order, None))
+                    self._new_in_a_row = BACKLOG_EVERY
+                    continue
+                if call_id is not None:
+                    self._new_in_a_row += 1
             try:
                 if call_id is None:
                     return
@@ -183,7 +208,14 @@ class TranscriptionWorker:
                 self.db.update_call(call_id, status="failed", error=str(e)[:500])
             finally:
                 self.progress.step(BACKLOG_JOB, call_id)
-                self._queue.task_done()
+                if from_backlog:
+                    self._doing_backlog = False
+                else:
+                    self._queue.task_done()
+                try:
+                    heartbeat.touch()
+                except OSError:
+                    pass
 
     def _process(self, call_id: int):
         call = self.db.get_call(call_id)

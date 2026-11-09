@@ -447,8 +447,9 @@ class SummariesConfig:
     # A long incident: the first 3 calls and the latest ones, this many in all, are read.
     max_calls: int = 30
     timeout_s: float = 180.0
-    # How long Ollama keeps the model loaded on the GPU after the last summary ("-1" = always).
-    keep_alive: str = "-1"
+    # How long Ollama keeps the model loaded after the last summary ("-1" = always). Loaded, it holds
+    # several GB of the PC's memory as well as the GPU's; when memory ran short the transcriber froze.
+    keep_alive: str = "10m"
     # On start, summarize incidents and calls from this far back that have none yet.
     backlog_hours: int = 24
 

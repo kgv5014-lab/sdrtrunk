@@ -476,6 +476,12 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
             return Response(body, media_type=media, headers={"Cache-Control": "no-cache"})
         app.add_api_route("/" + asset_name, serve_asset, methods=["GET"], include_in_schema=False)
 
+    @app.get("/api/alive")
+    async def alive():
+        """For the watchdog: answered straight from the web server, without the call database or the worker
+        threads, so a busy moment can't make the transcriber look dead."""
+        return {"ok": True}
+
     @app.get("/", response_class=HTMLResponse)
     def index():
         return webapp.page("index.html")

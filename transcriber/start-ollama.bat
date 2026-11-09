@@ -44,6 +44,13 @@ if defined SDRTRUNK_HIDDEN (
   start "Ollama (%GPU_NAME%)" /min ollama serve
 )
 timeout /t 5 /nobreak >nul
+rem The Ollama tray app can start again with Windows or on its own; it then keeps trying to start a second
+rem copy of Ollama (hundreds of "port already in use" errors in its log). This window's copy is all that's needed.
+taskkill /im "ollama app.exe" /f >nul 2>&1
+if exist "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Ollama.lnk" (
+  del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Ollama.lnk" >nul 2>&1
+  echo Turned off the Ollama tray app starting with Windows; this window starts Ollama instead.
+)
 
 ollama list | findstr /c:"%MODEL%" >nul
 if errorlevel 1 (

@@ -661,14 +661,16 @@ Setting it up, once:
 1. Install Ollama for Windows from <https://ollama.com/download>.
 2. Double-click **start-ollama.bat** in the transcriber folder. It finds the GTX 1070 by its UUID
    (start-transcriber.bat does the same for the 1070 Ti, so the two never share a card), starts Ollama on it in a minimized window, and the first time downloads the model
-   (`qwen3.5:9b-q4_K_M`, Qwen 3.5 9B, about 6.6 GB; update Ollama first if yours is older than early 2026). It also turns off Ollama's Vulkan support, which would otherwise see the 1070 Ti too, and closes the Ollama tray app, which would otherwise use the wrong card.
+   (`qwen3.5:9b-q4_K_M`, Qwen 3.5 9B, about 6.6 GB; update Ollama first if yours is older than early 2026). It also turns off Ollama's Vulkan support, which would otherwise see the 1070 Ti too, and closes the Ollama tray app (and stops it starting with Windows), which would otherwise use the wrong card and keep trying to start a second Ollama.
 3. In `config.toml`, add the `[summaries]` section from `config.example.toml` and set `enabled = true`.
    Restart the transcriber. The log says "Summaries: using Ollama" after the first one.
 
 Run start-ollama.bat before start-transcriber.bat each time, or use start-everything.bat (see
 "Auto-restart"), which does it for you. If Ollama isn't running, everything else works as before; the log says so once, and the
 summaries catch up within a minute of Ollama starting. On start the transcriber also summarizes the last
-24 hours of incidents that have none yet.
+24 hours of incidents that have none yet. Ollama lets go of the model after 10 minutes with no summaries
+(`keep_alive` under `[summaries]`), because a loaded model also holds several GB of the PC's memory; the
+next summary loads it again in a few seconds.
 
 To use another Ollama model, set `model` under `[summaries]` in config.toml; start-ollama.bat reads it from
 there. A model you made yourself with `ollama create` works too. The transcriber doesn't ask for a context
@@ -732,7 +734,10 @@ from its own window. Programs already running are left as they are and watched t
 Every 30 seconds it checks each one:
 
 * **Ollama and the transcriber** must answer at their web address. An old transcriber still holding port
-  3000 is stopped before a new one starts.
+  3000 is stopped before a new one starts. A transcriber that is slow to answer but finished a call in the
+  last 3 minutes is busy, not stuck (low memory or a pile of waiting calls), so it is left to carry on;
+  restarting it would only add to the pile. After a restart, calls that waited are done one after every
+  two new calls, so new calls still come first but old ones aren't stuck behind them.
 * **SDRTrunk** must be running and its window must not be "Not responding" (the same thing Task Manager
   shows).
 

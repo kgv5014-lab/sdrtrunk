@@ -120,7 +120,7 @@ def test_incidents_and_long_calls_get_summaries(tmp_path, ollama):
     assert status["summaries"]["enabled"] and status["summaries"]["reachable"] is True
     url, body = ollama.requests[0]
     assert url == "http://127.0.0.1:11434/api/chat"
-    assert body["model"] == "qwen3.5:9b-q4_K_M" and body["stream"] is False and body["keep_alive"] == -1 and body["think"] is False
+    assert body["model"] == "qwen3.5:9b-q4_K_M" and body["stream"] is False and body["keep_alive"] == "10m" and body["think"] is False
     assert body["format"]["properties"]["tags"]["items"]["enum"] == list(summaries.TAGS)
     # No context size is sent, so a model shared with another program isn't reloaded at a different size.
     assert "num_ctx" not in body["options"]

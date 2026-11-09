@@ -23,12 +23,16 @@ class FakeSystem:
         self.stop = False
         self.status = None
         self.killed_names = []
+        self.heartbeat_ago = None
 
     def now(self):
         return self.time
 
     def sleep(self, seconds):
         self.time += seconds
+
+    def modified_ago(self, path):
+        return self.heartbeat_ago
 
     def answers(self, url, timeout=20):
         return self.up["ollama" if "11434" in url else "transcriber"]
@@ -137,6 +141,28 @@ def test_crashed_transcriber_is_restarted_after_enough_failed_checks():
     assert 4242 in system.killed
     assert alerts[0][0] == "Transcriber restarted"
     assert "stopped answering" in alerts[0][1]
+
+
+def test_slow_transcriber_still_finishing_calls_is_not_restarted():
+    # Low memory or a pile of waiting calls: no answers, but a call was finished a minute ago.
+    dog, system, alerts = make()
+    dog.start_all()
+    system.time += dog.settings.startup_s
+    system.up["transcriber"] = False
+    system.heartbeat_ago = 60
+    run_checks(dog, system, dog.settings.fail_checks * 3)
+    assert system.launched == [] and alerts == []
+    # Nothing finished for a long while: it's stuck after all.
+    system.heartbeat_ago = watchdog.TRANSCRIBER_BUSY_S + 1
+    run_checks(dog, system, dog.settings.fail_checks)
+    assert system.launched == ["start-transcriber.bat"]
+
+
+def test_transcriber_is_checked_without_the_database():
+    dog, _, _ = make()
+    transcriber = next(p for p in dog.programs if p.name == "Transcriber")
+    assert transcriber.url.endswith("/api/alive")
+    assert transcriber.heartbeat.name == watchdog.HEARTBEAT_FILE
 
 
 def test_a_single_slow_answer_does_not_restart():

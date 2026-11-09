@@ -17,6 +17,29 @@ param(
     [string]$Branch = 'master'
 )
 
+# Stopping the background (boot) task and closing the programs it started needs admin rights. When this
+# was started without them, open a new admin window (Windows asks Yes/No) that runs this same script, then
+# leave with exit code 10 so update-sdrtrunk-plus.bat closes this window without waiting for a key.
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+if (-not ([Security.Principal.WindowsPrincipal]$identity).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Host 'The updater needs admin rights. Click Yes in the Windows box that pops up.' -ForegroundColor Yellow
+    function Quote([string]$text) { "'" + $text.Replace("'", "''") + "'" }
+    # The admin window runs the script, then waits for Enter so its messages can be read.
+    $command = "Set-Location -LiteralPath $(Quote $PSScriptRoot); " +
+        "& $(Quote $PSCommandPath) -TranscriberDir $(Quote $TranscriberDir) -Branch $(Quote $Branch); " +
+        "Write-Host ''; Read-Host 'Press Enter to close this window'"
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+    try {
+        Start-Process -FilePath 'powershell.exe' -Verb RunAs -WorkingDirectory $PSScriptRoot -ErrorAction Stop `
+            -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $encoded"
+    } catch {
+        Write-Host 'Windows did not give admin rights (No was clicked), so nothing was changed.' -ForegroundColor Red
+        Write-Host 'Run update-sdrtrunk-plus.bat again and click Yes.' -ForegroundColor Red
+        exit 1
+    }
+    exit 10
+}
+
 $ErrorActionPreference = 'Continue'
 $repo = $PSScriptRoot
 $parent = Split-Path $repo -Parent

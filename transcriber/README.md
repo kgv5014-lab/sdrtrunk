@@ -54,7 +54,8 @@ Check Whisper on its own with any recording before wiring up SDRTrunk:
 ## Updating SDRTrunk and the transcriber
 
 Double-click **update-sdrtrunk-plus.bat** in the sdrtrunk code folder (on this PC
-`E:\SDR-Stuff\FreshSDRTrunk\BUILD\sdrtrunk`). It waits until SDRTrunk and the transcriber are closed (type C
+`E:\SDR-Stuff\FreshSDRTrunk\BUILD\sdrtrunk`). Windows asks whether to let it make changes: click Yes, and the update
+carries on in a new admin window (admin rights are needed to pause the background start-up). It waits until SDRTrunk and the transcriber are closed (type C
 to have it close them), gets the latest code from GitHub, builds SDRTrunk and copies the new transcriber
 files into `E:\SDR-Stuff\sdrtrunk-transcriber`. It never touches config.toml, vocabulary.txt, codes.csv,
 corrections.csv, places.csv, places-geo.json, address-ranges.json, paging_tones.csv or the data, ab-samples and blank-samples folders.

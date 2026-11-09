@@ -20,7 +20,9 @@ class FakeSystem:
         self.edit = False
         self.update = False
         self.restart = False
+        self.stop = False
         self.status = None
+        self.killed_names = []
 
     def now(self):
         return self.time
@@ -68,6 +70,16 @@ class FakeSystem:
     def take_restart_request(self):
         asked, self.restart = self.restart, False
         return asked
+
+    def take_stop_request(self):
+        asked, self.stop = self.stop, False
+        return asked
+
+    def kill_name(self, image):
+        self.killed_names.append(image)
+
+    def clear_status(self):
+        self.status = None
 
     def write_status(self, status):
         self.status = status
@@ -300,3 +312,34 @@ def test_new_version_folder_is_found_when_the_saved_path_is_gone():
     sdrtrunk = dog.programs[-1]
     assert sdrtrunk.bat == new
     assert system.launched[-1] == "sdr-trunk.bat"
+
+
+def test_stop_all_from_the_tray_stops_everything_and_the_watchdog():
+    dog, system, alerts = make(sdrtrunk_bat=BAT, background=True)
+    dog.start_all()
+    run_checks(dog, system, 7)
+    system.port = {777}
+    system.stop = True
+    run_checks(dog, system, 1)
+    assert dog.stopped and system.status is None
+    assert 500 in system.killed and 777 in system.killed
+    assert system.killed_names == ["ollama.exe"]
+    # Nothing is started again afterwards, and no alerts.
+    system.up = {"ollama": False, "transcriber": False}
+    system.sdrtrunk = []
+    assert system.launched == [] and alerts == []
+
+
+def test_run_returns_after_stop_all():
+    dog, system, _ = make(sdrtrunk_bat=BAT)
+    system.stop = True
+    dog.run()  # would loop forever without the stop
+    assert dog.stopped
+
+
+def test_stop_all_leaves_ollama_alone_when_summaries_are_off():
+    dog, system, _ = make(sdrtrunk_bat=BAT, summaries=False)
+    dog.start_all()
+    system.stop = True
+    dog.tick()
+    assert system.killed_names == []

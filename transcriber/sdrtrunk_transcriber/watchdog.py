@@ -7,7 +7,8 @@ that crashes or freezes, with a phone alert each time.
 --background is for the boot job (boot-on.bat), which runs everything before anyone signs in to
 Windows: SDRTrunk is then started with no window. While edit-mode.bat has the normal SDRTrunk window
 open (edit-mode.flag exists), SDRTrunk is left alone, and the no-window copy is started again as soon
-as the window is closed.
+as the window is closed. The tray icon's "Stop all" (stop.flag) stops every program and then the
+watchdog itself, which exits with code 0 so the boot task isn't started again.
 
 Ollama and this service are checked by asking their web address for an answer. SDRTrunk has no web
 address, so it is checked the way Task Manager does: is its java process there, and is its window
@@ -22,6 +23,7 @@ import logging.handlers
 import ntpath
 import os
 import subprocess
+import sys
 import time
 from collections import deque
 from datetime import datetime
@@ -35,6 +37,8 @@ log = logging.getLogger("watchdog")
 HOME = Path(__file__).resolve().parent.parent
 # Tells start-transcriber.bat not to wait for a key press when the service stops, so it can be restarted.
 WATCHDOG_ENV = "SDRTRUNK_WATCHDOG"
+# Tells the batch files their window is hidden (start-ollama.bat then keeps Ollama in it too).
+HIDDEN_ENV = "SDRTRUNK_HIDDEN"
 # Between stopping a program and starting it again, so the tuners and the port are let go.
 SETTLE_S = 5
 # A program restarted too often is left alone this long.
@@ -45,6 +49,8 @@ EDIT_FLAG = HOME / "edit-mode.flag"
 UPDATING_FLAG = HOME / "updating.flag"
 # Made by the tray icon's "Restart everything".
 RESTART_FLAG = HOME / "restart.flag"
+# Made by the tray icon's "Stop all": the watchdog stops every program, then itself.
+STOP_FLAG = HOME / "stop.flag"
 # What the tray icon shows: each program's state, written after every check.
 STATUS_FILE = HOME / "watchdog-status.json"
 # Makes SDRTrunk start with no window (its own built-in mode: playlist loaded, channels auto-started).
@@ -59,8 +65,18 @@ SDRTRUNK_QUERY = (
 )
 
 
+# Keeps the commands below from flashing a console window when run from the tray icon (pythonw).
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+
+
 class System:
-    """The calls to Windows, in one place so the tests can stand in for them."""
+    """The calls to Windows, in one place so the tests can stand in for them.
+
+    hidden: start the programs' batch files in a console window nobody sees (the no-window mode, also
+    when started from the tray icon while someone is signed in), instead of a normal window."""
+
+    def __init__(self, hidden: bool = False):
+        self.hidden = hidden
 
     def now(self) -> float:
         return time.time()
@@ -74,24 +90,41 @@ class System:
         except requests.RequestException:
             return False
 
-    def launch(self, bat: str, cwd: str, extra_env: dict | None = None) -> int:
-        """Runs a batch file in its own console window, as a double-click would. Returns its pid."""
+    def launch(self, bat: str, cwd: str, extra_env: dict | None = None, hidden: bool | None = None) -> int:
+        """Runs a batch file in its own console window, as a double-click would (or a hidden one).
+        Returns its pid."""
+        hidden = self.hidden if hidden is None else hidden
         env = dict(os.environ, **{WATCHDOG_ENV: "1"}, **(extra_env or {}))
         flags = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x10)
-        return subprocess.Popen(["cmd", "/c", bat], cwd=cwd, env=env, creationflags=flags).pid
+        startup = None
+        if hidden:
+            env[HIDDEN_ENV] = "1"
+            startup = subprocess.STARTUPINFO() if hasattr(subprocess, "STARTUPINFO") else None
+            if startup is not None:
+                startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startup.wShowWindow = 0  # SW_HIDE
+        else:
+            env.pop(HIDDEN_ENV, None)
+        return subprocess.Popen(["cmd", "/c", bat], cwd=cwd, env=env, creationflags=flags,
+                                startupinfo=startup).pid
 
     def kill_tree(self, pid: int):
-        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True)
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, creationflags=NO_WINDOW)
+
+    def kill_name(self, image: str):
+        """Stops every process with this file name, e.g. ollama.exe."""
+        subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True, creationflags=NO_WINDOW)
 
     def port_pids(self, port: int) -> set[int]:
-        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True).stdout
+        out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
+                             creationflags=NO_WINDOW).stdout
         return listening_pids(out, port)
 
     def sdrtrunk_processes(self) -> list[tuple[int, bool, str]] | None:
         """(pid, responding, java.exe path) for each SDRTrunk running, or None if Windows didn't say."""
         try:
             out = subprocess.run(["powershell", "-NoProfile", "-Command", SDRTRUNK_QUERY],
-                                 capture_output=True, text=True, timeout=60)
+                                 capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
         except (OSError, subprocess.TimeoutExpired):
             return None
         if out.returncode != 0:
@@ -123,6 +156,21 @@ class System:
             return False
         except OSError:
             return False
+
+    def take_stop_request(self) -> bool:
+        """True once after the tray icon asked to stop everything."""
+        try:
+            STOP_FLAG.unlink()
+            return True
+        except OSError:
+            return False
+
+    def clear_status(self):
+        """Tells the tray icon the watchdog has stopped (its dot turns grey)."""
+        try:
+            STATUS_FILE.unlink()
+        except OSError:
+            pass
 
     def write_status(self, status: dict):
         try:
@@ -200,6 +248,10 @@ class Ollama(Program):
 
     def stop(self):
         pass  # start-ollama.bat does it, and its own window closes when it's done
+
+    def shut_down(self):
+        """Stop all: nothing is started again after this, so Ollama itself is stopped."""
+        self.system.kill_name("ollama.exe")
 
 
 class Transcriber(Program):
@@ -308,11 +360,12 @@ class SDRTrunk(Program):
 class Watchdog:
     def __init__(self, config, system: System | None = None, notify=None, background: bool = False):
         self.settings = config.watchdog
-        self.system = system or System()
+        self.system = system or System(hidden=background)
         self.notify = notify or (lambda title, message: None)
         self.background = background
         self.port = config.server.port
         self.told_updating = False
+        self.stopped = False
         self.programs = []
         if config.summaries.enabled:
             self.programs.append(Ollama(self.system, config.summaries.url))
@@ -359,7 +412,24 @@ class Watchdog:
                 self.system.sleep(15)
         self.write_status()
 
+    def stop_all(self):
+        """The tray icon's "Stop all": stops every program, SDRTrunk first, and then the watchdog itself
+        (run() returns), so nothing is started again until something starts it."""
+        log.info("Stopping everything (asked from the tray icon)")
+        for program in reversed(self.programs):
+            program.check()  # so SDRTrunk knows its java pids
+            program.stop()
+            if isinstance(program, Ollama):
+                program.shut_down()
+            log.info("Stopped %s", program.name)
+        self.stopped = True
+        self.system.clear_status()
+        log.info("Everything is stopped. Start it again from the tray icon (Start), or restart the PC.")
+
     def tick(self):
+        if self.system.take_stop_request():
+            self.stop_all()
+            return
         if self.system.updating():
             if not self.told_updating:
                 log.info("The updater is running: nothing is checked or restarted until it's done")
@@ -455,7 +525,7 @@ class Watchdog:
         log.info("Watching %s. Close this window to stop watching (they keep running).",
                  ", ".join(p.name for p in self.programs))
         self.start_all()
-        while True:
+        while not self.stopped:
             self.system.sleep(self.settings.check_s)
             try:
                 self.tick()
@@ -485,6 +555,8 @@ def main():
         if config.watchdog.alert and alerts.enabled and alerts.bark_key:
             bark_push(alerts, title, message)
 
+    # A "Stop all" the watchdog never got to (it wasn't running) mustn't stop this one straight away.
+    STOP_FLAG.unlink(missing_ok=True)
     if args.background:
         # Left over from an edit-mode window that was open when the PC went down.
         EDIT_FLAG.unlink(missing_ok=True)
@@ -495,7 +567,10 @@ def main():
     try:
         Watchdog(config, notify=notify, background=args.background).run()
     except KeyboardInterrupt:
-        pass
+        sys.exit(1)
+    # Only "Stop all" ends the watchdog normally. Exit code 0 tells boot-start.bat (and Windows Task
+    # Scheduler, which restarts the boot task when it fails) that this was on purpose.
+    sys.exit(0)
 
 
 if __name__ == "__main__":

@@ -35,3 +35,4 @@ gradle-app.setting
 .gradletasknamecache
 transcriber/*.flag
 transcriber/watchdog-status.json
+transcriber/control-result.txt

@@ -2,7 +2,8 @@
 #
 # The dot by the clock shows how the background programs are doing, from watchdog-status.json:
 #   green = all running, orange = starting, edit mode or updating, red = one stopped, grey = no watchdog.
-# Right-click it for the map, edit mode, the PC speakers, restart, update and the log.
+# Right-click it for the map, edit mode, the PC speakers, restart, stop all, start (each program, with
+# or without windows), update and the log.
 # It also plays the live calls on the PC speakers (sdrtrunk_transcriber.pc_speakers, no window).
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -19,6 +20,8 @@ $restartFlag = Join-Path $here 'restart.flag'
 $editFlag = Join-Path $here 'edit-mode.flag'
 $updatingFlag = Join-Path $here 'updating.flag'
 $speakersOffFile = Join-Path $here 'speakers-off.flag'
+$resultFile = Join-Path $here 'control-result.txt'
+$script:job = $null
 $script:speakers = $null
 $script:wantSpeakers = -not (Test-Path $speakersOffFile)
 $script:status = $null
@@ -67,7 +70,7 @@ function Get-Level($s) {
 }
 
 function Get-Lines($s) {
-    if (-not $s) { return @('The watchdog is not running') }
+    if (-not $s) { return @('The watchdog is not running (Start > Everything starts it)') }
     @($s.programs | ForEach-Object {
         $n = $names[$_.name]; if (-not $n) { $n = $_.name }
         $w = $words[$_.state]; if (-not $w) { $w = $_.state }
@@ -117,17 +120,66 @@ function Find-Updater {
     return $null
 }
 
+function Start-Control([string[]]$arguments, [string]$saying) {
+    # Stop all and Start run sdrtrunk_transcriber.control with no window; its answer is shown when it's done.
+    if ($script:job -and -not $script:job.HasExited) {
+        [System.Windows.Forms.MessageBox]::Show('Still busy with the last Stop or Start. Try again in a minute.', 'SDRTrunk Plus') | Out-Null
+        return
+    }
+    if (-not (Test-Path $python)) {
+        [System.Windows.Forms.MessageBox]::Show('Python is missing here. Run install.bat in the transcriber folder.', 'SDRTrunk Plus') | Out-Null
+        return
+    }
+    Remove-Item $resultFile -ErrorAction SilentlyContinue
+    $script:job = Start-Process -FilePath $python -WorkingDirectory $here -PassThru `
+        -ArgumentList (@('-m', 'sdrtrunk_transcriber.control', '--config', 'config.toml') + $arguments)
+    $tray.ShowBalloonTip(4000, 'SDRTrunk Plus', $saying, [System.Windows.Forms.ToolTipIcon]::Info)
+    $jobTimer.Start()
+}
+
+function Show-ControlResult {
+    if (-not $script:job -or -not $script:job.HasExited) { return }
+    $jobTimer.Stop()
+    $script:job = $null
+    $lines = @(Get-Content $resultFile -ErrorAction SilentlyContinue)
+    if ($lines.Count -lt 2) { $lines = @('failed', 'It stopped without saying what happened. See the log.') }
+    $kind = if ($lines[0] -eq 'failed') { [System.Windows.Forms.ToolTipIcon]::Warning } else { [System.Windows.Forms.ToolTipIcon]::Info }
+    $tray.ShowBalloonTip(8000, 'SDRTrunk Plus', $lines[1], $kind)
+    Update-Tray
+}
+
 $tray = New-Object System.Windows.Forms.NotifyIcon
 $tray.Icon = $icons.off
 $tray.Text = 'SDRTrunk Plus'
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $tray.ContextMenuStrip = $menu
 
-function Add-Item($text, [scriptblock]$action) {
+function Add-Item($text, [scriptblock]$action, $parent = $null) {
     $item = New-Object System.Windows.Forms.ToolStripMenuItem $text
     if ($action) { $item.add_Click($action) }
-    [void]$menu.Items.Add($item)
+    if ($parent) { [void]$parent.DropDownItems.Add($item) } else { [void]$menu.Items.Add($item) }
     $item
+}
+
+function Add-StartMenu($text, [bool]$window) {
+    # One submenu: Everything (the watchdog, which keeps them all running), then each program on its own.
+    $sub = Add-Item $text $null
+    $how = if ($window) { 'with windows' } else { 'with no windows' }
+    foreach ($p in @(
+            @('Everything (kept running by the watchdog)', 'everything', 'everything'),
+            @('SDRTrunk only', 'sdrtrunk', 'SDRTrunk'),
+            @('Whisper transcriber only', 'transcriber', 'the Whisper transcriber'),
+            @('Summaries (Ollama) only', 'ollama', 'Ollama'))) {
+        $item = Add-Item $p[0] $null $sub
+        $item.Tag = @{ what = $p[1]; window = $window; saying = "Starting $($p[2]) $how..." }
+        $item.add_Click({
+            param($clicked, $unused)
+            $arguments = @('start', $clicked.Tag.what)
+            if ($clicked.Tag.window) { $arguments += '--window' }
+            Start-Control $arguments $clicked.Tag.saying
+        })
+    }
+    $sub
 }
 
 $statusItems = @()
@@ -151,12 +203,20 @@ $editItem = Add-Item 'Open SDRTrunk window (edit mode)' {
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 Add-Item 'Restart everything' {
     if (-not $script:status) {
-        [System.Windows.Forms.MessageBox]::Show('The watchdog is not running, so there is nothing to restart. Restart the PC to start everything.', 'SDRTrunk Plus') | Out-Null
+        [System.Windows.Forms.MessageBox]::Show('The watchdog is not running, so there is nothing to restart. Use Start > Everything in this menu to start it all.', 'SDRTrunk Plus') | Out-Null
         return
     }
     $answer = [System.Windows.Forms.MessageBox]::Show('Restart SDRTrunk, the transcriber and Ollama? Takes about a minute.', 'SDRTrunk Plus', 'YesNo', 'Question')
     if ($answer -eq 'Yes') { Set-Content $restartFlag 'asked from the tray icon' }
 } | Out-Null
+Add-Item 'Stop all' {
+    $answer = [System.Windows.Forms.MessageBox]::Show(
+        "Stop SDRTrunk, the transcriber, Ollama and the watchdog?`n`nNothing records or transcribes until you start it again (Start in this menu, or restart the PC). Takes up to two minutes.",
+        'SDRTrunk Plus', 'YesNo', 'Question')
+    if ($answer -eq 'Yes') { Start-Control @('stop-all') 'Stopping everything... the dot turns grey when done.' }
+} | Out-Null
+$startHidden = Add-StartMenu 'Start (no windows)' $false
+$startWindows = Add-StartMenu 'Start with windows' $true
 Add-Item 'Update everything' {
     $updater = Find-Updater
     if (-not $updater) {
@@ -186,6 +246,10 @@ $menu.add_Opening({
 })
 $tray.add_DoubleClick({ Start-Process "http://127.0.0.1:$($script:port)/map" })
 
+$jobTimer = New-Object System.Windows.Forms.Timer
+$jobTimer.Interval = 1000
+$jobTimer.add_Tick({ Show-ControlResult })
+
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 10000
 $timer.add_Tick({ Update-Tray })
@@ -196,6 +260,7 @@ Update-Tray
 [System.Windows.Forms.Application]::Run()
 
 $timer.Stop()
+$jobTimer.Stop()
 $tray.Dispose()
 if ($script:speakers -and -not $script:speakers.HasExited) { Stop-Process -Id $script:speakers.Id -Force -ErrorAction SilentlyContinue }
 $mutex.ReleaseMutex()

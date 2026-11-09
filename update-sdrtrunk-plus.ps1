@@ -244,6 +244,25 @@ if ($LASTEXITCODE -ne 0) {
 }
 Pop-Location
 
+# The tray icon keeps running its old copy of tray.ps1: swap it for the new one. explorer.exe starts it
+# as the signed-in user, not as admin like this window.
+$trayScript = Join-Path $TranscriberDir 'start-tray.bat'
+try {
+    $oldTray = @(Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction Stop |
+        Where-Object { $_.CommandLine -like '*tray.ps1*' })
+    if ($oldTray.Count -gt 0 -and (Test-Path $trayScript)) {
+        Get-CimInstance Win32_Process -Filter "Name='pythonw.exe'" |
+            Where-Object { $_.CommandLine -like '*pc_speakers*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        $oldTray | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+        Start-Sleep -Seconds 1
+        Start-Process explorer.exe "`"$trayScript`""
+        Note 'Restarted the tray icon so its menu is up to date'
+    }
+} catch {
+    Write-Host '   Could not restart the tray icon. Right-click it, Close this icon, then run start-tray.bat.' -ForegroundColor Yellow
+}
+
 Write-Host ''
 Write-Host "Done. Updated $($old.Substring(0, 7)) to $($new.Substring(0, 7))." -ForegroundColor Green
 if ($bootTask) {

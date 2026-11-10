@@ -8,3 +8,4 @@ __pycache__/
 .pytest_cache/
 places.csv
 places-geo.json
+transcriber.log*

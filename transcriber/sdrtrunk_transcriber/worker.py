@@ -19,6 +19,7 @@ from .db import Database
 from .junk import remove_junk
 from .places import PlaceBook
 from .progress import Progress
+from .stalls import StallWatch
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +99,8 @@ class TranscriptionWorker:
         self.ready = threading.Event()
         # Calls that waited while the transcriber was closed (progress.py; the server shares one).
         self.progress = Progress()
+        # Logs what the program is doing when one call takes over a minute (stalls.py).
+        self.stalls = StallWatch()
         self.codebook = codebook
         self.placebook = placebook or PlaceBook(None)
         self.corrections = corrections or CorrectionBook(None)
@@ -139,6 +142,7 @@ class TranscriptionWorker:
         pending = list(self.db.pending_ids())
         self.progress.start(BACKLOG_JOB, "Transcribing calls that waited", pending)
         self._backlog.extend(pending)
+        self.stalls.start()
         self._thread.start()
 
     def stop(self, timeout: float = 30):
@@ -202,11 +206,13 @@ class TranscriptionWorker:
             try:
                 if call_id is None:
                     return
+                self.stalls.begin(call_id)
                 self._process(call_id)
             except Exception as e:
                 log.exception("Call %s failed", call_id)
                 self.db.update_call(call_id, status="failed", error=str(e)[:500])
             finally:
+                self.stalls.end()
                 self.progress.step(BACKLOG_JOB, call_id)
                 if from_backlog:
                     self._doing_backlog = False
@@ -218,20 +224,25 @@ class TranscriptionWorker:
                     pass
 
     def _process(self, call_id: int):
+        step = self.stalls.step
+        step("reading the call log")
         call = self.db.get_call(call_id)
         if call is None:
             return
 
         self.db.update_call(call_id, status="processing")
+        step("reading the audio file")
         samples = audio.decode(self.config.data_path / call["audio_path"])
         duration = round(audio.duration_seconds(samples), 2)
 
         if self.on_audio:
+            step("tone finder")
             try:
                 self.on_audio(call, samples)
             except Exception:
                 log.exception("Tone finder failed on call %d", call_id)
 
+        step("cleaning the audio")
         if self._backend is None:
             self.db.update_call(call_id, status="failed", duration_s=duration,
                                 error="transcription backend did not start, see the log")
@@ -258,15 +269,19 @@ class TranscriptionWorker:
         context = (call["talkgroup_label"], call["talkgroup_group"])
         terms = self.prompt_terms(*context, call=call)
         prompt = ", ".join(terms)
+        step("Whisper")
         result = self._backend.transcribe(samples, prompt)
+        step("tidying the words")
         transcript, junk = self._finish(result, terms, call, context)
         check = {}
         if self.selfcheck:
+            step("self-check (Ollama, second try)")
             result, transcript, junk, check = self._self_check(
                 call, samples, max(duration - tone_s, 0.0), prompt, terms, context, result, transcript, junk)
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         address_fix = None
         if self.address_fixer and not air:
+            step("address check")
             # On the finished text, after any second try, so a real address is checked once.
             try:
                 transcript, heard = self.address_fixer.fix(transcript, " ".join(filter(None, context)),
@@ -275,6 +290,7 @@ class TranscriptionWorker:
             except Exception:
                 log.exception("Address check failed on call %d", call_id)
 
+        step("saving to the call log")
         self.db.update_call(
             call_id,
             status="done",
@@ -295,6 +311,7 @@ class TranscriptionWorker:
         log.info("Call %d TG %s (%.1fs%s) in %d ms: %s", call_id, call["talkgroup"], duration,
                  "".join(", " + note for note in notes), elapsed_ms, transcript or "(no speech)")
         if self.on_done:
+            step("after the call (speakers, unit board, map, summaries)")
             self.on_done(call_id)
 
     def _self_check(self, call, samples, speech_s, prompt, terms, context, result, transcript, junk):

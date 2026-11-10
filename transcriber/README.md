@@ -784,6 +784,11 @@ Recording, streaming, the map, the phone pages and alerts all work as usual. It 
   Right-click for: each program's state, Open the map, PC speakers (on/off), Open SDRTrunk window (edit
   mode), Restart everything, Stop all, Start (no windows), Start with windows, Update everything (runs
   the updater), Show the log, and Close this icon.
+* **Windows while you're signed in:** when you sign in and everything is running with no windows (started
+  at boot, or by the updater), the tray icon starts it all again with its normal windows, about a minute
+  of radio traffic. Untick **Open the windows when I'm signed in** in its menu to leave things hidden.
+  Lock the PC rather than signing out: signing out closes the windows, and things stay stopped until
+  the PC restarts or you sign in and use Start.
 * **Stop all** (tray menu) stops SDRTrunk, the transcriber, Ollama and the watchdog, and nothing starts
   again until you start it (no admin rights needed: it asks the watchdog to do it). A pop-up says when
   it's done and the dot turns grey. Restarting the PC starts everything as usual.
@@ -801,7 +806,8 @@ Recording, streaming, the map, the phone pages and alerts all work as usual. It 
 * **Changing channels or settings:** run **edit-mode.bat**. It stops the no-window SDRTrunk and opens the
   normal window (also in the tray menu). Make your changes, close the window, and the no-window copy
   starts again within a minute. The PC speakers go quiet meanwhile, because the window plays the calls itself.
-* **What's happening:** watchdog.log in this folder, and SDRTrunk's own log (View > Application Log Files
+* **What's happening:** watchdog.log and transcriber.log in this folder (transcriber.log also says what
+  the program was doing whenever one call took over a minute, under STUCK), and SDRTrunk's own log (View > Application Log Files
   in edit mode). Task Manager shows the programs under Details.
 * **Updates:** run update-sdrtrunk-plus.bat (or Update everything in the tray menu). It pauses the
   watchdog, asks to close the programs (type **C**: they have no windows), updates, then starts the boot

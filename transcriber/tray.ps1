@@ -4,6 +4,9 @@
 #   green = all running, orange = starting, edit mode or updating, red = one stopped, grey = no watchdog.
 # Right-click it for the map, edit mode, the PC speakers, restart, stop all, start (each program, with
 # or without windows), update and the log.
+# While you are signed in the programs run with their windows: the first time this icon sees them running
+# with no windows (started at boot, or by the updater), it starts them again with windows. Untick
+# "Open the windows when I'm signed in" in the menu to leave them hidden.
 # It also plays the live calls on the PC speakers (sdrtrunk_transcriber.pc_speakers, no window).
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -21,6 +24,10 @@ $editFlag = Join-Path $here 'edit-mode.flag'
 $updatingFlag = Join-Path $here 'updating.flag'
 $speakersOffFile = Join-Path $here 'speakers-off.flag'
 $resultFile = Join-Path $here 'control-result.txt'
+$windowsOffFile = Join-Path $here 'windows-off.flag'
+$script:wantWindows = -not (Test-Path $windowsOffFile)
+# Windows are opened once per run of this icon, so Start (no windows) afterwards is left alone.
+$script:windowsDone = $false
 $script:job = $null
 $script:speakers = $null
 $script:wantSpeakers = -not (Test-Path $speakersOffFile)
@@ -117,7 +124,19 @@ function Update-Tray {
         $tray.ShowBalloonTip(8000, 'SDRTrunk Plus', ((Get-Lines $script:status) -join "`n"), [System.Windows.Forms.ToolTipIcon]::Warning)
     }
     $script:lastLevel = $level
+    Open-Windows
     Update-Speakers
+}
+
+function Open-Windows {
+    # Signed in (this icon only runs then) with everything running hidden: start it again with windows.
+    if ($script:windowsDone -or -not $script:status) { return }
+    if ((Test-Path $updatingFlag) -or (Test-Path $editFlag)) { return }
+    if ($script:job -and -not $script:job.HasExited) { return }
+    $script:windowsDone = $true
+    if ($script:wantWindows -and $script:status.background -and (Test-Path $python)) {
+        Start-Control @('start', 'everything', '--window') 'You are signed in: opening everything with its windows (about a minute)...'
+    }
 }
 
 function Find-Updater {
@@ -211,6 +230,11 @@ $editItem = Add-Item 'Open SDRTrunk window (edit mode)' {
         Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', "`"$here\edit-mode.bat`"" -WorkingDirectory $here
     }
 }
+$windowsItem = Add-Item "Open the windows when I'm signed in" {
+    $script:wantWindows = -not $script:wantWindows
+    if ($script:wantWindows) { Remove-Item $windowsOffFile -ErrorAction SilentlyContinue; $script:windowsDone = $false }
+    else { Set-Content $windowsOffFile 'Windows at sign-in turned off from the tray icon' }
+}
 [void]$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator))
 Add-Item 'Restart everything' {
     if (-not $script:status) {
@@ -253,6 +277,7 @@ $menu.add_Opening({
         if ($i -lt $lines.Count) { $statusItems[$i].Text = $lines[$i] }
     }
     $speakersItem.Checked = $script:wantSpeakers
+    $windowsItem.Checked = $script:wantWindows
     $editItem.Enabled = [bool]$script:status
 })
 $tray.add_DoubleClick({ Start-Process "http://127.0.0.1:$($script:port)/map" })

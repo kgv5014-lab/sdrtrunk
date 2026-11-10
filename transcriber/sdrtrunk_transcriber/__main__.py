@@ -8,6 +8,7 @@
 
 import argparse
 import logging
+import logging.handlers
 import os
 import sys
 import time
@@ -15,6 +16,8 @@ from pathlib import Path
 
 # Make CUDA number GPUs the same way nvidia-smi does, so device_index matches `nvidia-smi -L`.
 os.environ.setdefault("CUDA_DEVICE_ORDER", "PCI_BUS_ID")
+
+LOG_FILE = "transcriber.log"
 
 
 def add_nvidia_dll_dirs():
@@ -64,11 +67,26 @@ def main():
     import uvicorn
     from .server import create_app
 
+    log_to_file()
+
     app = create_app(config)
     if config.listen.enabled and config.listen.public_port:
         from .live import start_public
         start_public(app, config.data_path, config.listen.public_port)
     uvicorn.run(app, host=config.server.host, port=config.server.port, log_level="info")
+
+
+def log_to_file():
+    """Also writes the log to transcriber.log in the program folder (beside watchdog.log), so what
+    happened is still there when it ran with no window. Kept to a few MB."""
+    try:
+        path = Path(__file__).resolve().parent.parent / LOG_FILE
+        handler = logging.handlers.RotatingFileHandler(path, maxBytes=2_000_000, backupCount=2, encoding="utf-8")
+    except OSError as e:
+        logging.warning("Can't write %s (%s); the log is only in this window", LOG_FILE, e)
+        return
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
 
 
 def test_file(config, path: Path) -> int:

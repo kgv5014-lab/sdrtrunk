@@ -5,10 +5,13 @@
 Started before Windows sign-in (boot-on.bat), SDRTrunk can't reach the speakers: Windows only gives
 sound to someone signed in. So the tray icon (tray.ps1) runs this player when you sign in; it plays
 the same live stream as the phone's Listen page, from this PC's transcriber. While edit-mode.bat has the normal
-SDRTrunk window open, that window plays the calls itself, so this one goes quiet.
+SDRTrunk window open, that window plays the calls itself, so this one goes quiet. It also goes quiet
+whenever the watchdog says SDRTrunk runs with its window (start-everything.bat), or the tray's
+"PC speakers" is unticked: a copy the tray icon lost track of must not play the calls a second time.
 """
 
 import argparse
+import json
 import logging
 import logging.handlers
 import sys
@@ -20,6 +23,10 @@ log = logging.getLogger("pc_speakers")
 
 HOME = Path(__file__).resolve().parent.parent
 EDIT_FLAG = HOME / "edit-mode.flag"
+OFF_FLAG = HOME / "speakers-off.flag"
+STATUS_FILE = HOME / "watchdog-status.json"
+# The watchdog writes its status every 30 s or so; older than this and it isn't running.
+STATUS_FRESH_S = 180
 # Sound cards all take 48 kHz; the stream is resampled to it.
 RATE = 48000
 RETRY_S = 15
@@ -47,7 +54,20 @@ def find_device(sd, name: str):
     return None
 
 
-def play(url: str, device, editing=EDIT_FLAG.exists):
+def windowed(status_file: Path = STATUS_FILE, now=time.time) -> bool:
+    """True while the watchdog is running SDRTrunk with its window, which plays the calls itself."""
+    try:
+        status = json.loads(status_file.read_text(encoding="utf-8"))
+        return now() - float(status["time"]) <= STATUS_FRESH_S and not status.get("background")
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def should_be_quiet() -> bool:
+    return EDIT_FLAG.exists() or OFF_FLAG.exists() or windowed()
+
+
+def play(url: str, device, editing=should_be_quiet):
     """Plays the stream until it breaks. Returns normally only if the stream ends."""
     import av
     import sounddevice as sd
@@ -58,16 +78,20 @@ def play(url: str, device, editing=EDIT_FLAG.exists):
         with sd.RawOutputStream(samplerate=RATE, channels=1, dtype="int16", device=device) as out:
             log.info("Playing the live calls on the PC speakers")
             quiet = False
+            silent, checked = False, 0.0
             for frame in container.decode(audio=0):
                 for piece in resampler.resample(frame):
                     data = piece.to_ndarray().tobytes()
-                    if editing():
+                    if time.monotonic() - checked >= 1:  # the check reads files; not for every frame
+                        silent, checked = editing(), time.monotonic()
+                    if silent:
                         if not quiet:
-                            log.info("Edit mode: the SDRTrunk window plays the calls, so this goes quiet")
+                            log.info("The SDRTrunk window plays the calls (or PC speakers is off), "
+                                     "so this goes quiet")
                         quiet = True
                         data = bytes(len(data))
                     elif quiet:
-                        log.info("Edit mode is over; playing again")
+                        log.info("Playing again")
                         quiet = False
                     out.write(data)
     finally:

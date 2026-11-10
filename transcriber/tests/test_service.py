@@ -258,6 +258,7 @@ def test_calls_left_waiting_are_mixed_in_with_new_ones():
     worker._backend_factory = lambda config: None
     worker.ready = __import__("threading").Event()
     worker.progress = worker_module.Progress()
+    worker.stalls = worker_module.StallWatch()
     worker.config = Config()
     worker.config.base_dir = Path(tempfile.mkdtemp())
     worker.config.data_path.mkdir(parents=True)

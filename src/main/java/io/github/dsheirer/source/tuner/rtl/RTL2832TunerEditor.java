@@ -18,21 +18,34 @@
  */
 package io.github.dsheirer.source.tuner.rtl;
 
+import io.github.dsheirer.buffer.INativeBuffer;
 import io.github.dsheirer.preference.UserPreferences;
+import io.github.dsheirer.sample.Listener;
 import io.github.dsheirer.source.SourceException;
 import io.github.dsheirer.source.tuner.TunerType;
+import io.github.dsheirer.source.tuner.channel.TunerChannel;
 import io.github.dsheirer.source.tuner.manager.DiscoveredTuner;
 import io.github.dsheirer.source.tuner.manager.TunerManager;
 import io.github.dsheirer.source.tuner.rtl.RTL2832TunerController.SampleRate;
 import io.github.dsheirer.source.tuner.rtl.e4k.E4KTunerConfiguration;
+import io.github.dsheirer.source.tuner.rtl.gain.GainMeasurement;
+import io.github.dsheirer.source.tuner.rtl.gain.GainOptimizer;
+import io.github.dsheirer.source.tuner.rtl.gain.GainSelector;
+import io.github.dsheirer.source.tuner.rtl.gain.GainSweepReport;
 import io.github.dsheirer.source.tuner.rtl.r8x.R8xTunerConfiguration;
 import io.github.dsheirer.source.tuner.ui.TunerEditor;
+import java.awt.EventQueue;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JButton;
 import javax.swing.JComboBox;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JSeparator;
+import javax.swing.ProgressMonitor;
+import javax.swing.SwingWorker;
 import javax.swing.JToggleButton;
 import javax.swing.SpinnerNumberModel;
 import net.miginfocom.swing.MigLayout;
@@ -56,6 +69,8 @@ public class RTL2832TunerEditor extends TunerEditor<RTL2832Tuner, RTL2832TunerCo
     private JComboBox<Gain> mGainCombo;
     private JLabel mIFGainLabel;
     private JComboBox<Integer> mIFGainCombo;
+    private JButton mFindGainButton;
+    private boolean mFindingGain;
 
     /**
      * Constructs an instance
@@ -135,6 +150,9 @@ public class RTL2832TunerEditor extends TunerEditor<RTL2832Tuner, RTL2832TunerCo
         add(getGainCombo());
         add(getAgcToggleButton(), "wrap");
 
+        add(new JLabel(""));
+        add(getFindGainButton(), "wrap");
+
         add(getIFGainLabel());
         add(getIFGainCombo(), "wrap");
     }
@@ -199,6 +217,7 @@ public class RTL2832TunerEditor extends TunerEditor<RTL2832Tuner, RTL2832TunerCo
             getAgcToggleButton().setToolTipText(getAgcToolTip(controller));
             getGainCombo().setEnabled(!agc && gainModel.getSize() > 0);
             getGainCombo().setSelectedItem(new Gain(getTuner().getController().getClosestTunerGain(config.getGain())));
+            getFindGainButton().setEnabled(controller.hasGainControl() && !mFindingGain);
 
             if(e4k && config instanceof E4KTunerConfiguration e4kConfig)
             {
@@ -215,6 +234,7 @@ public class RTL2832TunerEditor extends TunerEditor<RTL2832Tuner, RTL2832TunerCo
             getAgcToggleButton().setEnabled(false);
             getGainCombo().setEnabled(false);
             getIFGainCombo().setEnabled(false);
+            getFindGainButton().setEnabled(false);
         }
 
         updateSampleRateToolTip();
@@ -314,6 +334,171 @@ public class RTL2832TunerEditor extends TunerEditor<RTL2832Tuner, RTL2832TunerCo
         }
 
         return mAgcToggleButton;
+    }
+
+    private JButton getFindGainButton()
+    {
+        if(mFindGainButton == null)
+        {
+            mFindGainButton = new JButton("Find Best Gain");
+            mFindGainButton.setEnabled(false);
+            mFindGainButton.setToolTipText("Tries every gain on the frequencies this tuner is listening to now and " +
+                    "picks the one where signals stand furthest above the noise");
+            mFindGainButton.addActionListener(e -> findBestGain());
+        }
+
+        return mFindGainButton;
+    }
+
+    /**
+     * Sweeps the tuner through its gains in the background and offers the best one.
+     */
+    private void findBestGain()
+    {
+        if(!hasTuner() || mFindingGain)
+        {
+            return;
+        }
+
+        final RTL2832Tuner tuner = getTuner();
+        final RTL2832TunerController controller = tuner.getController();
+        GainOptimizer optimizer = new GainOptimizer(new GainOptimizer.Dongle()
+        {
+            @Override
+            public int[] gains()
+            {
+                return controller.getTunerGains();
+            }
+
+            @Override
+            public void setGain(int gain) throws SourceException
+            {
+                controller.setGain(false, gain);
+            }
+
+            @Override
+            public long frequency()
+            {
+                return controller.getFrequency();
+            }
+
+            @Override
+            public double sampleRate()
+            {
+                return controller.getSampleRate();
+            }
+
+            @Override
+            public List<TunerChannel> channels()
+            {
+                return tuner.getChannelSourceManager() != null ?
+                        new ArrayList<>(tuner.getChannelSourceManager().getTunerChannels()) : List.of();
+            }
+
+            @Override
+            public void addListener(Listener<INativeBuffer> listener)
+            {
+                controller.addBufferListener(listener);
+            }
+
+            @Override
+            public void removeListener(Listener<INativeBuffer> listener)
+            {
+                controller.removeBufferListener(listener);
+            }
+        });
+
+        int answer = JOptionPane.showConfirmDialog(this, "<html>This tries every gain setting on this tuner, on the " +
+                "frequencies it is listening to right now.<br>It takes about " + optimizer.seconds() + " seconds, " +
+                "and calls on this tuner may break up while it runs.<br><br>For the best answer, start the channels " +
+                "this tuner is for first.<br><br>Start?</html>", "Find Best Gain", JOptionPane.OK_CANCEL_OPTION);
+
+        if(answer != JOptionPane.OK_OPTION)
+        {
+            return;
+        }
+
+        final int originalGain = controller.getClosestTunerGain(getConfiguration().getGain());
+        final ProgressMonitor monitor = new ProgressMonitor(this, "Finding the best gain", " ", 0,
+                controller.getTunerGains().length);
+        monitor.setMillisToDecideToPopup(0);
+        monitor.setMillisToPopup(0);
+        mFindingGain = true;
+        getFindGainButton().setEnabled(false);
+        getGainCombo().setEnabled(false);
+        getAgcToggleButton().setEnabled(false);
+
+        new SwingWorker<GainOptimizer.Result,Void>()
+        {
+            @Override
+            protected GainOptimizer.Result doInBackground() throws Exception
+            {
+                return optimizer.run(originalGain, (done, total, gain) -> EventQueue.invokeLater(() -> {
+                    monitor.setProgress(done);
+                    monitor.setNote(String.format("Tried %.1f dB (%d of %d)", gain / 10.0, done, total));
+                }), monitor::isCanceled);
+            }
+
+            @Override
+            protected void done()
+            {
+                monitor.close();
+                mFindingGain = false;
+                GainOptimizer.Result result = null;
+
+                try
+                {
+                    result = get();
+                }
+                catch(Exception e)
+                {
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    mLog.error(getLogPrefix() + "couldn't find the best gain", cause);
+                    JOptionPane.showMessageDialog(RTL2832TunerEditor.this, getLogPrefix() +
+                            "couldn't find the best gain - " + cause.getLocalizedMessage());
+                }
+
+                //Puts the controls and the tuner back as they were, AGC included
+                tunerStatusUpdated();
+                applyGain();
+
+                if(result != null && hasTuner() && getTuner() == tuner)
+                {
+                    offerGain(result, originalGain);
+                }
+            }
+        }.execute();
+    }
+
+    /**
+     * Shows what the sweep found and applies the chosen gain if the user wants it.
+     */
+    private void offerGain(GainOptimizer.Result result, int originalGain)
+    {
+        GainSelector.Choice choice = result.choice();
+        mLog.info(getLogPrefix() + "gain sweep chose " + new Gain(choice.gain()) + " by " + choice.rule() +
+                " (was " + new Gain(originalGain) + ")");
+
+        for(GainMeasurement m : choice.measurements())
+        {
+            mLog.info(String.format("%sgain sweep %5.1f dB: noise floor %6.1f dB, overload %.3f%%, signal above " +
+                    "noise %s", getLogPrefix(), m.gain() / 10.0, m.floorDb(), m.clipFraction() * 100,
+                    Arrays.toString(Arrays.stream(m.snrDb()).mapToObj(v -> String.format("%.1f", v)).toArray())));
+        }
+
+        String use = "Use " + new Gain(choice.gain());
+        String keep = "Keep " + new Gain(originalGain);
+        boolean same = choice.gain() == originalGain && !getAgcToggleButton().isSelected();
+        Object[] options = same ? new Object[]{"OK"} : new Object[]{use, keep};
+        int answer = JOptionPane.showOptionDialog(this, GainSweepReport.html(result, originalGain), "Find Best Gain",
+                JOptionPane.DEFAULT_OPTION, JOptionPane.INFORMATION_MESSAGE, null, options, options[0]);
+
+        if(!same && answer == 0)
+        {
+            getAgcToggleButton().setSelected(false);
+            getGainCombo().setSelectedItem(new Gain(choice.gain()));
+            applyGain();
+        }
     }
 
     private JComboBox<Gain> getGainCombo()
@@ -497,7 +682,7 @@ public class RTL2832TunerEditor extends TunerEditor<RTL2832Tuner, RTL2832TunerCo
      * Tuner gain combo box entry.
      * @param value in tenths of a dB
      */
-    private record Gain(int value)
+    record Gain(int value)
     {
         @Override
         public String toString()

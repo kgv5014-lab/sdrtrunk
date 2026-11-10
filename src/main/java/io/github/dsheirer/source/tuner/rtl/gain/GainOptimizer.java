@@ -29,7 +29,7 @@ import java.util.function.BooleanSupplier;
 /**
  * Finds the best gain for one dongle on the frequencies it is listening to right now.
  *
- * Steps the dongle through every gain it supports while it keeps running, measures the noise floor, the signal above
+ * Steps the dongle up through the gains it supports while it keeps running, stopping once it is past the best one, measures the noise floor, the signal above
  * noise on each channel the dongle is decoding and the converter overload at each step, and has
  * {@link GainSelector} pick the best.  The dongle is left at its original gain: the caller applies the choice.
  * Reception is worse than normal while the sweep passes through the gains that are too low or too high, for the
@@ -88,7 +88,7 @@ public class GainOptimizer
     }
 
     /**
-     * Seconds a sweep takes, for telling the user beforehand.
+     * Seconds a sweep takes at most, for telling the user beforehand.
      */
     public int seconds()
     {
@@ -96,9 +96,12 @@ public class GainOptimizer
     }
 
     /**
-     * Channels the sweep found on the dongle, in the order of {@link GainMeasurement#snrDb()}.
+     * Result of a sweep.
+     * @param choice made
+     * @param targets channels the sweep found on the dongle, in the order of {@link GainMeasurement#snrDb()}
+     * @param gainCount number of gains the dongle supports, more than were measured when the sweep stopped early
      */
-    public record Result(GainSelector.Choice choice, List<TunerChannel> targets)
+    public record Result(GainSelector.Choice choice, List<TunerChannel> targets, int gainCount)
     {
     }
 
@@ -141,6 +144,12 @@ public class GainOptimizer
                 {
                     progress.step(step + 1, gains.length, gains[step]);
                 }
+
+                //Higher gains can only be worse from here, so they aren't tried
+                if(GainSelector.pastBest(measurements))
+                {
+                    break;
+                }
             }
         }
         finally
@@ -149,7 +158,7 @@ public class GainOptimizer
             mDongle.setGain(originalGain);
         }
 
-        return new Result(GainSelector.choose(measurements), targets);
+        return new Result(GainSelector.choose(measurements), targets, gains.length);
     }
 
     private GainMeasurement measure(GainMeter meter, int gain, List<TunerChannel> targets)

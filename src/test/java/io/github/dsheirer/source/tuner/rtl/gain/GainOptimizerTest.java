@@ -70,6 +70,29 @@ public class GainOptimizerTest
         assertEquals(GainSelector.Rule.ALL_OVERLOADED, overloaded.rule());
     }
 
+    @Test
+    void sweepStopsOncePastTheBest()
+    {
+        List<GainMeasurement> steady = new ArrayList<>(List.of(m(0, -80, 0, 12), m(100, -80, 0, 20),
+                m(200, -76, 0, 25), m(300, -68, 0, 25.2)));
+        assertFalse(GainSelector.pastBest(steady), "still at its best");
+        steady.add(m(400, -58, 0, 21));
+        assertFalse(GainSelector.pastBest(steady), "one worse gain could be a fluke");
+        steady.add(m(450, -53, 0, 19));
+        assertTrue(GainSelector.pastBest(steady));
+        assertEquals(200, GainSelector.choose(steady).gain());
+
+        List<GainMeasurement> quiet = new ArrayList<>(List.of(m(0, -80, 0, 0), m(100, -80, 0, 0), m(200, -73, 0, 0),
+                m(300, -67, 0, 0)));
+        assertFalse(GainSelector.pastBest(quiet), "one gain past the rise so far");
+        quiet.add(m(400, -60, 0, 0));
+        assertTrue(GainSelector.pastBest(quiet));
+        assertEquals(300, GainSelector.choose(quiet).gain());
+
+        assertTrue(GainSelector.pastBest(List.of(m(0, -80, 0), m(100, -70, 0), m(200, -50, 0.01), m(300, -45, 0.05))));
+        assertFalse(GainSelector.pastBest(List.of(m(0, -80, 0), m(100, -70, 0), m(200, -66, 0), m(300, -45, 0.05))));
+    }
+
     /**
      * A dongle with an 8-bit converter: antenna noise and one steady carrier are amplified by the gain, the
      * converter adds its own fixed noise and clips at full scale.
@@ -206,8 +229,9 @@ public class GainOptimizerTest
         try
         {
             GainOptimizer.Result result = new GainOptimizer(dongle, 30, 150).run(197, null, null);
-            assertEquals(6, result.choice().measurements().size());
-            assertEquals(List.of(0, 90, 197, 297, 402, 496, 197), dongle.mGainsSet);
+            assertEquals(6, result.gainCount());
+            assertEquals(dongle.mGainsSet.size() - 1, result.choice().measurements().size());
+            assertEquals(197, dongle.mGainsSet.getLast());
             assertEquals(GainSelector.Rule.SIGNAL, result.choice().rule());
             assertEquals(List.of(0), result.choice().steadyTargets());
             assertTrue(result.choice().gain() >= 197 && result.choice().gain() <= 402, "chose " + result.choice().gain());

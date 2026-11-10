@@ -408,8 +408,8 @@ public class RTL2832TunerEditor extends TunerEditor<RTL2832Tuner, RTL2832TunerCo
             }
         });
 
-        int answer = JOptionPane.showConfirmDialog(this, "<html>This tries every gain setting on this tuner, on the " +
-                "frequencies it is listening to right now.<br>It takes about " + optimizer.seconds() + " seconds, " +
+        int answer = JOptionPane.showConfirmDialog(this, "<html>This tries the gain settings on this tuner, on the " +
+                "frequencies it is listening to right now,<br>from the lowest up, and stops once it is past the best one.  It takes up to " + optimizer.seconds() + " seconds, " +
                 "and calls on this tuner may break up while it runs.<br><br>For the best answer, start the channels " +
                 "this tuner is for first.<br><br>Start?</html>", "Find Best Gain", JOptionPane.OK_CANCEL_OPTION);
 

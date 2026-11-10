@@ -78,6 +78,17 @@ function Get-Lines($s) {
     })
 }
 
+function Stop-AllSpeakers {
+    # Every copy of the player, not only the one this icon started: a copy left behind by an earlier
+    # tray icon (the updater swaps the icon) would otherwise keep playing, twice over with a window open.
+    try {
+        Get-CimInstance Win32_Process -Filter "Name LIKE 'python%'" -ErrorAction Stop |
+            Where-Object { $_.CommandLine -like '*sdrtrunk_transcriber.pc_speakers*' } |
+            ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    } catch { }
+    $script:speakers = $null
+}
+
 function Update-Speakers {
     # Only with SDRTrunk in the background (boot-on.bat); with its window, SDRTrunk plays the calls itself.
     $busy = (Test-Path $updatingFlag) -or -not ($script:status -and $script:status.background)
@@ -87,7 +98,7 @@ function Update-Speakers {
             -ArgumentList '-m', 'sdrtrunk_transcriber.pc_speakers', '--config', 'config.toml'
     } elseif ((-not $script:wantSpeakers -or $busy) -and $running) {
         Stop-Process -Id $script:speakers.Id -Force -ErrorAction SilentlyContinue
-        $script:speakers = $null
+        Stop-AllSpeakers
     }
 }
 
@@ -190,7 +201,7 @@ $mapItem.Font = New-Object System.Drawing.Font($mapItem.Font, [System.Drawing.Fo
 $speakersItem = Add-Item 'PC speakers' {
     $script:wantSpeakers = -not $script:wantSpeakers
     if ($script:wantSpeakers) { Remove-Item $speakersOffFile -ErrorAction SilentlyContinue }
-    else { Set-Content $speakersOffFile 'PC speakers turned off from the tray icon' }
+    else { Set-Content $speakersOffFile 'PC speakers turned off from the tray icon'; Stop-AllSpeakers }
     Update-Speakers
 }
 $editItem = Add-Item 'Open SDRTrunk window (edit mode)' {
@@ -256,11 +267,12 @@ $timer.add_Tick({ Update-Tray })
 $timer.Start()
 
 $tray.Visible = $true
+Stop-AllSpeakers  # a copy left by an earlier tray icon
 Update-Tray
 [System.Windows.Forms.Application]::Run()
 
 $timer.Stop()
 $jobTimer.Stop()
 $tray.Dispose()
-if ($script:speakers -and -not $script:speakers.HasExited) { Stop-Process -Id $script:speakers.Id -Force -ErrorAction SilentlyContinue }
+Stop-AllSpeakers
 $mutex.ReleaseMutex()

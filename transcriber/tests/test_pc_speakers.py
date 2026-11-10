@@ -35,3 +35,16 @@ def test_edit_mode_uses_the_configured_sdrtrunk_first():
     from sdrtrunk_transcriber import editmode
     assert editmode.find_bat(r" E:\SDR\bin\sdr-trunk.bat ", []) == r"E:\SDR\bin\sdr-trunk.bat"
     assert editmode.find_bat("", []) == ""
+
+
+def test_quiet_while_sdrtrunk_has_its_window(tmp_path):
+    import json
+    status = tmp_path / "watchdog-status.json"
+    assert not pc_speakers.windowed(status, now=lambda: 1000)  # no watchdog: nothing else plays the calls
+    status.write_text(json.dumps({"time": 990, "background": False}))
+    assert pc_speakers.windowed(status, now=lambda: 1000)
+    assert not pc_speakers.windowed(status, now=lambda: 5000)  # the watchdog stopped long ago
+    status.write_text(json.dumps({"time": 990, "background": True}))
+    assert not pc_speakers.windowed(status, now=lambda: 1000)
+    status.write_text("{half")
+    assert not pc_speakers.windowed(status, now=lambda: 1000)

@@ -12,9 +12,11 @@ on the list are named by themselves when dispatch keeps naming the same station 
 dispatch has since kept naming a different station; names typed in by hand are never changed.
 """
 
+import bisect
 import logging
 import math
 import re
+import threading
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -294,6 +296,7 @@ class ToneFinder:
         self.rate = rate
         self.tone_list = ToneList(config.tones_path)
         self.path = config.tones_path
+        self._learning = None
         self._learned_at = 0.0
 
     def wanted(self, call: dict) -> bool:
@@ -336,6 +339,13 @@ class ToneFinder:
         if not self.settings.learn or now - self._learned_at < LEARN_EVERY_S:
             return
         self._learned_at = now
+        # On its own thread: it reads a month of calls, and the transcriber must not wait for it.
+        if self._learning and self._learning.is_alive():
+            return
+        self._learning = threading.Thread(target=self._learn_quietly, args=(now,), name="tone-names", daemon=True)
+        self._learning.start()
+
+    def _learn_quietly(self, now: float):
         try:
             self.learn(now)
         except Exception:
@@ -364,7 +374,13 @@ class ToneFinder:
                 pair["outs"][-1].append(page)
             else:
                 pair["outs"].append([page])
-        calls = self.db.transcripts_between(pages[0]["page_time"] - LEARN_BEFORE_S, now)
+        # By channel, oldest first, so each tone-out only looks at the calls around it (a month of calls
+        # checked against every tone-out took over a minute, with the transcriber waiting).
+        calls: dict[str, tuple[list[float], list[dict]]] = {}
+        for call in self.db.transcripts_between(pages[0]["page_time"] - LEARN_BEFORE_S, now):
+            times, rows = calls.setdefault(call["talkgroup_label"] or call["talkgroup"], ([], []))
+            times.append(call["call_time"])
+            rows.append(call)
         stations = self.stations()
         added = []
         for pair in pairs:
@@ -402,13 +418,15 @@ class ToneFinder:
         return self.codebook.station_numbers() or None if self.codebook else None
 
     @staticmethod
-    def _said_after(page: dict, calls: list[dict]) -> list[str]:
-        """Transcripts on the page's channel from the call holding the tones until LEARN_AFTER_S later."""
+    def _said_after(page: dict, calls: dict[str, tuple[list[float], list[dict]]]) -> list[str]:
+        """Transcripts on the page's channel from the call holding the tones until LEARN_AFTER_S later.
+        `calls` is each channel's call times and calls, oldest first."""
         t = page["page_time"]
-        return [c["transcript"] for c in calls
-                if t - LEARN_BEFORE_S <= c["call_time"] < t + LEARN_AFTER_S
-                and c["call_time"] + (c["duration_s"] or 0) >= t - 1
-                and (c["talkgroup_label"] or c["talkgroup"]) == page["channel"]]
+        times, rows = calls.get(page["channel"], ([], []))
+        first = bisect.bisect_left(times, t - LEARN_BEFORE_S)
+        last = bisect.bisect_left(times, t + LEARN_AFTER_S)
+        return [c["transcript"] for c in rows[first:last]
+                if c["call_time"] + (c["duration_s"] or 0) >= t - 1]
 
     def _add_to_list(self, tone_a: float, tone_b: float | None, name: str, seen: int, total: int):
         if self.path is None:

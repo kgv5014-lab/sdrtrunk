@@ -86,6 +86,52 @@ public final class GainSelector
     {
     }
 
+    /** The sweep stops when a steady signal has fallen this far below its best ... */
+    public static final double PAST_BEST_DB = 3.0;
+    /** ... or the noise floor has risen this far over the converter's own floor with no steady signal ... */
+    public static final double PAST_FLOOR_DB = FLOOR_RISE_DB + 4.0;
+    /** ... at this many gains in a row.  Overload at that many gains in a row stops it too. */
+    public static final int PAST_STEPS = 2;
+
+    /**
+     * Indicates that the sweep is past the best gain, so higher gains needn't be tried: they can only be worse.
+     * @param measurements so far, lowest gain first
+     */
+    public static boolean pastBest(List<GainMeasurement> measurements)
+    {
+        int count = measurements.size();
+
+        if(count < PAST_STEPS + 2)
+        {
+            return false;
+        }
+
+        List<GainMeasurement> last = measurements.subList(count - PAST_STEPS, count);
+
+        if(last.stream().allMatch(GainMeasurement::overloaded))
+        {
+            return true;
+        }
+
+        List<GainMeasurement> clean = measurements.stream().filter(m -> !m.overloaded()).toList();
+
+        if(clean.isEmpty() || last.stream().anyMatch(GainMeasurement::overloaded))
+        {
+            return false;
+        }
+
+        List<Integer> steady = steadyTargets(clean);
+
+        if(!steady.isEmpty())
+        {
+            double best = clean.stream().mapToDouble(m -> weakest(m, steady)).max().orElse(0);
+            return last.stream().allMatch(m -> weakest(m, steady) <= best - PAST_BEST_DB);
+        }
+
+        double lowest = clean.stream().mapToDouble(GainMeasurement::floorDb).min().orElse(0);
+        return last.stream().allMatch(m -> m.floorDb() >= lowest + PAST_FLOOR_DB);
+    }
+
     /**
      * Chooses the best gain.
      * @param measurements one for each gain of the sweep, at least one

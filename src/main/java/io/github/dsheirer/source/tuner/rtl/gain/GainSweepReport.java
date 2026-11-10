@@ -114,6 +114,12 @@ public final class GainSweepReport
 
         sb.append("</table>");
 
+        if(choice.measurements().size() < result.gainCount())
+        {
+            sb.append("<br>Stopped at ").append(db(choice.measurements().getLast().gain()))
+                    .append(": higher gains could only be worse.");
+        }
+
         if(!steady.isEmpty())
         {
             sb.append("<br>The frequency columns show how far the signal stands above the noise, in dB.");

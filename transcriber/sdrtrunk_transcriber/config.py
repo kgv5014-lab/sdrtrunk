@@ -390,6 +390,11 @@ class AlertsConfig:
     # Watch zones: any call placed within radius_miles of a spot alerts, whatever it is about. Each is
     # {name, lat, lon (or address, looked up online), radius_miles, prefix (put first in the alert)}.
     zones: list = field(default_factory=list)
+    # Before a zone alert with a prefix (a drone launch), look for FAA TFRs over the zone from
+    # tfr_margin_minutes before to after the call. If one is found, the alert still goes out, without
+    # the prefix and at the normal time-sensitive level, naming the TFR. Not a pre-flight airspace check.
+    tfr_check: bool = True
+    tfr_margin_minutes: int = 30
     # Calls and tone-outs older than this don't alert (e.g. old calls placed after a restart).
     max_age_minutes: int = 15
     # Bark iPhone app, instead of or as well as ntfy. The device key from the app's push URL

@@ -25,6 +25,7 @@ import requests
 
 from .config import Config
 from .db import Database
+from .tfr import TfrCheck
 
 log = logging.getLogger(__name__)
 
@@ -107,6 +108,8 @@ class Alerter:
         self.session = session or requests.Session()
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="alerts")
         self.incident_types = {_type(t) for t in self.settings.incidents}
+        # FAA TFRs over a zone: the zone alert then leaves out its prefix ("DRONE LAUNCH REQUESTED").
+        self.tfr = TfrCheck(margin_minutes=self.settings.tfr_margin_minutes) if self.settings.tfr_check else None
         key = self.settings.bark_encryption_key
         if key and len(key) not in (16, 24, 32):
             raise ValueError("[alerts] bark_encryption_key must be 16, 24 or 32 characters, as in Bark's settings")
@@ -152,12 +155,23 @@ class Alerter:
         if not incident and self.db.alerted(page_label=zone.name, since=time.time() - ZONE_REPEAT_S, kind="zone"):
             return
         nature = (incident or {}).get("nature")
-        title = " ".join(filter(None, (zone.prefix, "-" if zone.prefix else "", nature or "Call near " + zone.name)))
+        what = nature or "Call near " + zone.name
+        prefix, level, priority, note = zone.prefix, None, 5, ""
+        if self.tfr and zone.prefix and zone.lat is not None:
+            found = self.tfr.check(zone.lat, zone.lon, zone.radius_m, call["call_time"])
+            if not found.ok:
+                note = "TFR check unavailable (FAA site not reached). Check B4UFLY before flying."
+            elif found.tfrs:
+                # Still sent, but not as a launch: an ordinary time-sensitive alert saying why.
+                prefix, level, priority = "", "timeSensitive", 4
+                what += " (TFR active, no drone)"
+                note = found.describe()
+        title = " ".join(filter(None, (prefix, "-" if prefix else "", what)))
         heard = (call.get("transcript") or "").strip()
         if len(heard) > 240:
             heard = heard[:239] + "…"
-        self.send("zone", title, "\n".join(filter(None, (where, heard))), tags=["rotating_light"], priority=5,
-                  click=f"{self.base_url}/map" if self.base_url else None,
+        self.send("zone", title, "\n".join(filter(None, (where, heard, note))), tags=["rotating_light"],
+                  priority=priority, click=f"{self.base_url}/map" if self.base_url else None, level=level,
                   incident_id=incident["id"] if incident else None, call_id=call["id"], page_label=zone.name)
 
     def page(self, page: dict):
@@ -180,10 +194,12 @@ class Alerter:
     # ---- sending
 
     def send(self, kind: str, title: str, message: str, tags: list[str] | None = None, priority: int = 3,
-             click: str | None = None, **refs) -> dict:
+             click: str | None = None, level: str | None = None, **refs) -> dict:
         alert = {"id": "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(12)),
                  "time": int(time.time()), "kind": kind, "title": title, "message": message,
                  "tags": ",".join(tags or []), "priority": priority, "click": click, **refs}
+        if level:
+            alert["level"] = level  # Bark level for this one alert, instead of the one for its kind
         self.db.add_alert(alert)
         log.info("Phone alert: %s: %s", title, message.replace("\n", " / "))
         if self.base_url and self.settings.wakeup_url:
@@ -194,7 +210,7 @@ class Alerter:
 
     def _bark(self, alert: dict):
         bark_push(self.settings, alert["title"], alert["message"], alert["priority"], alert["click"], self.session,
-                  level=BARK_LEVELS.get(alert["kind"], "active"))
+                  level=alert.get("level") or BARK_LEVELS.get(alert["kind"], "active"))
 
     def _wake(self, alert_id: str):
         url = f"{self.settings.wakeup_url.rstrip('/')}/{wakeup_topic(self.base_url, self.settings.topic)}"

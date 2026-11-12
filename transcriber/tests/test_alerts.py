@@ -272,3 +272,33 @@ def test_a_landmark_in_the_zone_alerts(tmp_path):
     assert near.check({"transcript": "Medic 2 respond Easton Hospital lobby."}, None)[1] == "Easton Hospital, Easton"
     assert near.check({"transcript": "Medic 2 transporting one to Easton Hospital."}, None) is None
     assert far.check({"transcript": "Medic 2 respond Easton Hospital lobby."}, None) is None
+
+
+def test_bark_levels_by_kind(tmp_path, session):
+    config = make_config(tmp_path, bark_key="DeviceKey123", base_url="")
+    client = TestClient(create_app(config, backend_factory=lambda _c: Radio([])))
+    with client:
+        alerter = client.app.state.alerter
+        alerter.send("zone", "DRONE LAUNCH REQUESTED - MVA", "x", priority=5)
+        alerter.send("incident", "MVA", "x", priority=4)
+        alerter.send("aircraft", "Medevac landing", "x", priority=4)
+        alerter.send("aviation", "121.5 emergency", "x", priority=5)
+        alerter.flush()
+    assert [form["level"] for _url, form in session.bark] == ["critical", "timeSensitive", "active", "active"]
+
+
+def test_a_zone_leaves_out_excluded_addresses(tmp_path):
+    from sdrtrunk_transcriber.addresses import Gazetteer
+    from sdrtrunk_transcriber.zones import ZoneWatch, read_zones
+    make_config(tmp_path)
+    watch = ZoneWatch(read_zones([{"name": "Wilson", "lat": 40.6805, "lon": -75.24,
+                                   "exclude": ["4100 Freemansburg Ave", "4098 Freemansburg Avenue"]}]),
+                      Gazetteer(tmp_path / "places-geo.json", None))
+    near = {"id": 1, "lat": 40.681, "lon": -75.24}
+    call = {"transcript": "Medical call."}
+    assert watch.check(call, {**near, "label": "4100 Freemansburg Avenue, Bethlehem Township"}) is None
+    assert watch.check(call, {**near, "label": "4098 Freemansburg Avenue"}) is None
+    assert watch.check(call, {**near, "label": "41 Freemansburg Avenue"}) is not None
+    assert watch.check(call, {**near, "label": "4100 Main Street"}) is not None
+    with pytest.raises(ValueError):
+        read_zones([{"name": "Wilson", "lat": 40.6805, "lon": -75.24, "exclude": [4100]}])

@@ -7,6 +7,10 @@ street), or that joined an incident elsewhere, alerts when that road lies wholly
 a short local road there can only mean somewhere in the zone, while a long road passing through could
 be anywhere along it. The same goes for a store or other landmark: it counts when every one of that
 name is inside the circle.
+
+A zone can leave out addresses that call all the time for things it isn't meant for, such as a nursing
+home's medical calls: exclude = ["4100 Freemansburg Avenue"]. A call placed at one of those, or joining
+an incident there, doesn't alert for that zone.
 """
 
 import logging
@@ -34,6 +38,13 @@ class Zone:
     looked_up: bool = False
     roads: list = field(default_factory=list)          # streets wholly inside, for a call naming only a road
     nearby: list[str] = field(default_factory=list)    # names of every road reaching into the circle
+    exclude: list[tuple] = field(default_factory=list)  # normalized words of each address left out
+
+    def excludes(self, label: str | None) -> bool:
+        """Whether a place on the map ("4100 Freemansburg Avenue, Bethlehem Township") is one of the
+        addresses this zone leaves out."""
+        w = tuple(words(label or ""))
+        return any(w[:len(e)] == e for e in self.exclude)
 
 
 def read_zones(entries: list) -> list[Zone]:
@@ -41,17 +52,24 @@ def read_zones(entries: list) -> list[Zone]:
     for number, entry in enumerate(entries, 1):
         if not isinstance(entry, dict):
             raise ValueError(f"[alerts] zones entry {number}: expected {{name = ..., lat = ..., lon = ...}}")
-        unknown = set(entry) - {"name", "address", "lat", "lon", "radius_miles", "prefix"}
+        unknown = set(entry) - {"name", "address", "lat", "lon", "radius_miles", "prefix", "exclude"}
         if unknown:
             raise ValueError(f"[alerts] zones entry {number}: unknown setting {', '.join(sorted(unknown))}")
         lat, lon = entry.get("lat"), entry.get("lon")
         if (lat is None) != (lon is None) or (lat is None and not entry.get("address")):
             raise ValueError(f"[alerts] zones entry {number}: give lat and lon, or an address")
+        exclude = entry.get("exclude") or []
+        if isinstance(exclude, str):
+            exclude = [exclude]
+        if not isinstance(exclude, list) or not all(isinstance(e, str) for e in exclude):
+            raise ValueError(f"[alerts] zones entry {number}: exclude is a list of addresses, "
+                             f'e.g. ["4100 Freemansburg Avenue"]')
         zones.append(Zone(name=str(entry.get("name") or entry.get("address") or f"Zone {number}"),
                           radius_m=float(entry.get("radius_miles", 0.5)) * METRES_PER_MILE,
                           prefix=str(entry.get("prefix") or "").strip(),
                           address=str(entry.get("address") or ""),
-                          lat=None if lat is None else float(lat), lon=None if lon is None else float(lon)))
+                          lat=None if lat is None else float(lat), lon=None if lon is None else float(lon),
+                          exclude=[tuple(words(e)) for e in exclude if words(e)]))
     return zones
 
 
@@ -110,6 +128,8 @@ class ZoneWatch:
         self._refresh_roads()
         for zone in self.zones:
             if zone.lat is None:
+                continue
+            if incident and zone.excludes(incident.get("label")):
                 continue
             if incident and incident.get("lat") is not None:
                 d = distance_m(zone.lat, zone.lon, incident["lat"], incident["lon"])

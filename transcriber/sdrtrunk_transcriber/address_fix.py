@@ -8,6 +8,8 @@ written by fetch-places.bat) and the street list (addresses.Gazetteer). For "450
    digit too many or too few, two digits swapped. Then a similar-sounding street in the area that has 4500.
 3. The fix is made only when exactly one answer is cheapest. Ties are settled by an incident already on
    the map nearby, otherwise nothing changes.
+4. A street not in the list at all ("1745, West Makeda Road") goes to the smart lookup (soundalike.py),
+   which matches it by sound and checks the house number, cross street and town.
 
 Without address-ranges.json nothing changes. The raw Whisper text is kept either way.
 
@@ -25,7 +27,9 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
 
-from .addresses import SUFFIXES, UNIT_WORDS, Gazetteer, Projection, _in_towns, _name_key, split_name, town_key, words
+from .addresses import DIRECTIONS, SUFFIXES, UNIT_WORDS, Gazetteer, Projection, _in_towns, _name_key, split_name, \
+    town_key, words
+from .soundalike import SmartLookup
 from .tiger import along
 
 log = logging.getLogger(__name__)
@@ -187,6 +191,7 @@ class AddressFixer:
         self.book = book
         # Called with a call time, returns (lat, lon) of incidents on the map then (or None).
         self.near_incidents = near_incidents
+        self.smart = SmartLookup(gazetteer, book)
 
     def fix(self, text: str, context: str | None = None, call_time: int | None = None) -> tuple[str, list[str]]:
         """The transcript with addresses fixed, and what each fixed address was heard as."""
@@ -200,6 +205,7 @@ class AddressFixer:
         towns = self.gazetteer.towns_in(w)
         if not towns and context:
             towns = self.gazetteer._towns_anywhere(words(context))
+        self._named = self.smart.towns_named(text)
         fixes = self.find(text, towns, call_time)
         for fix in reversed(fixes):
             text = text[:fix.start] + fix.text + text[fix.end:]
@@ -257,8 +263,39 @@ class AddressFixer:
                 phrase = (tokens[j].start(), tokens[j + length - 1].end())
                 core = " ".join(words(text[phrase[0]:tokens[j + length - 2].end()]))
                 fix = self._similar_street(text, tokens[i], phrase, number, block, core, last[-1], towns, call_time)
-                return fix, j + length
+                if fix:
+                    return fix, j + length
+                break
+        fix = self._sound_alike(text, tokens, i, j, block, towns)
+        if fix:
+            end = next((k for k in range(j, len(tokens)) if tokens[k].start() >= fix.end), len(tokens))
+            return fix, end
         return None, j
+
+    def _sound_alike(self, text, tokens, i, j, block, towns) -> Fix | None:
+        """A street not in the list, spelled by sound ("1745, West Makeda Road"): the one real street it
+        sounds like, when the house number, cross street or town agree (soundalike.py)."""
+        start = tokens[j - 1].end() if j > i + 1 else tokens[i].end()
+        heard = self.smart.heard_after(text, start)
+        if heard is None:
+            return None
+        named = getattr(self, "_named", set()) or towns
+        guess = self.smart.lookup(heard, int(tokens[i].group(0)), block, named)
+        if guess is None:
+            return None
+        name = guess.name
+        core, _ = split_name(name)
+        first = text[heard.start:heard.end].split()[0]
+        if heard.direction and not (core and core[0] in DIRECTIONS):
+            name = f"{first.rstrip(',')} {name}"
+        middle = text[tokens[i].end():heard.start]
+        fixed = f"{tokens[i].group(0)}{middle}{name}"
+        before = text[tokens[i].start():heard.end]
+        if _name_key(text[heard.start:heard.end]) == _name_key(name):
+            return None
+        log.info("Smart address lookup: %r -> %r (%s, %.2f)", before, fixed, ", ".join(guess.reasons) or "sound",
+                 guess.score)
+        return Fix(tokens[i].start(), heard.end, before, fixed)
 
     def _check(self, text, number_token, phrase, number, block, streets, towns, call_time) -> Fix | None:
         names = list(dict.fromkeys(s.name for s in streets))

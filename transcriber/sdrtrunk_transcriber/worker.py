@@ -261,7 +261,8 @@ class TranscriptionWorker:
         air = self.is_air(call)
         if self.config.audio.clean:
             samples, tone_s = audio.clean(samples, self.config.audio.remove_tones,
-                                          self.config.audio.reduce_hiss)
+                                          self.config.audio.reduce_hiss,
+                                          self.config.audio.presence_db)
             if air and self.config.air_transcripts.level_speakers:
                 samples = audio.level_speakers(samples)
 

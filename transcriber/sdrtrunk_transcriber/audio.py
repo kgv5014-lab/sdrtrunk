@@ -29,6 +29,12 @@ TONE_MIN_S = 0.25
 # Silence left where a tone was, so the words either side don't run together.
 TONE_GAP_S = 0.25
 
+# Presence boost: a gentle bell around 2 kHz, where the consonants (s, t, k, p, f) sit. P25 vocoder
+# and AM air audio fall off 10-18 dB above 2 kHz. On Ken's calls (2026-11-12 test, 122 calls) +4 dB
+# here cut wrong words on hand-fixed P25 calls from 43% to 27%; a compressor and RNNoise didn't help.
+PRESENCE_HZ = 2000.0
+PRESENCE_Q = 2.0  # 1 kHz wide, about 1.5-2.5 kHz
+
 # Morse-code station ID (an automatic repeater or base station ID, such as Nancy FD's every half
 # hour): many short beeps on one pitch. Dits and dahs last 0.05-0.2 s, so far more beeps than any
 # alert or paging tone (Countywide's alert is 5 beeps of 0.5 s), none of them long.
@@ -106,6 +112,26 @@ def band_pass(samples: np.ndarray) -> np.ndarray:
     gain[falling] = 0.5 + 0.5 * np.cos(np.pi * (freqs[falling] - hi0) / (hi1 - hi0))
     gain[freqs >= hi1] = 0.0
     return np.fft.irfft(spectrum * gain, n=len(samples)).astype(np.float32)
+
+
+def presence_gain(freqs: np.ndarray, gain_db: float) -> np.ndarray:
+    """Magnitude of a peaking EQ (the usual audio "bell", as in ffmpeg's equalizer) at each frequency."""
+    w0 = 2.0 * np.pi * PRESENCE_HZ / WHISPER_RATE
+    alpha = np.sin(w0) / (2.0 * PRESENCE_Q)
+    a = 10.0 ** (gain_db / 40.0)
+    b = np.array([1.0 + alpha * a, -2.0 * np.cos(w0), 1.0 - alpha * a])
+    d = np.array([1.0 + alpha / a, -2.0 * np.cos(w0), 1.0 - alpha / a])
+    z = np.exp(-1j * 2.0 * np.pi * freqs / WHISPER_RATE)
+    return np.abs((b[0] + b[1] * z + b[2] * z * z) / (d[0] + d[1] * z + d[2] * z * z))
+
+
+def boost_presence(samples: np.ndarray, gain_db: float) -> np.ndarray:
+    """Turns up the consonant range around 2 kHz by gain_db (one FFT over the whole call, no delay)."""
+    if len(samples) == 0 or gain_db == 0:
+        return samples
+    spectrum = np.fft.rfft(samples)
+    freqs = np.fft.rfftfreq(len(samples), 1.0 / WHISPER_RATE)
+    return np.fft.irfft(spectrum * presence_gain(freqs, gain_db), n=len(samples)).astype(np.float32)
 
 
 def _frames(samples: np.ndarray) -> np.ndarray:
@@ -314,9 +340,10 @@ def level_speakers(samples: np.ndarray) -> np.ndarray:
 
 
 def clean(samples: np.ndarray, remove_tones: bool = True,
-          reduce_noise: bool = True) -> tuple[np.ndarray, float]:
-    """Prepares a call for Whisper: voice band only, FM hiss turned down, steady tones cut out, speech
-    at a standard level. Returns the cleaned samples and how many seconds of tone were cut."""
+          reduce_noise: bool = True, presence_db: float = 0.0) -> tuple[np.ndarray, float]:
+    """Prepares a call for Whisper: voice band only, FM hiss turned down, steady tones cut out, the
+    consonant range turned up by presence_db, speech at a standard level. Returns the cleaned samples and
+    how many seconds of tone were cut."""
     filtered = band_pass(samples.astype(np.float32))
     if reduce_noise:
         filtered, _ = reduce_hiss(filtered)
@@ -325,7 +352,7 @@ def clean(samples: np.ndarray, remove_tones: bool = True,
         ranges = find_tones(filtered)
         tone_s = sum(end - start for start, end in ranges) / WHISPER_RATE
         filtered = remove_ranges(filtered, ranges)
-    cleaned = normalize(filtered)
+    cleaned = normalize(boost_presence(filtered, presence_db))
     # A call that was all tone leaves only silence; give Whisper a full second of it rather than nothing.
     if len(cleaned) < WHISPER_RATE:
         cleaned = np.concatenate([cleaned, np.zeros(WHISPER_RATE - len(cleaned), dtype=np.float32)])

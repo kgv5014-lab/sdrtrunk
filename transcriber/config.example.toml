@@ -270,6 +270,13 @@ stations = []
 # them) that call often for other things. On Bark, zone alerts are Critical Alerts. One {...} per zone, e.g.
 # zones = [{name = "Home", lat = 40.6915, lon = -75.2100, radius_miles = 0.5, prefix = "DRONE LAUNCH REQUESTED"}]
 zones = []
+# Before a zone alert with a prefix (drone launch), check the FAA's TFR list (tfr.faa.gov) for a TFR over
+# the zone from tfr_margin_minutes before the call to that long after. If there is one, the alert still goes
+# out but without the prefix, as an ordinary time-sensitive alert naming the TFR. If the FAA site can't be
+# reached the alert goes out as usual, saying the check was unavailable. A convenience, not a pre-flight
+# airspace check (use B4UFLY or a LAANC app).
+tfr_check = true
+tfr_margin_minutes = 30
 # Calls and tone-outs older than this don't alert.
 max_age_minutes = 15
 # Bark iPhone app (see "Bark instead" in the README). The device key from Bark's push address.

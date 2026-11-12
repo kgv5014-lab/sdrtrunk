@@ -52,6 +52,7 @@ def make_config(tmp_path, **alert_settings):
     config.map.online_lookup = False
     config.alerts.enabled = True
     config.alerts.base_url = BASE_URL
+    config.alerts.tfr_check = False
     for name, value in alert_settings.items():
         setattr(config.alerts, name, value)
     return config

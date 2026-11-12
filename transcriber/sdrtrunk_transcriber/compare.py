@@ -86,7 +86,8 @@ class Runner:
         terms = prompt_terms(*lists, self.vocabulary)
         if after and self.config.audio.clean:
             samples, _tones = audio.clean(samples, self.config.audio.remove_tones,
-                                          self.config.audio.reduce_hiss)
+                                          self.config.audio.reduce_hiss,
+                                          self.config.audio.presence_db)
         result = self.backend.transcribe(samples, ", ".join(terms))
         text = result.text
         if after and self.config.transcription.junk_filter:

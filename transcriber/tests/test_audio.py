@@ -154,3 +154,14 @@ def test_alert_beeps_pages_and_voice_are_not_morse():
     # A few short chirps on a call (talk-permit tones) are far fewer beeps than an ID
     chirps = np.concatenate([voice(1.0), tone(1000, 0.1), voice(1.0), tone(1000, 0.1), voice(1.0)])
     assert not audio.is_morse_id(audio.band_pass(chirps))
+
+
+def test_presence_boost_turns_up_2khz_only():
+    t = np.arange(audio.WHISPER_RATE) / audio.WHISPER_RATE
+    for hz, low, high in ((2000, 3.9, 4.1), (500, -0.1, 0.4), (3800, -0.1, 0.6)):
+        tone = (0.1 * np.sin(2 * np.pi * hz * t)).astype(np.float32)
+        out = audio.boost_presence(tone, 4.0)
+        gain = 20 * np.log10(np.sqrt((out ** 2).mean()) / np.sqrt((tone ** 2).mean()))
+        assert low < gain < high, (hz, gain)
+    tone = (0.1 * np.sin(2 * np.pi * 2000 * t)).astype(np.float32)
+    assert audio.boost_presence(tone, 0.0) is tone

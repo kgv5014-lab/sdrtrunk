@@ -62,6 +62,8 @@ class AudioConfig:
     remove_tones: bool = True
     # Also turn down the steady hiss of weak FM channels. Clean calls, such as P25, are left as they are.
     reduce_hiss: bool = True
+    # Turn up the consonant range (about 1.5-2.5 kHz) by this many dB before Whisper. 0 turns it off.
+    presence_db: float = 4.0
     # Hide calls that are only a Morse-code station ID (Nancy FD's every half hour) from the call log.
     hide_station_ids: bool = True
 

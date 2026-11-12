@@ -266,7 +266,8 @@ incidents = ["MVA", "Structure fire"]
 stations = []
 # Watch zones: any call the map places within radius_miles of a spot alerts, whatever it is about, and so
 # does a call naming a road that lies wholly inside the circle. prefix goes first in the alert's title.
-# Give lat and lon, or an address to look up online once. One {...} per zone, e.g.
+# Give lat and lon, or an address to look up online once. exclude leaves out addresses (as the map shows
+# them) that call often for other things. On Bark, zone alerts are Critical Alerts. One {...} per zone, e.g.
 # zones = [{name = "Home", lat = 40.6915, lon = -75.2100, radius_miles = 0.5, prefix = "DRONE LAUNCH REQUESTED"}]
 zones = []
 # Calls and tone-outs older than this don't alert.

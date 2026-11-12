@@ -39,6 +39,10 @@ KEEP_S = 12 * 3600
 PAGE_REPEAT_S = 120
 # A call naming only a road in a watch zone this soon after the zone alerted is about the same thing.
 ZONE_REPEAT_S = 600
+# How loudly each kind of alert arrives in the Bark app. Critical Alerts sound even on silent and through
+# Do Not Disturb (iOS asks once to allow them for Bark); time-sensitive ones show through Focus modes;
+# the rest (medevac landings, 121.5, dongle problems, summaries, tests) are ordinary notifications.
+BARK_LEVELS = {"zone": "critical", "incident": "timeSensitive", "page": "timeSensitive"}
 
 
 def _type(name: str | None) -> str:
@@ -68,11 +72,12 @@ def bark_encrypt(payload: dict, key: str, mode: str) -> tuple[str, str]:
 
 
 def bark_push(settings, title: str, message: str, priority: int | None = 3, click: str | None = None,
-              session=None):
-    """Sends one push to the Bark app with the [alerts] settings, encrypted when a key is set."""
+              session=None, level: str | None = None):
+    """Sends one push to the Bark app with the [alerts] settings, encrypted when a key is set.
+    `level` is Bark's critical, timeSensitive, active or passive; without it, priority 4 and up is
+    time-sensitive (shows through Focus modes)."""
     push = {"title": title, "body": message or title, "group": "SDRTrunk",
-            # Time-sensitive alerts show through Focus modes.
-            "level": "timeSensitive" if (priority or 3) >= 4 else "active"}
+            "level": level or ("timeSensitive" if (priority or 3) >= 4 else "active")}
     if click:
         push["url"] = click
     url = f"{settings.bark_server.rstrip('/')}/{settings.bark_key.strip()}"
@@ -188,7 +193,8 @@ class Alerter:
         return self.to_ntfy(alert)
 
     def _bark(self, alert: dict):
-        bark_push(self.settings, alert["title"], alert["message"], alert["priority"], alert["click"], self.session)
+        bark_push(self.settings, alert["title"], alert["message"], alert["priority"], alert["click"], self.session,
+                  level=BARK_LEVELS.get(alert["kind"], "active"))
 
     def _wake(self, alert_id: str):
         url = f"{self.settings.wakeup_url.rstrip('/')}/{wakeup_topic(self.base_url, self.settings.topic)}"

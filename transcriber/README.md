@@ -508,6 +508,20 @@ other landmark from the street list counts the same way when every one of that n
 you can give `address = "123 Main Street, Easton"`, looked up online once. When the transcriber starts,
 its log lists the roads it found within each zone.
 
+To leave out a place that calls all the time for things the zone isn't meant for, such as a nursing
+home's medical calls, add `exclude` with its addresses as the map shows them:
+
+```toml
+zones = [{name = "Home", lat = 40.6915, lon = -75.2100, radius_miles = 0.75, prefix = "DRONE LAUNCH REQUESTED",
+          exclude = ["4100 Freemansburg Avenue", "4098 Freemansburg Avenue"]}]
+```
+
+On Bark, watch zone alerts arrive as **Critical Alerts**, which sound even when the phone is on silent or
+Do Not Disturb (iOS asks once to allow them for Bark; otherwise turn them on under Settings > Bark >
+Notifications). MVA, fire and other `incidents` alerts and tone-outs are Time Sensitive, so they show
+through Focus modes. Everything else (medevac landings, 121.5, dongle problems, summaries) is an ordinary
+notification.
+
 ### Bark instead (iPhone)
 
 If ntfy won't buzz the phone, the free **Bark** app can deliver the same alerts. Bark's server passes each

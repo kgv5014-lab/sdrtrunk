@@ -369,3 +369,86 @@ def test_stop_all_leaves_ollama_alone_when_summaries_are_off():
     system.stop = True
     dog.tick()
     assert system.killed_names == []
+
+
+def test_two_sdrtrunk_copies_are_closed_and_one_started_again():
+    dog, system, _ = make(sdrtrunk_bat=BAT)
+    dog.start_all()
+    assert system.launched == []
+    # A second copy turns up (started by hand, or by another watchdog): each would get "access denied".
+    system.sdrtrunk = [(500, True, JAVA), (501, True, JAVA)]
+    system.sleep(dog.settings.startup_s)
+    run_checks(dog, system, 1)
+    assert set(system.killed) == {500, 501}
+    assert system.launched == ["sdr-trunk.bat"]
+    assert len(system.sdrtrunk) == 1
+
+
+def test_two_copies_at_start_are_replaced_by_one():
+    dog, system, _ = make(sdrtrunk_bat=BAT)
+    system.sdrtrunk = [(500, True, JAVA), (501, True, JAVA)]
+    dog.start_all()
+    assert set(system.killed) == {500, 501}
+    assert system.launched == ["sdr-trunk.bat"]
+
+
+class LockSystem:
+    def __init__(self, free_after=None, status=None):
+        self.time = 0.0
+        self.free_after = free_after  # seconds until the other watchdog lets go; None = never
+        self.status = status
+        self.asked_stop = False
+
+    def now(self):
+        return self.time
+
+    def sleep(self, seconds):
+        self.time += seconds
+
+    def take_lock(self):
+        return self.free_after is not None and self.time >= self.free_after
+
+    def read_status(self):
+        return self.status
+
+    def ask_stop(self):
+        self.asked_stop = True
+
+
+def test_first_watchdog_takes_the_lock():
+    system = LockSystem(free_after=0)
+    assert watchdog.claim(system, background=False)
+    assert not system.asked_stop
+
+
+def test_boot_watchdog_gives_way_to_a_running_one():
+    system = LockSystem(status={"time": 0, "background": False})
+    assert not watchdog.claim(system, background=True)
+    assert not system.asked_stop
+
+
+def test_second_windowed_watchdog_does_not_start_a_second_copy():
+    system = LockSystem(status={"time": 0, "background": False})
+    assert not watchdog.claim(system, background=False)
+    assert not system.asked_stop
+
+
+def test_windowed_watchdog_takes_over_from_a_hidden_one():
+    system = LockSystem(free_after=20, status={"time": 0, "background": True})
+    assert watchdog.claim(system, background=False)
+    assert system.asked_stop
+
+
+def test_windowed_watchdog_gives_up_if_the_hidden_one_never_stops():
+    system = LockSystem(free_after=None, status={"time": 0, "background": True})
+    assert not watchdog.claim(system, background=False)
+    assert system.asked_stop
+
+
+def test_real_lock_keeps_a_second_watchdog_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(watchdog, "LOCK_FILE", tmp_path / "watchdog.lock")
+    first, second = watchdog.System(), watchdog.System()
+    assert first.take_lock()
+    assert not second.take_lock()
+    first._lock.close()
+    assert second.take_lock()

@@ -9,3 +9,4 @@ __pycache__/
 places.csv
 places-geo.json
 transcriber.log*
+watchdog.lock

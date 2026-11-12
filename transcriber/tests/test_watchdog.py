@@ -251,6 +251,39 @@ Active Connections
     assert watchdog.listening_pids(netstat, 3000) == {8812, 8813}
 
 
+def test_port_held_by_process_zero_finds_the_transcriber(monkeypatch):
+    netstat = """
+  Proto  Local Address          Foreign Address        State           PID
+  TCP    127.0.0.1:3000         0.0.0.0:0              LISTENING       0
+  TCP    127.0.0.1:3000         127.0.0.1:51000        ESTABLISHED     0
+"""
+    assert watchdog.listening_pids(netstat, 3000) == set()
+    assert watchdog.port_listened(netstat, 3000) and not watchdog.port_listened(netstat, 3001)
+
+    class Done:
+        def __init__(self, stdout):
+            self.stdout, self.returncode = stdout, 0
+
+    def run(args, **_kwargs):
+        if args[0] == "netstat":
+            return Done(netstat)
+        assert "sdrtrunk_transcriber" in args[-1]
+        return Done("4120\r\n4188\r\n")
+
+    monkeypatch.setattr(watchdog.subprocess, "run", run)
+    system = watchdog.System()
+    assert system.port_pids(3000) == {4120, 4188}
+    assert system.port_pids(3001) == set()  # nothing listening there: nobody to stop
+
+
+def test_transcriber_query_skips_the_other_parts():
+    import re
+    pattern = re.search(r"-match '(.+?)'", watchdog.TRANSCRIBER_QUERY).group(1).replace("\\\\", "\\")
+    assert re.search(pattern, r".venv\Scripts\python.exe -m sdrtrunk_transcriber --config config.toml")
+    assert not re.search(pattern, r"pythonw.exe -m sdrtrunk_transcriber.watchdog --config config.toml")
+    assert not re.search(pattern, r"pythonw.exe -m sdrtrunk_transcriber.control start transcriber")
+
+
 def test_parse_sdrtrunk():
     text = "12345|True|E:\\SDR\\bin\\java.exe\r\n678|False|E:\\SDR\\bin\\java.exe\r\n\r\n"
     assert watchdog.parse_sdrtrunk(text) == [(12345, True, JAVA.replace("image\\", "")),

@@ -10,6 +10,11 @@ open (edit-mode.flag exists), SDRTrunk is left alone, and the no-window copy is 
 as the window is closed. The tray icon's "Stop all" (stop.flag) stops every program and then the
 watchdog itself, which exits with code 0 so the boot task isn't started again.
 
+Only one watchdog runs at a time (it holds watchdog.lock), and one with windows always wins: started
+while the no-window boot one is running, it has that one stop everything and starts it all again with
+windows. A boot one gives way to a watchdog already running. If two SDRTrunks are ever running anyway
+(they fight over the dongles, and one gets "access denied"), both are closed and one is started again.
+
 Ollama and this service are checked by asking their web address for an answer. SDRTrunk has no web
 address, so it is checked the way Task Manager does: is its java process there, and is its window
 "Not responding". A program is only restarted after several checks in a row find it down, so a busy
@@ -59,6 +64,12 @@ RESTART_FLAG = HOME / "restart.flag"
 STOP_FLAG = HOME / "stop.flag"
 # What the tray icon shows: each program's state, written after every check.
 STATUS_FILE = HOME / "watchdog-status.json"
+# Held (locked) by the one watchdog that is running, so a second one can't start its own programs.
+LOCK_FILE = HOME / "watchdog.lock"
+# How long a watchdog with windows waits for a no-window one to stop everything and hand over.
+TAKEOVER_WAIT_S = 150
+# Exit code when this watchdog didn't start because one with windows is already running.
+ALREADY_RUNNING_EXIT = 2
 # Makes SDRTrunk start with no window (its own built-in mode: playlist loaded, channels auto-started).
 HEADLESS_OPTS = "-Djava.awt.headless=true"
 
@@ -177,6 +188,39 @@ class System:
             return True
         except OSError:
             return False
+
+    def take_lock(self) -> bool:
+        """Locks watchdog.lock for as long as this watchdog runs. False if another watchdog holds it.
+        Windows lets the lock go by itself when the process ends, however it ends."""
+        try:
+            self._lock = open(LOCK_FILE, "a+b")
+        except OSError:
+            return True  # can't tell; better to watch than to start nothing
+        try:
+            if os.name == "nt":
+                import msvcrt
+                self._lock.seek(0)
+                msvcrt.locking(self._lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(self._lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except OSError:
+            self._lock.close()
+            self._lock = None
+            return False
+
+    def read_status(self) -> dict | None:
+        try:
+            return json.loads(STATUS_FILE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def ask_stop(self):
+        try:
+            STOP_FLAG.write_text("A watchdog with windows is taking over\n", encoding="utf-8")
+        except OSError:
+            pass
 
     def clear_status(self):
         """Tells the tray icon the watchdog has stopped (its dot turns grey)."""
@@ -357,6 +401,9 @@ class SDRTrunk(Program):
                     self.told_no_bat = True
                 return "unknown"
             return "down"
+        if len(found) > 1:
+            # Two copies fight over the dongles: each gets "access denied" on the ones the other holds.
+            return "doubled"
         return "ok" if any(responding for _, responding, _ in found) else "frozen"
 
     def start(self):
@@ -403,6 +450,12 @@ class Watchdog:
         it sends to already up. Programs already running are left as they are and watched."""
         for program in self.programs:
             state = program.check()
+            if state == "doubled":
+                log.warning("%d copies of SDRTrunk are running (they fight over the dongles); closing them "
+                            "all and starting one", len(program.java_pids))
+                program.stop()
+                self.system.sleep(SETTLE_S)
+                state = "down"
             if state in ("ok", "frozen", "unknown"):
                 if state != "unknown":
                     log.info("%s is already running", program.name)
@@ -489,6 +542,9 @@ class Watchdog:
                 program.state = "editing" if program.editing else "starting"
                 continue
             state = program.check()
+            if state == "doubled":
+                self.close_extra_copies(program)
+                continue
             program.state = state
             if state in ("ok", "unknown"):
                 if program.fails:
@@ -502,6 +558,18 @@ class Watchdog:
                         program.fails, self.settings.fail_checks)
             if program.fails >= self.settings.fail_checks:
                 self.restart(program, state)
+
+    def close_extra_copies(self, program: "SDRTrunk"):
+        """More than one SDRTrunk is running (one started by hand, or left over from an earlier start):
+        close them all and start one again, in this watchdog's mode, straight away."""
+        log.warning("%d copies of SDRTrunk are running (they fight over the dongles: \"access denied\"); "
+                    "closing them all and starting one", len(program.java_pids))
+        program.fails = 0
+        program.stop()
+        self.system.sleep(SETTLE_S)
+        if program.start():
+            program.started_at = self.system.now()
+            program.state = "starting"
 
     def _editing(self, program: "SDRTrunk") -> bool:
         """True while edit-mode.bat has the SDRTrunk window open. When it closes, the no-window copy is
@@ -559,6 +627,36 @@ class Watchdog:
                 log.exception("Watchdog check failed")
 
 
+def claim(system, background: bool) -> bool:
+    """Makes this the only watchdog. One with windows always wins: if a no-window one (the boot task) is
+    running, it is asked to stop everything ("Stop all") and this one starts it all again with windows.
+    A no-window one gives way to any watchdog already running, and so does a second one with windows.
+    True when this watchdog may go on."""
+    if system.take_lock():
+        return True
+    status = system.read_status()
+    if background:
+        log.info("Another watchdog is already running, so this no-window one leaves it be")
+        return False
+    if status and not status.get("background", False) and system.now() - float(status.get("time", 0)) < 300:
+        log.info("A watchdog with windows is already running (look for the \"SDRTrunk watchdog\" window), "
+                 "so this one doesn't start a second copy of everything")
+        return False
+    log.info("A no-window watchdog is running: asking it to stop everything, so this one starts it all "
+             "with windows (up to two minutes)")
+    system.ask_stop()
+    waited = 0.0
+    while waited < TAKEOVER_WAIT_S:
+        system.sleep(3)
+        waited += 3
+        if system.take_lock():
+            log.info("It has stopped; starting everything with windows")
+            return True
+    log.error("The no-window watchdog didn't stop. Use Stop all in the tray icon (or end python.exe and "
+              "java.exe in Task Manager), then run start-everything.bat again.")
+    return False
+
+
 def main():
     parser = argparse.ArgumentParser(prog="sdrtrunk_transcriber.watchdog")
     parser.add_argument("--config", type=Path, default=Path("config.toml"))
@@ -581,6 +679,12 @@ def main():
         if config.watchdog.alert and alerts.enabled and alerts.bark_key:
             bark_push(alerts, title, message)
 
+    # The same System for the whole run: it holds the lock that keeps a second watchdog out.
+    system = System(hidden=args.background)
+    if not claim(system, args.background):
+        # 0 for the boot task (nothing failed; Task Scheduler mustn't retry). A window stays open to say why.
+        sys.exit(0 if args.background else ALREADY_RUNNING_EXIT)
+
     # A "Stop all" the watchdog never got to (it wasn't running) mustn't stop this one straight away.
     STOP_FLAG.unlink(missing_ok=True)
     if args.background:
@@ -591,7 +695,7 @@ def main():
         log.info("Background mode: SDRTrunk runs with no window (edit-mode.bat opens the normal one)")
 
     try:
-        Watchdog(config, notify=notify, background=args.background).run()
+        Watchdog(config, system=system, notify=notify, background=args.background).run()
     except KeyboardInterrupt:
         sys.exit(1)
     # Only "Stop all" ends the watchdog normally. Exit code 0 tells boot-start.bat (and Windows Task

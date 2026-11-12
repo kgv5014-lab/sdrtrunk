@@ -796,23 +796,28 @@ Recording, streaming, the map, the phone pages and alerts all work as usual. It 
   running. Orange: starting, edit mode or updating. Red: one stopped (a pop-up says which; the watchdog
   restarts it). Grey: the watchdog isn't running. Hover for a summary; double-click opens the map.
   Right-click for: each program's state, Open the map, PC speakers (on/off), Open SDRTrunk window (edit
-  mode), Restart everything, Stop all, Start (no windows), Start with windows, Update everything (runs
+  mode), Restart everything, Stop all, Start with windows, Update everything (runs
   the updater), Show the log, and Close this icon.
 * **Windows while you're signed in:** when you sign in and everything is running with no windows (started
   at boot, or by the updater), the tray icon starts it all again with its normal windows, about a minute
   of radio traffic. Untick **Open the windows when I'm signed in** in its menu to leave things hidden.
   Lock the PC rather than signing out: signing out closes the windows, and things stay stopped until
   the PC restarts or you sign in and use Start.
+* **Only one watchdog:** a second watchdog doesn't start a second copy of everything. One with windows
+  (start-everything.bat, the tray's Start with windows) always wins: if the no-window boot one is
+  running, it is stopped and everything is started again with windows. A boot one that finds a watchdog
+  already running leaves it be. And if two SDRTrunks are ever running at once (each gets "access
+  denied" on the dongles the other holds), the watchdog closes both and starts one.
+* **Never hidden:** run boot-off.bat (the tray icon stays) and then autostart-on.bat. Everything then
+  starts with windows a minute after you sign in, and nothing starts before you sign in.
 * **Stop all** (tray menu) stops SDRTrunk, the transcriber, Ollama and the watchdog, and nothing starts
   again until you start it (no admin rights needed: it asks the watchdog to do it). A pop-up says when
   it's done and the dot turns grey. Restarting the PC starts everything as usual.
-* **Start** (tray menu) has two submenus: **Start (no windows)** runs things in the background the way
-  boot does, and **Start with windows** opens their normal windows (SDRTrunk's full window, the
-  transcriber's and the watchdog's black console windows). Each has **Everything** (the watchdog, which
+* **Start with windows** (tray menu) opens the programs' normal windows (SDRTrunk's full window, the
+  transcriber's and the watchdog's black console windows). It has **Everything** (the watchdog, which
   starts all three and restarts any that crash) and **SDRTrunk only**, **Whisper transcriber only** and
-  **Summaries (Ollama) only**. Whatever copy is already running is stopped first, so switching between
-  no windows and windows never leaves two copies fighting over the dongles. A program started on its own
-  isn't watched unless the watchdog is running, so it may stay stopped if it crashes.
+  **Summaries (Ollama) only**. Whatever copy is already running is stopped first, so it never leaves two
+  copies fighting over the dongles. A program started on its own isn't watched unless the watchdog is running, so it may stay stopped if it crashes.
 * **Sound:** Windows only gives the speakers to someone signed in, so SDRTrunk can't play them at boot.
   The tray icon plays the live calls, the same stream as the phone's Listen page, about 3 seconds after
   each call ends. Untick PC speakers in its menu to stop the sound (it stays off until ticked again).

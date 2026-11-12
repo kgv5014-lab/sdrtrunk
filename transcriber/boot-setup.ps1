@@ -21,10 +21,11 @@ function Finish($text, $color = 'Green') {
 
 if ($Mode -eq 'off') {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item $speakersLink, $trayLink -ErrorAction SilentlyContinue
+    # The tray icon stays: it starts at sign-in and has Stop all / Start with windows.
+    Remove-Item $speakersLink -ErrorAction SilentlyContinue
     if (Test-Path (Join-Path $backup 'Ollama.lnk')) { Move-Item (Join-Path $backup 'Ollama.lnk') $ollamaLink -Force }
-    Finish ("Done. Nothing starts at boot any more; the next restart leaves everything off.`n" +
-            "To start everything when you sign in instead, run autostart-on.bat. To start it now, run start-everything.bat.")
+    Finish ("Done. Nothing starts at boot with no windows any more; the next restart leaves everything off until you sign in.`n" +
+            "To start everything with windows when you sign in, run autostart-on.bat. To start it now, run start-everything.bat.")
 }
 
 Write-Host 'SDRTrunk Plus: start at boot, before sign-in' -ForegroundColor Green

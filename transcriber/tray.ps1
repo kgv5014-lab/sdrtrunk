@@ -26,7 +26,7 @@ $speakersOffFile = Join-Path $here 'speakers-off.flag'
 $resultFile = Join-Path $here 'control-result.txt'
 $windowsOffFile = Join-Path $here 'windows-off.flag'
 $script:wantWindows = -not (Test-Path $windowsOffFile)
-# Windows are opened once per run of this icon, so Start (no windows) afterwards is left alone.
+# Windows are opened once per run of this icon.
 $script:windowsDone = $false
 $script:job = $null
 $script:speakers = $null
@@ -250,7 +250,6 @@ Add-Item 'Stop all' {
         'SDRTrunk Plus', 'YesNo', 'Question')
     if ($answer -eq 'Yes') { Start-Control @('stop-all') 'Stopping everything... the dot turns grey when done.' }
 } | Out-Null
-$startHidden = Add-StartMenu 'Start (no windows)' $false
 $startWindows = Add-StartMenu 'Start with windows' $true
 Add-Item 'Update everything' {
     $updater = Find-Updater

@@ -81,6 +81,14 @@ SDRTRUNK_QUERY = (
     "if ($p) { '{0}|{1}|{2}' -f $_.ProcessId, $p.Responding, $_.ExecutablePath } }"
 )
 
+# The transcriber's own Python processes (start-transcriber.bat runs "python -m sdrtrunk_transcriber"; the
+# watchdog, tray control and PC speakers are sdrtrunk_transcriber.<something> and don't match).
+TRANSCRIBER_QUERY = (
+    "Get-CimInstance Win32_Process -Filter \"Name='python.exe' OR Name='pythonw.exe'\" | "
+    "Where-Object { $_.CommandLine -match '-m\\s+sdrtrunk_transcriber(\\s|$)' } | "
+    "ForEach-Object { $_.ProcessId }"
+)
+
 
 # Keeps the commands below from flashing a console window when run from the tray icon (pythonw).
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -140,9 +148,22 @@ class System:
         subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True, creationflags=NO_WINDOW)
 
     def port_pids(self, port: int) -> set[int]:
+        """The processes holding a TCP port. Windows' netstat sometimes lists the transcriber's port
+        under process 0 (seen on Ken's PC), so then the transcriber's own processes are found by name."""
         out = subprocess.run(["netstat", "-ano", "-p", "TCP"], capture_output=True, text=True,
                              creationflags=NO_WINDOW).stdout
-        return listening_pids(out, port)
+        pids = listening_pids(out, port)
+        if not pids and port_listened(out, port):
+            pids = self.transcriber_pids()
+        return pids
+
+    def transcriber_pids(self) -> set[int]:
+        try:
+            out = subprocess.run(["powershell", "-NoProfile", "-Command", TRANSCRIBER_QUERY],
+                                 capture_output=True, text=True, timeout=60, creationflags=NO_WINDOW)
+        except (OSError, subprocess.TimeoutExpired):
+            return set()
+        return {int(line.strip()) for line in out.stdout.splitlines() if line.strip().isdigit()}
 
     def sdrtrunk_processes(self) -> list[tuple[int, bool, str]] | None:
         """(pid, responding, java.exe path) for each SDRTrunk running, or None if Windows didn't say."""
@@ -247,6 +268,16 @@ def listening_pids(netstat: str, port: int) -> set[int]:
                 and parts[1].rsplit(":", 1)[-1] == str(port) and parts[4].isdigit() and parts[4] != "0":
             pids.add(int(parts[4]))
     return pids
+
+
+def port_listened(netstat: str, port: int) -> bool:
+    """Whether `netstat -ano` shows anything listening on a TCP port, even under process 0."""
+    for line in netstat.splitlines():
+        parts = line.split()
+        if len(parts) == 5 and parts[0] == "TCP" and parts[3] == "LISTENING" \
+                and parts[1].rsplit(":", 1)[-1] == str(port):
+            return True
+    return False
 
 
 def parse_sdrtrunk(text: str) -> list[tuple[int, bool, str]]:

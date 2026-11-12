@@ -188,6 +188,12 @@ house numbers on that street ("Ferry Street, Easton: 600 to 999"). When Whisper 
    digits swapped. Then a similar-sounding street in the area that does have the number.
 3. The address is fixed only when exactly one answer fits best. A tie is settled by an incident already
    on the map nearby; otherwise nothing changes.
+4. A street that isn't in the list at all is matched by sound against every local street (smart address
+   lookup, soundalike.py): "Grimminsburg Avenue" is Freemansburg Avenue, "Shanersville, Railroad" is
+   Schoenersville Road, "Orvieto Corrie" is Orvieto Court. A sound-alike is only used when what else
+   dispatch said agrees: the house number is on that street, the cross street ("Cross of Westgate
+   Drive") meets it, or the town ("Hanover Township Communications") is right. The closer it sounds,
+   the less has to agree, and it has to beat every other street clearly.
 
 The call log shows "address fixed, heard as ..." on fixed calls, and Whisper's own words stay in
 `transcript_raw`. The map also uses the ranges to put a house address on the right part of its street

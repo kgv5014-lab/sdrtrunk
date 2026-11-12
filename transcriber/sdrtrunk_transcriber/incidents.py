@@ -64,6 +64,8 @@ NATURES = [(re.compile(pattern, re.IGNORECASE), label, category) for pattern, la
 LIFE_SUPPORT = re.compile(r"\b(?:(a)|[bpd])\.?\s?l\.?\s?s\b|\b(advanced|basic) life support", re.IGNORECASE)
 # An EMS unit: "Medic 5", "EMS 27", or as Whisper writes them, "MS-5", "AMS-5", "PMS 5", "Mb. 14", "E-M-S-14".
 EMS_UNIT = re.compile(r"\b(?:medic|ems|e-m-s|a?ms|pms|mb\.?|ambulance|qrs)[\s#-]*\d", re.IGNORECASE)
+# Towns to try one by one when an address's street runs through several (see MapWorker.queries).
+TOWN_QUERIES = 6
 PRECISION_RANK = {"address": 0, "intersection": 1, "milepost": 2, "landmark": 3, "street": 4}
 # A channel named in a call, as Whisper writes it: "Tac 2", "TAC-2A", "Tag 3", "Pac-1", "Op 2", "Fire Ground 1",
 # often with the time run into it ("OPS 1-1509", "TAC 3-634"). Channels here are numbered 1 to 9.
@@ -906,6 +908,9 @@ class MapWorker:
                 if distance is None or distance <= 250:
                     precision = result["kind"] if found.kind == "address" else found.kind
                     return point, precision
+            point = self.in_one_town(found)
+            if point:
+                return point, "address"
 
         if found.kind == "address":
             # Offline: a short street in one town is close enough to be useful.
@@ -915,6 +920,32 @@ class MapWorker:
                 if self.gazetteer.length_m(longest) <= 2000:
                     return self.gazetteer.middle(longest), "street"
         return None, found.kind
+
+    def in_one_town(self, found: Found) -> tuple[float, float] | None:
+        """An address on a street that runs through several towns, when the plain search missed: asks the
+        online search in each town, and uses the answer when exactly one town has that house. Without a
+        town, "2601 William Penn Highway" finds the one in Allentown, which is thrown out as off the street."""
+        if found.kind != "address" or not found.number or found.query.count(",") != 1:
+            return None
+        by_town: dict[str, list] = {}
+        for street in found.streets:
+            if street.town and street.lines:
+                by_town.setdefault(street.town, []).append(street)
+        if not 1 < len(by_town) <= TOWN_QUERIES:
+            return None
+        head = found.query[:-len(", Pennsylvania")] if found.query.endswith(", Pennsylvania") else found.query
+        houses = []
+        for town, streets in by_town.items():
+            result = self.geocoder.lookup(f"{head}, {town}, Pennsylvania")
+            if not result or result["kind"] != "address":
+                continue
+            point = (result["lat"], result["lon"])
+            distance = self.gazetteer.distance_to(streets, *point)
+            if distance is not None and distance <= 250:
+                houses.append(point)
+        if houses and all(distance_m(*houses[0], *p) <= SAME_PLACE_M * 3 for p in houses[1:]):
+            return houses[0]
+        return None
 
     def assign(self, call: dict, found: Found, point: tuple[float, float], precision: str) -> int:
         """Joins the call to a nearby recent incident, or starts one. Returns the incident id."""

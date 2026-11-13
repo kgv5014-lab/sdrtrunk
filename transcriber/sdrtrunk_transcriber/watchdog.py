@@ -330,7 +330,7 @@ class Ollama(Program):
         return "ok" if self.system.answers(self.url, timeout=10) else "down"
 
     def start(self):
-        # start-ollama.bat stops any Ollama left over itself, then starts it on the GTX 1070.
+        # start-ollama.bat stops any Ollama left over itself, then starts it on the GTX 1070 Ti.
         self.pid = self.system.launch(str(HOME / "start-ollama.bat"), str(HOME))
         return True
 

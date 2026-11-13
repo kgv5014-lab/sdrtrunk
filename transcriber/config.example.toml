@@ -76,9 +76,9 @@ level_speakers = true
 [faster_whisper]
 model = "large-v3-turbo"
 device = "cuda"
-# start-transcriber.bat finds the GTX 1070 Ti by name and gives Whisper only that card, so this is
+# start-transcriber.bat finds the GTX 1070 by name and gives Whisper only that card, so this is
 # normally ignored. It's a fallback for when that fails; card numbers can differ between nvidia-smi
-# and CUDA, so check the startup log says "Whisper uses the GTX 1070 Ti".
+# and CUDA, so check the startup log says "Whisper uses the GTX 1070".
 device_index = 0
 # GTX 10-series (Pascal) cards can't run float16 fast. Use int8 (fastest) or float32.
 compute_type = "int8"
@@ -306,6 +306,9 @@ delay_s = 20
 incident_words = 40
 # Ollama lets go of the model after this long with no summaries, freeing several GB of memory ("-1" = never).
 keep_alive = "10m"
+# start-ollama.bat remakes the model without its image-reading add-on (about 1 GB that summaries never use),
+# so it fits on one 8 GB card. A copy with the add-on is kept as "<model>-with-images".
+drop_image_addon = true
 
 [recaps]
 # 12-hour summaries: at 7 AM and 7 PM, a recap of the 12 hours before (counts by type and town, tone-outs,

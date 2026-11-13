@@ -103,7 +103,7 @@ class FasterWhisperConfig:
     # cuda | cpu
     device: str = "cuda"
     # Which card Whisper uses when more than one is visible. start-transcriber.bat normally picks the
-    # GTX 1070 Ti by name (see use-whisper-gpu.bat) and Whisper then sees only that card, so this is
+    # GTX 1070 by name (see use-whisper-gpu.bat) and Whisper then sees only that card, so this is
     # ignored. Card numbers are only a fallback: CUDA and nvidia-smi can number cards differently.
     device_index: int = 0
     # GTX 10xx (Pascal) cards: int8 or float32. float16 needs a 20xx or newer.
@@ -459,6 +459,10 @@ class SummariesConfig:
     keep_alive: str = "10m"
     # On start, summarize incidents and calls from this far back that have none yet.
     backlog_hours: int = 24
+    # start-ollama.bat remakes the model without its image-reading add-on (vision projector, about 1 GB),
+    # which summaries never use, so the whole model fits on one 8 GB card. A copy with the add-on is kept
+    # as "<model>-with-images" in case another program needs it.
+    drop_image_addon: bool = True
 
 
 @dataclass

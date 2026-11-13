@@ -1,8 +1,10 @@
 @echo off
-rem Starts Ollama on the GTX 1070 for call summaries (see "Call summaries" in the README).
-rem start-transcriber.bat gives Whisper the 1070 Ti by UUID; this window picks the 1070 the same way.
-rem GPU_NAME must match a line of `nvidia-smi -L` up to " (UUID". "GTX 1070" does not match the 1070 Ti.
-set GPU_NAME=GTX 1070
+rem Starts Ollama on the GTX 1070 Ti for call summaries (see "Call summaries" in the README).
+rem The monitor is on the 1070, and Windows' own windows filled so much of it that the model (about 6 GB)
+rem no longer fit and ran partly on the CPU. So Ollama gets the 1070 Ti to itself, and start-transcriber.bat
+rem puts Whisper (about 1.5 GB) on the 1070 by UUID.
+rem GPU_NAME must match a line of `nvidia-smi -L` up to " (UUID".
+set GPU_NAME=GTX 1070 Ti
 rem The model comes from [summaries] in config.toml; this one is used if that can't be read.
 set MODEL=qwen3.5:9b-q4_K_M
 if exist .venv\Scripts\python.exe (
@@ -17,7 +19,7 @@ if errorlevel 1 (
 )
 
 set GPU_UUID=
-rem A line reads "GPU 0: NVIDIA GeForce GTX 1070 (UUID: GPU-...)"; keep the GPU-... part.
+rem A line reads "GPU 1: NVIDIA GeForce GTX 1070 Ti (UUID: GPU-...)"; keep the GPU-... part.
 for /f "tokens=2 delims=()" %%a in ('nvidia-smi -L ^| findstr /c:"%GPU_NAME% (UUID"') do (
   for /f "tokens=2" %%b in ("%%a") do set GPU_UUID=%%b
 )
@@ -25,7 +27,7 @@ if defined GPU_UUID (
   echo Using %GPU_NAME%: %GPU_UUID%
   set CUDA_VISIBLE_DEVICES=%GPU_UUID%
   rem Ollama also finds cards through Vulkan, which ignores CUDA_VISIBLE_DEVICES and would put part of
-  rem the model on the 1070 Ti next to Whisper. CUDA alone is enough for the 1070.
+  rem the model on the 1070 next to Whisper. CUDA alone is enough for the 1070 Ti.
   set OLLAMA_VULKAN=0
 ) else (
   echo Could not find a "%GPU_NAME%" in nvidia-smi -L. Ollama will pick a GPU itself.
@@ -58,5 +60,7 @@ if errorlevel 1 (
   ollama pull %MODEL%
   if errorlevel 1 echo Could not download %MODEL%. If it is a model you made yourself, create it with "ollama create" first.
 )
+rem Summaries never look at pictures, so remake the model once without its image add-on (about 1 GB).
+if exist .venv\Scripts\python.exe .venv\Scripts\python.exe -m sdrtrunk_transcriber.ollama_text_only config.toml
 echo Ollama is running in its own window (minimized). Leave it open while the transcriber runs.
 timeout /t 10

@@ -26,11 +26,11 @@ You need Python 3.11 or newer (3.12 recommended, from [python.org](https://www.p
 1. Copy this `transcriber` folder anywhere, for example `C:\sdrtrunk-transcriber`.
 2. Double-click **install.bat**. It creates a private Python environment in `.venv` and installs the
    service plus the NVIDIA cuBLAS and cuDNN libraries (about 1.5 GB download).
-3. Nothing to set for the graphics card: start-transcriber.bat finds the GTX 1070 Ti by name (through
-   `nvidia-smi -L`) and gives Whisper only that card, leaving the 1070 for Ollama. The window shows
-   `Whisper uses the GTX 1070 Ti: GPU-...` when it works. For another card, set `WHISPER_GPU_NAME` at the
+3. Nothing to set for the graphics card: start-transcriber.bat finds the GTX 1070 by name (through
+   `nvidia-smi -L`) and gives Whisper only that card, leaving the 1070 Ti for Ollama. The window shows
+   `Whisper uses the GTX 1070: GPU-...` when it works. For another card, set `WHISPER_GPU_NAME` at the
    top of use-whisper-gpu.bat. Don't rely on card numbers: Windows tools and CUDA can number the two
-   cards differently, which once put Whisper on the 1070 next to Ollama.
+   cards differently, which once put Whisper on the same card as Ollama.
 4. Optional: open **config.toml** in Notepad to change other settings.
 5. Optional: put local unit names, streets and 10-codes in **vocabulary.txt**, one per line.
 6. Double-click **start-transcriber.bat**. The first start downloads the `large-v3-turbo` model
@@ -48,7 +48,9 @@ Check Whisper on its own with any recording before wiring up SDRTrunk:
   CTranslate2 only supports int8 on Pascal through its int8/float32 mode, which is what `int8` selects.
 * The service uses CUDA 12 libraries. CUDA 13 no longer supports GTX 10-series cards, so don't upgrade
   those packages past what `requirements-gpu.txt` pins.
-* Whisper (about 2 GB with int8) fits easily on the 8 GB 1070 Ti, leaving the 1070 free for Ollama later.
+* Whisper (about 1.5 GB with int8) shares the 1070 with the monitor and Windows' own windows. Ollama's
+  model (about 6 GB) gets the 1070 Ti to itself: on the monitor's card it no longer fit once a few programs
+  were open, and part of it ran on the CPU.
 * SDRTrunk does not use the GPU, so decoding is not affected.
 
 ## Updating SDRTrunk and the transcriber
@@ -679,9 +681,9 @@ how calls are grouped into incidents.
 Setting it up, once:
 
 1. Install Ollama for Windows from <https://ollama.com/download>.
-2. Double-click **start-ollama.bat** in the transcriber folder. It finds the GTX 1070 by its UUID
-   (start-transcriber.bat does the same for the 1070 Ti, so the two never share a card), starts Ollama on it in a minimized window, and the first time downloads the model
-   (`qwen3.5:9b-q4_K_M`, Qwen 3.5 9B, about 6.6 GB; update Ollama first if yours is older than early 2026). It also turns off Ollama's Vulkan support, which would otherwise see the 1070 Ti too, and closes the Ollama tray app (and stops it starting with Windows), which would otherwise use the wrong card and keep trying to start a second Ollama.
+2. Double-click **start-ollama.bat** in the transcriber folder. It finds the GTX 1070 Ti by its UUID
+   (start-transcriber.bat does the same for the 1070, so the two never share a card), starts Ollama on it in a minimized window, and the first time downloads the model
+   (`qwen3.5:9b-q4_K_M`, Qwen 3.5 9B, about 6.6 GB; update Ollama first if yours is older than early 2026). It also turns off Ollama's Vulkan support, which would otherwise see the 1070 too, and closes the Ollama tray app (and stops it starting with Windows), which would otherwise use the wrong card and keep trying to start a second Ollama.
 3. In `config.toml`, add the `[summaries]` section from `config.example.toml` and set `enabled = true`.
    Restart the transcriber. The log says "Summaries: using Ollama" after the first one.
 
@@ -697,8 +699,12 @@ there. A model you made yourself with `ollama create` works too. The transcriber
 size (`num_ctx = 0`), so it uses the model's own and shares the loaded copy with other programs using the
 same model; asking for a different size would make Ollama load it again.
 
-To check that Ollama is on the 1070, run `nvidia-smi` while a summary is being written: `ollama.exe` should
-be listed on the GTX 1070 with about 7 GB of memory.
+Summaries never look at pictures, so start-ollama.bat remakes the model once without its image-reading
+add-on (the vision projector, about 1 GB), keeping a copy with it as `<model>-with-images` for any other
+program that needs it. Set `drop_image_addon = false` under `[summaries]` to keep the add-on.
+
+To check that Ollama is on the card, run `ollama ps`: it should say `100% GPU`. `nvidia-smi` should show
+about 6 GB used on the GTX 1070 Ti.
 
 ### Tone-outs on P25 talkgroups
 

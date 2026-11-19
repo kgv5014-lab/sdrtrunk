@@ -5,6 +5,9 @@ rem Closing it stops the watching; the programs keep running.
 cd /d "%~dp0"
 title SDRTrunk watchdog
 if not exist config.toml copy config.example.toml config.toml >nul
+rem The tray icon (dot by the clock) is normally started at sign-in; start it too in case it was closed.
+rem It does nothing when the icon is already there.
+call start-tray.bat
 .venv\Scripts\python.exe -m sdrtrunk_transcriber.watchdog --config config.toml
 rem "Stop all" in the tray icon stopped everything: nothing to read here, so close the window.
 if not errorlevel 1 exit /b 0

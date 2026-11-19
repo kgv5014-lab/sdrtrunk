@@ -21,6 +21,8 @@
   button { background: var(--card); color: var(--accent); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; cursor: pointer; }
   #play { width: 100%; padding: 16px; font-size: 18px; font-weight: 600; background: var(--accent); color: #fff; border: 0; border-radius: 12px; }
   #play.on { background: var(--live); }
+  #airmute { width: 100%; margin-top: 8px; padding: 10px; }
+  #airmute.muted { color: var(--warn); border-color: var(--warn); font-weight: 600; }
   .now { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-top: 12px; min-height: 48px; }
   .now b { font-size: 17px; }
   .muted { color: var(--muted); font-size: 13px; }
@@ -45,6 +47,7 @@
 </header>
 <main>
   <button id="play">▶ Listen</button>
+  <button id="airmute" hidden>✈ Mute aviation</button>
   <div class="now" id="now"><span class="muted">Pick talkgroups below, then press Listen. Each call plays a few seconds after it ends, and keeps playing with the phone locked.</span></div>
 
   <h2>Talkgroups</h2>
@@ -208,8 +211,30 @@ $("rotate").onclick = async () => {
   if (r.ok) showSecret(await r.json());
 };
 
+// Aviation mute: one switch for this page, every phone, the PC speakers and the SDRTrunk window.
+// Air calls are still recorded and transcribed (aviation page). 121.5 is never muted.
+let airMuted = false;
+function showAirMute(state) {
+  airMuted = !!state.muted;
+  $("airmute").hidden = false;
+  $("airmute").classList.toggle("muted", airMuted);
+  $("airmute").textContent = airMuted ? "✈ Aviation muted (still recorded) · tap to hear it" : "✈ Mute aviation";
+}
+async function loadAirMute() {
+  if (document.documentElement.dataset.guest) return;
+  const r = await fetch(withKey("listen/aviation-mute")).catch(() => null);
+  if (r && r.ok) showAirMute(await r.json());
+}
+$("airmute").onclick = async () => {
+  const r = await fetch(withKey("listen/aviation-mute"), {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify({muted: !airMuted})}).catch(() => null);
+  if (r && r.ok) showAirMute(await r.json());
+};
+
 loadTalkgroups();
 loadSecret();
+loadAirMute();
+setInterval(loadAirMute, 15000);
 </script>
 </body>
 </html>

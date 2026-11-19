@@ -26,7 +26,7 @@ import numpy as np
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
-from . import audio, webapp
+from . import airtalk, audio, aviation, webapp
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +43,48 @@ MAX_WAITING = 6
 MAX_LISTENERS = 6
 TALKGROUP_DAYS = 7
 WEB_DIR = Path(__file__).parent / "web"
+# While this file is in the data folder, aviation calls are not played live (aviation mute). They are still
+# recorded, transcribed and shown on the aviation page.
+MUTE_FILE = "aviation-muted.flag"
+
+
+class AviationMute:
+    """The aviation mute switch, shared by the Listen page, the PC speakers player (which plays the same
+    stream) and the SDRTrunk window (which asks /listen/aviation-mute every few seconds).
+
+    121.5 (the air emergency channel) is never muted, so a mayday is still heard."""
+
+    def __init__(self, config, data_path: Path):
+        self.config = config
+        self.path = Path(data_path) / MUTE_FILE
+
+    def on(self) -> bool:
+        return self.path.exists()
+
+    def set(self, on: bool):
+        if on:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self.path.write_text("Aviation audio muted from the Listen page or SDRTrunk\n", encoding="utf-8")
+        else:
+            self.path.unlink(missing_ok=True)
+
+    def is_aviation(self, call: dict) -> bool:
+        """An airport or helicopter call that the mute silences (121.5 never is)."""
+        if aviation.is_emergency(call, self.config.aviation):
+            return False
+        return airtalk.is_air(self.config.air_transcripts.talkgroups, call)
+
+    def talkgroups(self) -> list[str]:
+        """The air talkgroups the mute silences, for SDRTrunk to match its calls against."""
+        emergency = {str(t).strip().lower() for t in self.config.aviation.emergency_talkgroups}
+        return [str(t).strip() for t in self.config.air_transcripts.talkgroups
+                if str(t).strip() and str(t).strip().lower() not in emergency]
+
+    def mutes(self, call: dict) -> bool:
+        return self.on() and self.is_aviation(call)
+
+    def state(self) -> dict:
+        return {"muted": self.on(), "talkgroups": self.talkgroups()}
 
 
 @dataclass
@@ -59,11 +101,17 @@ class Listener:
 
 
 class LiveHub:
-    def __init__(self):
+    def __init__(self, mute: AviationMute | None = None):
         self._lock = threading.Lock()
         self._listeners: dict[str, Listener] = {}
+        self.mute = mute
 
-    def wants(self, talkgroup: str) -> bool:
+    def _muted(self) -> bool:
+        return bool(self.mute and self.mute.on())
+
+    def wants(self, talkgroup: str, call: dict | None = None) -> bool:
+        if call is not None and self.mute and self.mute.mutes(call):
+            return False
         with self._lock:
             return any(l.wants(talkgroup) for l in self._listeners.values())
 
@@ -74,7 +122,7 @@ class LiveHub:
         item = {"id": call.get("id"), "talkgroup": call["talkgroup"],
                 "label": call.get("talkgroup_label") or call["talkgroup"],
                 "call_time": call.get("call_time"), "seconds": round(len(samples) / RATE, 1),
-                "samples": _level(samples)}
+                "air": bool(self.mute and self.mute.is_aviation(call)), "samples": _level(samples)}
         with self._lock:
             for listener in self._listeners.values():
                 if listener.wants(call["talkgroup"]):
@@ -107,10 +155,17 @@ class LiveHub:
                     "waiting": len(listener.waiting), "recent": [_brief(c) for c in reversed(listener.recent)]}
 
     def _next(self, listener: Listener) -> dict | None:
+        muted = self._muted()
         with self._lock:
             if listener.playing:
                 listener.recent.append(listener.playing)
-            listener.playing = listener.waiting.popleft() if listener.waiting else None
+            listener.playing = None
+            while listener.waiting:
+                call = listener.waiting.popleft()
+                # Muted after it was queued: dropped, not played.
+                if not (muted and call.get("air")):
+                    listener.playing = call
+                    break
             return listener.playing
 
     async def stream(self, listener: Listener):
@@ -202,7 +257,7 @@ def new_key(data_path: Path) -> str:
 
 async def add_call(hub: LiveHub, call: dict, path: Path):
     """Called after each upload. Decodes the call only when a phone is listening to its talkgroup."""
-    if not hub.wants(call["talkgroup"]):
+    if not hub.wants(call["talkgroup"], call):
         return
     try:
         samples = await asyncio.to_thread(audio.decode, path)
@@ -247,6 +302,30 @@ def add_routes(app: FastAPI, main_app: FastAPI, data_path: Path, public: bool):
         listener = hub.join(id[:40] or secrets.token_hex(6), talkgroups)
         return StreamingResponse(hub.stream(listener), media_type="audio/mpeg",
                                  headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
+
+    @app.get("/listen/aviation-mute")
+    def aviation_mute(request: Request):
+        check(request)
+        mute = state("live").mute
+        return mute.state() if mute else {"muted": False, "talkgroups": []}
+
+    @app.post("/listen/aviation-mute")
+    async def set_aviation_mute(request: Request):
+        """Turns the aviation mute on or off: {"muted": true|false}. Not for friends on the share link."""
+        check(request)
+        mute = state("live").mute
+        if mute is None:
+            raise HTTPException(503, "Still starting up")
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(400, 'Send {"muted": true} or {"muted": false}')
+        muted = body.get("muted") if isinstance(body, dict) else None
+        if not isinstance(muted, bool):
+            raise HTTPException(400, 'Send {"muted": true} or {"muted": false}')
+        mute.set(muted)
+        log.info("Aviation audio %s", "muted (still recorded and transcribed)" if muted else "playing again")
+        return mute.state()
 
     @app.get("/listen/now")
     def listen_now(request: Request, id: str = ""):

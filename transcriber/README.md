@@ -429,6 +429,11 @@ Two ways to reach it from the iPhone:
   link" replaces the secret if the link gets out. To turn the public link off:
   `tailscale funnel --https=8443 off`.
 
+**✈ Mute aviation** (under Listen) silences the airport and helicopter channels everywhere at once: this
+page, every phone, the PC speakers and the SDRTrunk window (View > Mute Aviation Audio does the same from
+SDRTrunk). The calls are still recorded and transcribed, and still show on the aviation page. 121.5 is never
+muted, so a mayday is always heard. Friends on the share link don't see the button.
+
 Keeping Tailscale up on the PC alongside NordVPN: in the Tailscale menu turn on **Run unattended**, so it
 starts with Windows. If Tailscale drops while NordVPN connects, add Tailscale under NordVPN's
 **Split tunneling** settings. Settings are under `[listen]` in config.toml.

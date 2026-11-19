@@ -7,9 +7,11 @@ from fastapi.testclient import TestClient
 
 from sdrtrunk_transcriber import aviation
 from sdrtrunk_transcriber.aircraft import AircraftWatch
+from sdrtrunk_transcriber.codes import CodeBook
 from sdrtrunk_transcriber.config import Config
 from sdrtrunk_transcriber.db import Database
 from sdrtrunk_transcriber.server import create_app
+from sdrtrunk_transcriber.worker import TranscriptionWorker
 
 from test_alerts import BASE_URL, lines, make_config, session  # noqa: F401 (pytest fixture)
 from test_incidents import Radio
@@ -173,8 +175,30 @@ def test_121_5_is_transcribed_before_county_calls(tmp_path):
     with client:
         worker = client.app.state.worker
         assert worker.rank({"talkgroup": "9103", "frequency": 121500000}) == -1
-        assert worker.rank({"talkgroup": "9102", "talkgroup_label": "ABE Tower"}) == len(
-            config.transcription.first_talkgroups)
+        first = len(config.transcription.first_talkgroups)
+        county = worker.rank({"talkgroup": "4100", "talkgroup_label": "Police North"})
+        air = worker.rank({"talkgroup": "9102", "talkgroup_label": "ABE Tower"})
+        # Air calls wait for every police, fire and EMS call (air_last), even past first_talkgroups.
+        assert county == first and air == first + 1
+        assert worker.rank({"talkgroup": "1", "talkgroup_label": "Countywide"}) < air
+        config.transcription.air_last = False
+        assert worker.rank({"talkgroup": "9102", "talkgroup_label": "ABE Tower"}) == first
+
+
+def test_air_calls_that_waited_are_done_after_the_county_ones(tmp_path):
+    config = make_config(tmp_path)
+    config.data_path.mkdir(parents=True, exist_ok=True)
+    db = Database(config.data_path / "calls.db")
+    ids = [db.insert_call(dict(c, call_time=1700000000 + i, received_at=1700000000 + i, audio_path=f"x{i}.mp3"))
+           for i, c in enumerate([{"talkgroup": "9102", "talkgroup_label": "ABE Tower"},
+                                  {"talkgroup": "4100", "talkgroup_label": "Police North"},
+                                  {"talkgroup": "9104", "talkgroup_label": "Helicopters"},
+                                  {"talkgroup": "1", "talkgroup_label": "Countywide"}])]
+    worker = TranscriptionWorker(config, db, lambda _c: None, CodeBook(None))
+    worker.stalls.start = lambda: None
+    worker._thread.start = lambda: None
+    worker.start()
+    assert list(worker._backlog) == [ids[1], ids[3], ids[0], ids[2]]
 
 
 def test_calls_logged_before_are_moved_to_the_aviation_page(tmp_path):

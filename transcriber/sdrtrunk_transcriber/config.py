@@ -52,6 +52,9 @@ class TranscriptionConfig:
     # dispatch (and their alerts) don't wait behind police chatter. Matched against the talkgroup's name,
     # group or number. Everything else waits its turn, oldest first.
     first_talkgroups: list = field(default_factory=lambda: ["Countywide", "Fire", "FD", "EMS", "Med", "Ops", "Tac"])
+    # Airport and helicopter calls ([air_transcripts] talkgroups) wait until every police, fire and EMS call
+    # is transcribed. 121.5 still goes first of all.
+    air_last: bool = True
 
 
 @dataclass

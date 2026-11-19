@@ -42,6 +42,9 @@ temperatures = [0.0, 0.2, 0.4]
 # dispatch (and their alerts) don't wait behind police chatter. Matched against the talkgroup's name,
 # group or number. Everything else waits its turn, oldest first.
 first_talkgroups = ["Countywide", "Fire", "FD", "EMS", "Med", "Ops", "Tac"]
+# Airport and helicopter calls wait until every police, fire and EMS call is transcribed (121.5 still
+# goes first of all). false = in line with everything else.
+air_last = true
 
 [audio]
 # Clean up each call before Whisper hears it: keep only the voice band (drops the low hum of

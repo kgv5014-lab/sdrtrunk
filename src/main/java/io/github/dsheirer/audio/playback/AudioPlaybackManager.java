@@ -90,6 +90,9 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
             mLog.warn("No audio output devices available");
         }
 
+        //Aviation mute (Listen page / View menu): air calls are still recorded and transcribed, just not played
+        AviationMute.start(() -> mUserPreferences.getPagingPreference().getTranscriberUrl());
+
         //Even if we don't have an audio device, setup the queue processor to always process the audio segment queue
         ScheduledExecutorService scheduledExecutorService =
                 Executors.newSingleThreadScheduledExecutor(new NamingThreadFactory("sdrtrunk audio manager"));
@@ -182,7 +185,7 @@ public class AudioPlaybackManager implements Listener<AudioSegment>, IAudioContr
             {
                 audioSegment = it.next();
 
-                if(audioSegment.isDoNotMonitor() || (audioSegment.isDuplicate() &&
+                if(audioSegment.isDoNotMonitor() || AviationMute.isMuted(audioSegment) || (audioSegment.isDuplicate() &&
                    mUserPreferences.getCallManagementPreference().isDuplicatePlaybackSuppressionEnabled()))
                 {
                     it.remove();

@@ -703,6 +703,12 @@ Summaries never look at pictures, so start-ollama.bat remakes the model once wit
 add-on (the vision projector, about 1 GB), keeping a copy with it as `<model>-with-images` for any other
 program that needs it. Set `drop_image_addon = false` under `[summaries]` to keep the add-on.
 
+Newer Ollama holds the model in a separate `llama-server.exe`; Stop all, Restart and start-ollama.bat close
+it along with `ollama.exe` and the Ollama tray app, so no model is left holding memory. While it runs, the
+watchdog closes the tray app whenever it comes back, and if the model ever loads partly onto the CPU
+(`ollama ps` shows a CPU share) it unloads it so the next summary loads it all onto the card again (at most
+every 30 minutes; the watchdog log says so).
+
 To check that Ollama is on the card, run `ollama ps`: it should say `100% GPU`. `nvidia-smi` should show
 about 6 GB used on the GTX 1070 Ti.
 

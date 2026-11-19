@@ -82,6 +82,15 @@ class FakeSystem:
     def kill_name(self, image):
         self.killed_names.append(image)
 
+    def running(self, image):
+        return image in getattr(self, "processes", ())
+
+    def get_json(self, url, timeout=10):
+        return {"models": getattr(self, "loaded", [])}
+
+    def post_json(self, url, body, timeout=30):
+        self.posted = getattr(self, "posted", []) + [(url, body)]
+
     def clear_status(self):
         self.status = None
 
@@ -382,7 +391,7 @@ def test_stop_all_from_the_tray_stops_everything_and_the_watchdog():
     run_checks(dog, system, 1)
     assert dog.stopped and system.status is None
     assert 500 in system.killed and 777 in system.killed
-    assert system.killed_names == ["ollama.exe"]
+    assert system.killed_names == list(watchdog.OLLAMA_IMAGES)
     # Nothing is started again afterwards, and no alerts.
     system.up = {"ollama": False, "transcriber": False}
     system.sdrtrunk = []
@@ -485,3 +494,28 @@ def test_real_lock_keeps_a_second_watchdog_out(tmp_path, monkeypatch):
     assert not second.take_lock()
     first._lock.close()
     assert second.take_lock()
+
+
+def test_ollama_tray_app_is_closed_whenever_it_comes_back():
+    dog, system, _ = make(sdrtrunk_bat=BAT)
+    dog.start_all()
+    run_checks(dog, system, 7)
+    assert system.killed_names == []
+    system.processes = {"ollama app.exe"}
+    run_checks(dog, system, 1)
+    assert system.killed_names == ["ollama app.exe"]
+
+
+def test_model_partly_on_the_cpu_is_unloaded_once_in_a_while():
+    dog, system, _ = make(sdrtrunk_bat=BAT)
+    dog.start_all()
+    run_checks(dog, system, 7)
+    system.loaded = [{"name": "qwen-re:latest", "size": 6_400_000_000, "size_vram": 6_400_000_000}]
+    run_checks(dog, system, 2)
+    assert not getattr(system, "posted", [])
+    system.loaded = [{"name": "qwen-re:latest", "size": 6_400_000_000, "size_vram": 5_300_000_000}]
+    run_checks(dog, system, 3)
+    assert system.posted == [("http://127.0.0.1:11434/api/generate", {"model": "qwen-re:latest", "keep_alive": 0})]
+    system.time += watchdog.OLLAMA_RELOAD_S
+    run_checks(dog, system, 1)
+    assert len(system.posted) == 2

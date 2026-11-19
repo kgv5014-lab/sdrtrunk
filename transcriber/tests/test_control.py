@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from sdrtrunk_transcriber import control
+from sdrtrunk_transcriber import control, watchdog
 from sdrtrunk_transcriber.config import Config
 
 from test_watchdog import BAT, JAVA, FakeSystem
@@ -50,7 +50,7 @@ def test_stop_all_without_a_watchdog_stops_the_programs_directly(setup):
     system.kill_tree = kill_tree
     result = ctl.stop_all()
     assert result[0] == "ok"
-    assert 500 in system.killed and 777 in system.killed and system.killed_names == ["ollama.exe"]
+    assert 500 in system.killed and 777 in system.killed and system.killed_names == list(watchdog.OLLAMA_IMAGES)
     assert not (tmp_path / "stop.flag").exists()
 
 
@@ -92,7 +92,7 @@ def test_start_stops_the_running_copy_first(setup):
     assert result[0] == "ok" and "Stopped the running" in result[1]
     assert 500 in system.killed and system.launched == ["sdr-trunk.bat"]
     assert ctl.start("transcriber", window=False)[0] == "ok" and 777 in system.killed
-    assert ctl.start("ollama", window=True)[0] == "ok" and system.killed_names == ["ollama.exe"]
+    assert ctl.start("ollama", window=True)[0] == "ok" and system.killed_names == list(watchdog.OLLAMA_IMAGES)
     assert system.launched == ["sdr-trunk.bat", "start-transcriber.bat", "start-ollama.bat"]
 
 

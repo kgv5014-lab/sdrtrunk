@@ -116,7 +116,7 @@ class Control:
         for pid in self.system.port_pids(self.config.server.port):
             self.system.kill_tree(pid)
         if self.config.summaries.enabled:
-            self.system.kill_name("ollama.exe")
+            watchdog.kill_ollama(self.system)
         time.sleep(3)
 
         left = []
@@ -182,7 +182,7 @@ class Control:
         elif what == "ollama":
             found = self.system.answers(self.ollama_url(), timeout=5)
             if found:
-                self.system.kill_name("ollama.exe")
+                watchdog.kill_ollama(self.system)
         else:
             return False
         if found:

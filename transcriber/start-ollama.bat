@@ -36,7 +36,10 @@ if defined GPU_UUID (
 
 rem The Ollama tray app starts its own copy at sign-in, which would use the wrong card. Stop it.
 taskkill /im "ollama app.exe" /f >nul 2>&1
-taskkill /im ollama.exe /f >nul 2>&1
+taskkill /im ollama.exe /f /t >nul 2>&1
+rem Newer Ollama holds the model in llama-server.exe; one left over keeps the model on the card and in RAM,
+rem and the new copy then doesn't fit and runs partly on the CPU.
+taskkill /im llama-server.exe /f /t >nul 2>&1
 timeout /t 2 /nobreak >nul
 
 rem Started with no windows (boot or the tray icon): keep Ollama in this hidden window instead of a new one.

@@ -92,6 +92,20 @@ TRANSCRIBER_QUERY = (
 
 # Keeps the commands below from flashing a console window when run from the tray icon (pythonw).
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+# Ollama is three programs: the tray app (which keeps starting a second server, see start-ollama.bat), the
+# server, and llama-server.exe, which newer Ollama starts to hold the model. Closing only ollama.exe left
+# llama-server.exe running on its own with the model still in memory (GBs of RAM and graphics memory).
+OLLAMA_TRAY = "ollama app.exe"
+OLLAMA_IMAGES = (OLLAMA_TRAY, "ollama.exe", "llama-server.exe")
+# A model partly on the CPU (it didn't all fit on the card when it loaded) is unloaded so the next summary
+# loads it onto the card again; at most this often, in case it really doesn't fit.
+OLLAMA_RELOAD_S = 1800
+
+
+def kill_ollama(system):
+    """Stops every Ollama program, the model holder included."""
+    for image in OLLAMA_IMAGES:
+        system.kill_name(image)
 
 
 class System:
@@ -144,8 +158,26 @@ class System:
         subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)], capture_output=True, creationflags=NO_WINDOW)
 
     def kill_name(self, image: str):
-        """Stops every process with this file name, e.g. ollama.exe."""
-        subprocess.run(["taskkill", "/F", "/IM", image], capture_output=True, creationflags=NO_WINDOW)
+        """Stops every process with this file name, e.g. ollama.exe, and whatever it started."""
+        subprocess.run(["taskkill", "/F", "/T", "/IM", image], capture_output=True, creationflags=NO_WINDOW)
+
+    def running(self, image: str) -> bool:
+        """Is a process with this file name running?"""
+        out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH"], capture_output=True,
+                             text=True, creationflags=NO_WINDOW).stdout
+        return image.lower() in out.lower()
+
+    def get_json(self, url: str, timeout: float = 10) -> dict | None:
+        try:
+            return requests.get(url, timeout=timeout).json()
+        except (requests.RequestException, ValueError):
+            return None
+
+    def post_json(self, url: str, body: dict, timeout: float = 30):
+        try:
+            requests.post(url, json=body, timeout=timeout)
+        except requests.RequestException:
+            pass
 
     def port_pids(self, port: int) -> set[int]:
         """The processes holding a TCP port. Windows' netstat sometimes lists the transcriber's port
@@ -324,10 +356,36 @@ class Ollama(Program):
 
     def __init__(self, system, url: str):
         super().__init__(system)
-        self.url = url.rstrip("/") + "/api/version"
+        self.base = url.rstrip("/")
+        self.url = self.base + "/api/version"
+        self.reloaded_at = None
 
     def check(self):
-        return "ok" if self.system.answers(self.url, timeout=10) else "down"
+        # The tray app comes back with Windows and Ollama's own updates, and then keeps trying to start a
+        # second server (with lots of CPU). The server this watchdog started is all that's needed.
+        if self.system.running(OLLAMA_TRAY):
+            log.info("Closing the Ollama tray app (it keeps trying to start a second Ollama)")
+            self.system.kill_name(OLLAMA_TRAY)
+        if not self.system.answers(self.url, timeout=10):
+            return "down"
+        self.keep_on_card()
+        return "ok"
+
+    def keep_on_card(self):
+        """Unloads a model that loaded partly onto the CPU, so the next summary loads it all onto the card."""
+        loaded = (self.system.get_json(self.base + "/api/ps") or {}).get("models") or []
+        for model in loaded:
+            size, vram = model.get("size") or 0, model.get("size_vram") or 0
+            if not size or vram >= size * 0.97:
+                continue
+            now = self.system.now()
+            if self.reloaded_at is not None and now - self.reloaded_at < OLLAMA_RELOAD_S:
+                return
+            self.reloaded_at = now
+            name = model.get("name") or model.get("model")
+            log.warning("Ollama: %s is %d%% on the CPU; unloading it so it loads onto the graphics card again",
+                        name, round(100 * (size - vram) / size))
+            self.system.post_json(self.base + "/api/generate", {"model": name, "keep_alive": 0})
 
     def start(self):
         # start-ollama.bat stops any Ollama left over itself, then starts it on the GTX 1070 Ti.
@@ -339,7 +397,7 @@ class Ollama(Program):
 
     def shut_down(self):
         """Stop all: nothing is started again after this, so Ollama itself is stopped."""
-        self.system.kill_name("ollama.exe")
+        kill_ollama(self.system)
 
 
 class Transcriber(Program):

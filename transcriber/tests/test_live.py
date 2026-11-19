@@ -133,3 +133,60 @@ def test_public_page_needs_the_secret_key_and_has_nothing_else(make_client, tmp_
         assert new != key
         assert public.get(f"/listen?key={key}").status_code == 404
         assert public.get(f"/listen?key={new}").status_code == 200
+
+
+def mute_hub(tmp_path):
+    from sdrtrunk_transcriber.config import Config
+    config = Config()
+    config.air_transcripts.talkgroups = ["9101", "9102", "9103", "9104"]
+    config.aviation.emergency_talkgroups = ["9103"]
+    mute = live.AviationMute(config, tmp_path)
+    return LiveHub(mute), mute
+
+
+def test_aviation_mute_keeps_air_calls_off_the_stream_but_not_121_5(tmp_path):
+    hub, mute = mute_hub(tmp_path)
+    listener = hub.join("a", None)
+    tower = {"id": 1, "talkgroup": "9102", "talkgroup_label": "ABE Tower"}
+    guard = {"id": 2, "talkgroup": "9103", "frequency": 121500000}
+    fire = {"id": 3, "talkgroup": "1203"}
+    assert mute.talkgroups() == ["9101", "9102", "9104"] and not mute.on()
+    assert hub.wants("9102", tower)
+
+    mute.set(True)
+    assert mute.on() and not hub.wants("9102", tower)
+    assert hub.wants("9103", guard) and hub.wants("1203", fire)
+
+    mute.set(False)
+    assert not mute.on() and hub.wants("9102", tower)
+
+
+def test_air_calls_already_waiting_are_dropped_when_muted(tmp_path):
+    hub, mute = mute_hub(tmp_path)
+    listener = hub.join("a", None)
+    hub.add_call({"id": 1, "talkgroup": "9102", "talkgroup_label": "ABE Tower"}, tone(0.2))
+    hub.add_call({"id": 2, "talkgroup": "1203"}, tone(0.2))
+    mute.set(True)
+    assert hub._next(listener)["id"] == 2
+    assert hub._next(listener) is None
+
+
+def test_aviation_mute_switch_on_the_listen_page(make_client, tmp_path):
+    client, _ = make_client()
+    with client:
+        assert client.get("/listen/aviation-mute").json()["muted"] is False
+        on = client.post("/listen/aviation-mute", json={"muted": True}).json()
+        assert on["muted"] is True and "9102" in on["talkgroups"] and "9103" not in on["talkgroups"]
+        assert client.get("/listen/aviation-mute").json()["muted"] is True
+        assert client.post("/listen/aviation-mute", json={"muted": "yes"}).status_code == 400
+
+        # The public listen link (Ken's phone with NordVPN on) can switch it too, with the key.
+        key = client.get("/api/listen/link").json()["key"]
+        public = TestClient(live.create_public_app(client.app, tmp_path / "data"))
+        assert public.post("/listen/aviation-mute", json={"muted": False}).status_code == 404
+        assert public.post(f"/listen/aviation-mute?key={key}", json={"muted": False}).json()["muted"] is False
+        assert client.get("/listen/aviation-mute").json()["muted"] is False
+
+    # Friends on the share link can't reach it.
+    from sdrtrunk_transcriber.share import GUEST_API
+    assert not GUEST_API.match("/listen/aviation-mute")

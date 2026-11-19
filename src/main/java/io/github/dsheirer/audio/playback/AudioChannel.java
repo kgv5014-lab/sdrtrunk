@@ -292,13 +292,15 @@ public class AudioChannel implements Listener<IdentifierUpdateNotification>
     }
 
     /**
-     * Indicates if the audio segment should be thrown away because it is marked as duplicate or do-not-monitor.
+     * Indicates if the audio segment should be thrown away because it is marked as duplicate or do-not-monitor, or
+     * is an aviation call while aviation audio is muted (AviationMute).
      * @param audioSegment to evaluate
      * @return true if the audio should be thrown away.
      */
     private boolean isThrowaway(AudioSegment audioSegment)
     {
-        return audioSegment != null && (audioSegment.isDoNotMonitor() || mDropDuplicates && (audioSegment.isDuplicate()));
+        return audioSegment != null && (audioSegment.isDoNotMonitor() || AviationMute.isMuted(audioSegment) ||
+            mDropDuplicates && (audioSegment.isDuplicate()));
     }
 
     /**

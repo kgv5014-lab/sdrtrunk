@@ -643,6 +643,17 @@ public class SDRTrunk implements Listener<TunerEvent>
             }
         });
         viewMenu.add(mShowSpectralMenuItem);
+        //Aviation mute: airport and helicopter calls are still recorded and transcribed, just not played.  The switch
+        //is kept by the transcriber, so the Listen page, PC speakers and this menu always agree.
+        javax.swing.JCheckBoxMenuItem muteAviationItem = new javax.swing.JCheckBoxMenuItem("Mute Aviation Audio",
+            io.github.dsheirer.audio.playback.AviationMute.isMuted());
+        muteAviationItem.setToolTipText("Airport and helicopter calls are still recorded and transcribed. " +
+            "121.5 is never muted.");
+        muteAviationItem.addActionListener(e -> io.github.dsheirer.audio.playback.AviationMute.set(
+            mUserPreferences.getPagingPreference().getTranscriberUrl(), muteAviationItem.isSelected()));
+        io.github.dsheirer.audio.playback.AviationMute.addListener(() -> EventQueue.invokeLater(() ->
+            muteAviationItem.setSelected(io.github.dsheirer.audio.playback.AviationMute.isMuted())));
+        viewMenu.add(muteAviationItem);
         viewMenu.add(new NowPlayingChannelDetailsVisibleMenuItem());
         viewMenu.add(new BroadcastStatusVisibleMenuItem());
         viewMenu.add(new ResourceStatusVisibleMenuItem());

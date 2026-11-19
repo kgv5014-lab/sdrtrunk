@@ -324,7 +324,7 @@ def create_app(config: Config, backend_factory=create_backend) -> FastAPI:
 
     app = FastAPI(title="SDRTrunk transcriber", lifespan=lifespan)
     app.add_middleware(_CompressText)
-    app.state.live = live.LiveHub() if config.listen.enabled else None
+    app.state.live = live.LiveHub(live.AviationMute(config, data_path)) if config.listen.enabled else None
     app.state.zone_watch = None
 
     async def call_upload(request: Request):

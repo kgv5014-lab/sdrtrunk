@@ -140,6 +140,10 @@ class TranscriptionWorker:
 
     def start(self):
         pending = list(self.db.pending_ids())
+        if self.config.transcription.air_last and self.config.air_transcripts.talkgroups:
+            # Calls that waited: police, fire and EMS first here too, then the air calls, each oldest first.
+            air = {i for i in pending if self.rank(self.db.get_call(i)) > len(self.config.transcription.first_talkgroups)}
+            pending = [i for i in pending if i not in air] + [i for i in pending if i in air]
         self.progress.start(BACKLOG_JOB, "Transcribing calls that waited", pending)
         self._backlog.extend(pending)
         self.stalls.start()
@@ -151,10 +155,13 @@ class TranscriptionWorker:
         self._thread.join(timeout)
 
     def rank(self, call: dict | None) -> int:
-        """Where a call goes in line: its place in first_talkgroups, or after all of them."""
+        """Where a call goes in line: its place in first_talkgroups, or after all of them. Airport and
+        helicopter calls go after every police, fire and EMS call (air_last), except 121.5 (urgent)."""
         first = self.config.transcription.first_talkgroups
         if call and self.urgent and self.urgent(call):
             return -1
+        if call and self.config.transcription.air_last and self.is_air(call):
+            return len(first) + 1
         if call:
             names = " ".join(str(call.get(k) or "") for k in ("talkgroup_label", "talkgroup_group", "talkgroup"))
             names = names.lower()
